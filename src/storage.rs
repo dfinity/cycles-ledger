@@ -124,11 +124,11 @@ thread_local! {
 }
 
 pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
-    STATE.with(|cell| f(&*cell.borrow()))
+    STATE.with(|cell| f(&cell.borrow()))
 }
 
 pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    STATE.with(|cell| f(&mut *cell.borrow_mut()))
+    STATE.with(|cell| f(&mut cell.borrow_mut()))
 }
 
 #[derive(Default)]
@@ -166,7 +166,7 @@ fn to_account_key(account: &Account) -> AccountKey {
     (
         Blob::try_from(account.owner.as_slice())
             .expect("principals cannot be longer than 29 bytes"),
-        account.effective_subaccount().clone(),
+        *account.effective_subaccount(),
     )
 }
 
@@ -192,7 +192,7 @@ pub fn record_deposit(
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             op: Operation::Mint {
-                to: account.clone(),
+                to: *account,
                 amount,
                 memo,
                 fee: crate::config::FEE,
@@ -221,7 +221,7 @@ pub fn transfer(
 
         s.balances
             .insert(
-                from_key.clone(),
+                from_key,
                 from_balance - amount.saturating_add(crate::config::FEE),
             )
             .expect("failed to update 'from' balance");
@@ -234,8 +234,8 @@ pub fn transfer(
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             op: Operation::Transfer {
-                from: from.clone(),
-                to: to.clone(),
+                from: *from,
+                to: *to,
                 amount,
                 memo,
                 fee: crate::config::FEE,
