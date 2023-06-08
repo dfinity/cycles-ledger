@@ -84,7 +84,7 @@ fn validate_memo(memo: Option<endpoints::Memo>) -> Option<endpoints::Memo> {
 
 #[update]
 #[candid_method]
-fn cycle_ledger_deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
+fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {

@@ -51,5 +51,5 @@ service : {
     icrc1_supported_standards : () -> (vec record { name : text; url : text }) query;
 
     // Endpoints specific to the cycle ledger.
-    cycle_ledger_deposit : (record { to : Account; memo : opt blob }) -> (record { txid : nat; balance : nat });
+    deposit : (record { to : Account; memo : opt blob }) -> (record { txid : nat; balance : nat });
 }
