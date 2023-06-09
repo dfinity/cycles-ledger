@@ -186,9 +186,7 @@ pub fn record_deposit(
     mutate_state(|s| {
         let balance = s.balances.get(&key).unwrap_or_default();
         let new_balance = balance + amount;
-        s.balances
-            .insert(key, new_balance)
-            .expect("failed to update balance");
+        s.balances.insert(key, new_balance);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             op: Operation::Mint {
