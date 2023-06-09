@@ -21,7 +21,7 @@ fn cycles_ledger_wasm() -> Vec<u8> {
         .arg("--release")
         .run()
         .expect("Unable to run cargo build");
-    std::fs::read(&binary.path()).expect("cycles-ledger wasm file not found")
+    std::fs::read(binary.path()).expect("cycles-ledger wasm file not found")
 }
 
 fn depositer_wasm() -> Vec<u8> {
@@ -32,7 +32,7 @@ fn depositer_wasm() -> Vec<u8> {
         .arg("--release")
         .run()
         .expect("Unable to run cargo build");
-    std::fs::read(&binary.path()).expect("depositer wasm file not found")
+    std::fs::read(binary.path()).expect("depositer wasm file not found")
 }
 
 fn install_ledger(env: &StateMachine) -> CanisterId {
