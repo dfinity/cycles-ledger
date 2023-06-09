@@ -64,7 +64,7 @@ fn test_deposit_flow() {
         subaccount: None,
     };
 
-    // check that the user doesn't have any token before the first deposit
+    // check that the user doesn't have any tokens before the first deposit
     assert_eq!(balance_of(env, ledger_id, user), 0u128);
 
     // make the first deposit to the user and check the result
