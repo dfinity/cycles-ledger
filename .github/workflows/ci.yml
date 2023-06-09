@@ -14,8 +14,8 @@ jobs:
       # This is needed for building state-machine-tests
       - name: Install proto
         run: |
-          apt update && apt upgrade -y
-          apt install -y protobuf-compiler libprotobuf-dev
+          sudo apt update
+          sudo apt install -y protobuf-compiler libprotobuf-dev
 
       - name: Cache Cargo
         uses: actions/cache@v2
