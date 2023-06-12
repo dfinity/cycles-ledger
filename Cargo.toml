@@ -1,20 +1,9 @@
-[package]
-name = "cycles-ledger"
-version = "0.1.0"
-authors = ["DFINITY Stiftung <sdk@dfinity.org>"]
-edition = "2021"
+[workspace]
 
-[profile.release]
-lto = true
-opt-level = 'z'
-panic = 'abort'
+members = [
+    # Production crates
+    "cycles-ledger",
 
-[dependencies]
-candid = "0.8.1"
-ciborium = "0.2"
-ic-cdk = { version = "0.6.0" }
-ic-cdk-macros = { version = "0.6.0" }
-ic-stable-structures = "0.5.0"
-num-traits = "0.2"
-serde = "1"
-serde_bytes = "0.11"
+    # Crates used for testing only
+    "depositer",
+]

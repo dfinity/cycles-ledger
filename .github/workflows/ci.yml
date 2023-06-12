@@ -6,10 +6,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [ 1.65.0 ]
+        rust: [ 1.66.1 ]
 
     steps:
       - uses: actions/checkout@v2
+
+      # This is needed for building state-machine-tests
+      - name: Install proto
+        run: |
+          sudo apt update
+          sudo apt install -y protobuf-compiler libprotobuf-dev
 
       - name: Cache Cargo
         uses: actions/cache@v2
