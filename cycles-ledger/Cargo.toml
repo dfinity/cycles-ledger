@@ -20,6 +20,6 @@ serde = "1"
 serde_bytes = "0.11"
 
 [dev-dependencies]
-depositer = { path = "../depositer" }
+depositor = { path = "../depositor" }
 escargot = { version = "0.5.7", features = ["print"] }
 ic-state-machine-tests = { git = "https://github.com/dfinity/ic" }

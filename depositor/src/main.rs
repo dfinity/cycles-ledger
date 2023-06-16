@@ -1,6 +1,6 @@
 use candid::candid_method;
 use cycles_ledger::endpoints::DepositResult;
-use depositer::{
+use depositor::{
     endpoints::{DepositArg, InitArg},
     Config,
 };
