@@ -1,4 +1,5 @@
-use candid::{CandidType, Deserialize, Int, Nat};
+use candid::{CandidType, Deserialize, Int, Nat, Principal};
+use ic_cdk::api::{call::RejectionCode};
 use serde::Serialize;
 use serde_bytes::ByteBuf;
 use std::convert::Into;
@@ -117,4 +118,30 @@ pub fn make_entry(name: impl ToString, value: impl Into<Value>) -> (String, Valu
 pub struct SupportedStandard {
     pub name: String,
     pub url: String,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SendArg {
+    #[serde(default)]
+    pub from_subaccount: Option<Subaccount>,
+    pub to: Principal,
+    #[serde(default)]
+    pub fee: Option<NumTokens>,
+    #[serde(default)]
+    pub created_at_time: Option<u64>,
+    #[serde(default)]
+    pub memo: Option<Memo>,
+    pub amount: NumTokens,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum SendError {
+    BadFee { expected_fee: NumTokens },
+    InsufficientFunds { balance: NumTokens },
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    TemporarilyUnavailable,
+    Duplicate { duplicate_of: BlockIndex },
+    FailedToSend {burn: BlockIndex, rejection_code: RejectionCode, rejection_reason: String },
+    GenericError { error_code: Nat, message: String },
 }

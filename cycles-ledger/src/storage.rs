@@ -5,7 +5,7 @@ use ic_stable_structures::{
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeMap};
 use std::cell::RefCell;
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -17,6 +17,7 @@ type VMem = VirtualMemory<DefaultMemoryImpl>;
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
+pub type ReservedBalances = BTreeMap<AccountKey, u128>;
 
 pub type Hash = [u8; 32];
 
@@ -51,6 +52,17 @@ pub enum Operation {
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
     },
+    Burn {
+        #[serde(rename = "from")]
+        from: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        #[serde(rename = "fee")]
+        fee: u128,
+        #[serde(rename = "memo")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memo: Option<Memo>,
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -73,6 +85,7 @@ impl Block {
 pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
+    pub reserved_balances: ReservedBalances,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -119,6 +132,7 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
+            reserved_balances: ReservedBalances::default(),
         })
     });
 }
@@ -172,6 +186,39 @@ fn to_account_key(account: &Account) -> AccountKey {
 
 pub fn balance_of(account: &Account) -> u128 {
     read_state(|s| s.balances.get(&to_account_key(account)).unwrap_or_default())
+}
+
+pub fn available_balance_of(account: &Account) -> u128 {
+    read_state(|s| {
+        let account_key = to_account_key(account);
+        s.balances.get(&account_key).map(|balance| balance - s.reserved_balances.get(&account_key).unwrap_or(&0)).unwrap_or_default()
+    })
+}
+
+pub fn reserve_balance(account: &Account, amount: u128) -> Result<(), ()> {
+    if available_balance_of(account) > amount {
+        let account_key = to_account_key(account);
+        mutate_state(|s| {
+            let reserved_balance = s.reserved_balances.entry(account_key).or_default();
+            *reserved_balance += amount;
+        });
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+pub fn release_balance(account: &Account, amount: u128) {
+    mutate_state(|s| {
+        let account_key = to_account_key(account);
+        if let Some(reserved) = s.reserved_balances.get_mut(&account_key) {
+            if *reserved > amount {
+                *reserved -= amount;
+            } else {
+                let _ = s.reserved_balances.remove(&account_key);
+            }
+        }
+    })
 }
 
 pub fn record_deposit(
@@ -234,6 +281,40 @@ pub fn transfer(
             op: Operation::Transfer {
                 from: *from,
                 to: *to,
+                amount,
+                memo,
+                fee: crate::config::FEE,
+            },
+            timestamp: now,
+            phash,
+        });
+        (s.blocks.len() - 1, block_hash)
+    })
+}
+
+pub fn burn(
+    from: &Account,
+    amount: u128,
+    memo: Option<Memo>,
+    now: u64
+) -> (u64, Hash) {
+    let from_key = to_account_key(from);
+
+    mutate_state(|s| {
+        let from_balance = s.balances.get(&from_key).unwrap_or_default();
+
+        assert!(from_balance >= amount.saturating_add(crate::config::FEE));
+
+        s.balances
+            .insert(
+                from_key,
+                from_balance - amount.saturating_add(crate::config::FEE),
+            )
+            .expect("failed to update 'from' balance");
+        let phash = s.last_block_hash();
+        let block_hash = s.emit_block(Block {
+            op: Operation::Burn {
+                from: *from,
                 amount,
                 memo,
                 fee: crate::config::FEE,

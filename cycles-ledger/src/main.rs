@@ -1,8 +1,12 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::Account;
+use cycles_ledger::memo::BurnMemo;
+use cycles_ledger::{Account};
 use cycles_ledger::{config, endpoints, storage};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
+use ic_cdk::api::management_canister;
+use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{query, update};
+use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
 #[query]
@@ -147,6 +151,72 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
     let (txid, _hash) = storage::transfer(&from, &args.to, amount, memo, now);
 
     Ok(Nat::from(txid))
+}
+
+#[update]
+#[candid_method]
+async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
+
+    let from = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.from_subaccount,
+    };
+    let now = ic_cdk::api::time();
+    let balance = storage::available_balance_of(&from);
+    let target_canister = CanisterIdRecord{
+        canister_id: args.to   
+    };
+    
+    // TODO: deduplication
+    
+    let amount = match args.amount.0.to_u128() {
+        Some(value) => value,
+        None => {
+            return Err(endpoints::SendError::InsufficientFunds {
+                balance: Nat::from(balance),
+            });
+        }
+    };
+    if let Some(fee) = args.fee {
+        match fee.0.to_u128() {
+            Some(fee) => {
+                if fee != config::FEE {
+                    return Err(endpoints::SendError::BadFee {
+                        expected_fee: Nat::from(config::FEE),
+                    });
+                }
+            }
+            None => {
+                return Err(endpoints::SendError::BadFee {
+                    expected_fee: Nat::from(config::FEE),
+                });
+            }
+        }
+    }
+    let memo = BurnMemo {
+        receiver: target_canister.canister_id.as_slice()
+    };
+    let mut encoder = Encoder::new(Vec::new());
+    encoder.encode(&memo).expect("Encoding failed");
+    let encoded_memo = encoder.into_writer().into();
+    let memo = validate_memo(Some(encoded_memo));
+    
+    if storage::reserve_balance(&from, amount.saturating_add(config::FEE)).is_err() {
+        return Err(endpoints::SendError::InsufficientFunds {
+            balance: Nat::from(balance),
+        });
+    }
+    if let Err((rejection_code, rejection_reason)) = management_canister::main::deposit_cycles(target_canister, amount).await {
+        storage::release_balance(&from, amount.saturating_add(config::FEE));
+        let (burn, _burn_hash) = storage::burn(&from, 0, memo, now);
+        let burn = Nat::from(burn);
+        Err(endpoints::SendError::FailedToSend { burn, rejection_code, rejection_reason })
+
+    } else {
+        let (burn, _burn_hash) =  storage::burn(&from, amount, memo, now);
+        let burn = Nat::from(burn);
+        Ok(burn)
+    }
 }
 
 fn main() {}
