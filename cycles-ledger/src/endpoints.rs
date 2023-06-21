@@ -1,5 +1,5 @@
 use candid::{CandidType, Deserialize, Int, Nat, Principal};
-use ic_cdk::api::{call::RejectionCode};
+use ic_cdk::api::call::RejectionCode;
 use serde::Serialize;
 use serde_bytes::ByteBuf;
 use std::convert::Into;
@@ -136,12 +136,27 @@ pub struct SendArg {
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum SendError {
-    BadFee { expected_fee: NumTokens },
-    InsufficientFunds { balance: NumTokens },
+    BadFee {
+        expected_fee: NumTokens,
+    },
+    InsufficientFunds {
+        balance: NumTokens,
+    },
     TooOld,
-    CreatedInFuture { ledger_time: u64 },
+    CreatedInFuture {
+        ledger_time: u64,
+    },
     TemporarilyUnavailable,
-    Duplicate { duplicate_of: BlockIndex },
-    FailedToSend {burn: BlockIndex, rejection_code: RejectionCode, rejection_reason: String },
-    GenericError { error_code: Nat, message: String },
+    Duplicate {
+        duplicate_of: BlockIndex,
+    },
+    FailedToSend {
+        burn: BlockIndex,
+        rejection_code: RejectionCode,
+        rejection_reason: String,
+    },
+    GenericError {
+        error_code: Nat,
+        message: String,
+    },
 }

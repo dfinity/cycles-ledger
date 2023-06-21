@@ -1,6 +1,6 @@
 use candid::{Encode, Nat};
 use client::deposit;
-use cycles_ledger::{config::FEE, Account, endpoints::SendArg};
+use cycles_ledger::{config::FEE, endpoints::SendArg, Account};
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
@@ -59,7 +59,10 @@ fn test_deposit_flow() {
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
 
     // Check that the user has the right balance.
-    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000 - FEE))
+    assert_eq!(
+        balance_of(env, ledger_id, user),
+        Nat::from(1_000_000_000 - FEE)
+    )
 }
 
 #[test]
@@ -81,24 +84,32 @@ fn test_send_flow() {
 
     // send cycles to send_receiver
     let send_amount = 500000000_u128;
-    let _send_idx = send(env, ledger_id, user, SendArg{
-        from_subaccount: None,
-        to: send_receiver.into(),
-        fee: None,
-        created_at_time: None,
-        memo: None,
-        amount: Nat::from(send_amount),
-    }).unwrap();
-    assert_eq!(initial_send_receiver_balance + send_amount, env.cycle_balance(send_receiver));
+    let _send_idx = send(
+        env,
+        ledger_id,
+        user,
+        SendArg {
+            from_subaccount: None,
+            to: send_receiver.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        initial_send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
 
-    // TODO(SDK-1145): Add re-entrancy test 
+    // TODO(SDK-1145): Add re-entrancy test
 
     // check that the user has the right balance
     assert_eq!(
         balance_of(env, ledger_id, user),
         Nat::from(1_000_000_000 - FEE - send_amount - FEE)
     );
-
 }
 
 #[test]
@@ -110,63 +121,102 @@ fn test_send_fails() {
         owner: PrincipalId::new_user_test_id(1).into(),
         subaccount: None,
     };
-    
+
     // make the first deposit to the user and check the result
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
-    
+
     // send more than available
-    let send_result = send(env, ledger_id, user, SendArg{
-        from_subaccount: None,
-        to: depositor_id.into(),
-        fee: None,
-        created_at_time: None,
-        memo: None,
-        amount: Nat::from(999_000_000_000_u128),
-    }).unwrap_err();
+    let send_result = send(
+        env,
+        ledger_id,
+        user,
+        SendArg {
+            from_subaccount: None,
+            to: depositor_id.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(999_000_000_000_u128),
+        },
+    )
+    .unwrap_err();
     println!("send more than available result: {:?}", &send_result);
-    assert!(matches!(send_result, cycles_ledger::endpoints::SendError::InsufficientFunds{ .. }));
-    
+    assert!(matches!(
+        send_result,
+        cycles_ledger::endpoints::SendError::InsufficientFunds { .. }
+    ));
+
     // send from empty subaccount
-    let send_result = send(env, ledger_id, user, SendArg{
-        from_subaccount: Some([5; 32]),
-        to: depositor_id.into(),
-        fee: None,
-        created_at_time: None,
-        memo: None,
-        amount: Nat::from(100_000_000_u128),
-    }).unwrap_err();
+    let send_result = send(
+        env,
+        ledger_id,
+        user,
+        SendArg {
+            from_subaccount: Some([5; 32]),
+            to: depositor_id.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(100_000_000_u128),
+        },
+    )
+    .unwrap_err();
     println!("send from empty subaccount result: {:?}", &send_result);
-    assert!(matches!(send_result, cycles_ledger::endpoints::SendError::InsufficientFunds{ .. }));
-    
+    assert!(matches!(
+        send_result,
+        cycles_ledger::endpoints::SendError::InsufficientFunds { .. }
+    ));
+
     // bad fee
-    let send_result = send(env, ledger_id, user, SendArg{
-        from_subaccount: None,
-        to: depositor_id.into(),
-        fee: Some(FEE + Nat::from(1)),
-        created_at_time: None,
-        memo: None,
-        amount: Nat::from(100_000_000_u128),
-    }).unwrap_err();
+    let send_result = send(
+        env,
+        ledger_id,
+        user,
+        SendArg {
+            from_subaccount: None,
+            to: depositor_id.into(),
+            fee: Some(FEE + Nat::from(1)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(100_000_000_u128),
+        },
+    )
+    .unwrap_err();
     println!("bad fee result: {:?}", &send_result);
-    assert!(matches!(send_result, cycles_ledger::endpoints::SendError::BadFee{ .. }));
-    
+    assert!(matches!(
+        send_result,
+        cycles_ledger::endpoints::SendError::BadFee { .. }
+    ));
+
     // send cycles to deleted canister
     let deleted_canister = env.create_canister(None);
     env.stop_canister(deleted_canister).unwrap();
     env.delete_canister(deleted_canister).unwrap();
-    let send_result = send(env, ledger_id, user, SendArg{
-        from_subaccount: None,
-        to: deleted_canister.into(),
-        fee: None,
-        created_at_time: None,
-        memo: None,
-        amount: Nat::from(500_000_000_u128),
-    }).unwrap_err();
+    let send_result = send(
+        env,
+        ledger_id,
+        user,
+        SendArg {
+            from_subaccount: None,
+            to: deleted_canister.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(500_000_000_u128),
+        },
+    )
+    .unwrap_err();
     println!("send to deleted canister result: {:?}", &send_result);
 
-    assert!(matches!(send_result, cycles_ledger::endpoints::SendError::FailedToSend { rejection_code: RejectionCode::DestinationInvalid, .. }));
+    assert!(matches!(
+        send_result,
+        cycles_ledger::endpoints::SendError::FailedToSend {
+            rejection_code: RejectionCode::DestinationInvalid,
+            ..
+        }
+    ));
 
     // check that the user has the right balance
     assert_eq!(

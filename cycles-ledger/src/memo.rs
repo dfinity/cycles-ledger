@@ -9,6 +9,8 @@ pub struct BurnMemo<'a> {
 
 impl<'a> From<&'a CanisterId> for BurnMemo<'a> {
     fn from(canister: &'a CanisterId) -> Self {
-        Self { receiver: canister.as_slice() }
+        Self {
+            receiver: canister.as_slice(),
+        }
     }
 }

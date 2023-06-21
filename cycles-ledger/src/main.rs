@@ -1,6 +1,6 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::memo::BurnMemo;
-use cycles_ledger::{Account};
+use cycles_ledger::Account;
 use cycles_ledger::{config, endpoints, storage};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
@@ -160,19 +160,18 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
 #[update]
 #[candid_method]
 async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
-
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
     let now = ic_cdk::api::time();
     let balance = storage::available_balance_of(&from);
-    let target_canister = CanisterIdRecord{
-        canister_id: args.to   
+    let target_canister = CanisterIdRecord {
+        canister_id: args.to,
     };
-    
+
     // TODO(FI-767): Implement deduplication.
-    
+
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
         None => {
@@ -198,28 +197,32 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
         }
     }
     let memo = BurnMemo {
-        receiver: target_canister.canister_id.as_slice()
+        receiver: target_canister.canister_id.as_slice(),
     };
     let mut encoder = Encoder::new(Vec::new());
-    encoder.encode(&memo).expect("Encoding failed");
+    encoder.encode(memo).expect("Encoding failed");
     let encoded_memo = encoder.into_writer().into();
     let memo = validate_memo(Some(encoded_memo));
-    
+
     let reserved_balance = amount.saturating_add(config::FEE);
     if storage::reserve_balance(&from, reserved_balance).is_err() {
         return Err(endpoints::SendError::InsufficientFunds {
             balance: Nat::from(balance),
         });
     }
-    let deposit_cycles_result = management_canister::main::deposit_cycles(target_canister, amount).await;
+    let deposit_cycles_result =
+        management_canister::main::deposit_cycles(target_canister, amount).await;
     storage::release_balance(&from, reserved_balance);
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         let (burn, _burn_hash) = storage::burn(&from, 0, memo, now);
-        Err(endpoints::SendError::FailedToSend { burn, rejection_code, rejection_reason })
-
+        Err(endpoints::SendError::FailedToSend {
+            burn,
+            rejection_code,
+            rejection_reason,
+        })
     } else {
-        let (burn, _burn_hash) =  storage::burn(&from, amount, memo, now);
+        let (burn, _burn_hash) = storage::burn(&from, amount, memo, now);
         Ok(burn)
     }
 }

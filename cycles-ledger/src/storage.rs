@@ -1,12 +1,16 @@
-use crate::{endpoints::{Memo, BlockIndex}, Account};
+use crate::{
+    endpoints::{BlockIndex, Memo},
+    Account,
+};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::BTreeMap};
 use std::cell::RefCell;
+use std::{borrow::Cow, collections::BTreeMap};
+use thiserror::Error;
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -62,7 +66,7 @@ pub enum Operation {
         #[serde(rename = "memo")]
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
-    }
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -191,11 +195,20 @@ pub fn balance_of(account: &Account) -> u128 {
 pub fn available_balance_of(account: &Account) -> u128 {
     read_state(|s| {
         let account_key = to_account_key(account);
-        s.balances.get(&account_key).map(|balance| balance - s.reserved_balances.get(&account_key).unwrap_or(&0)).unwrap_or_default()
+        s.balances
+            .get(&account_key)
+            .map(|balance| balance - s.reserved_balances.get(&account_key).unwrap_or(&0))
+            .unwrap_or_default()
     })
 }
 
-pub fn reserve_balance(account: &Account, amount: u128) -> Result<(), ()> {
+#[derive(Error, Debug)]
+pub enum ReserveBalanceError {
+    #[error("Insufficient available balance")]
+    InsufficientAvailableBalance,
+}
+
+pub fn reserve_balance(account: &Account, amount: u128) -> Result<(), ReserveBalanceError> {
     if available_balance_of(account) > amount {
         let account_key = to_account_key(account);
         mutate_state(|s| {
@@ -204,7 +217,7 @@ pub fn reserve_balance(account: &Account, amount: u128) -> Result<(), ()> {
         });
         Ok(())
     } else {
-        Err(())
+        Err(ReserveBalanceError::InsufficientAvailableBalance)
     }
 }
 
@@ -292,12 +305,7 @@ pub fn transfer(
     })
 }
 
-pub fn burn(
-    from: &Account,
-    amount: u128,
-    memo: Option<Memo>,
-    now: u64
-) -> (BlockIndex, Hash) {
+pub fn burn(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
