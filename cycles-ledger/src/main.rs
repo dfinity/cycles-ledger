@@ -98,7 +98,7 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     }
     let memo = validate_memo(arg.memo);
     let (txid, balance, _phash) =
-        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
+        storage::record_deposit(&arg.to, amount - config::FEE, memo, ic_cdk::api::time());
 
     // TODO(FI-766): set the certified variable.
 

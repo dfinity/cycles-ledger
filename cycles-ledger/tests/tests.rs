@@ -1,7 +1,7 @@
 use candid::{Encode, Nat};
 use client::deposit;
 use cycles_ledger::{config::FEE, Account, endpoints::SendArg};
-use depositer::endpoints::InitArg as DeposterInitArg;
+use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_state_machine_tests::{CanisterId, Cycles, PrincipalId, StateMachine};
@@ -56,17 +56,17 @@ fn test_deposit_flow() {
     // Make the first deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
 
     // Check that the user has the right balance.
-    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000))
+    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000 - FEE))
 }
 
 #[test]
 fn test_send_flow() {
     let env = &StateMachine::new();
     let ledger_id = install_ledger(env);
-    let depositer_id = install_depositer(env, ledger_id);
+    let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
         owner: PrincipalId::new_user_test_id(1).into(),
         subaccount: None,
@@ -74,11 +74,11 @@ fn test_send_flow() {
     let send_receiver = env.create_canister(None);
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositer_id, user, 1_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
-    let depositer_balance = env.cycle_balance(send_receiver);
-    println!("depositer balance: {}", depositer_balance);
+    let depositor_balance = env.cycle_balance(send_receiver);
+    println!("depositor balance: {}", depositor_balance);
 
     // send cycles to send_receiver
     let send_amount = 500000000_u128;
@@ -90,7 +90,7 @@ fn test_send_flow() {
         memo: None,
         amount: Nat::from(send_amount),
     }).unwrap();
-    assert_eq!(depositer_balance + send_amount, env.cycle_balance(send_receiver));
+    assert_eq!(depositor_balance + send_amount, env.cycle_balance(send_receiver));
 
     // check that the user has the right balance
     assert_eq!(
@@ -104,7 +104,7 @@ fn test_send_flow() {
 fn test_send_fails() {
     let env = &StateMachine::new();
     let ledger_id = install_ledger(env);
-    let depositer_id = install_depositer(env, ledger_id);
+    let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
         owner: PrincipalId::new_user_test_id(1).into(),
         subaccount: None,
@@ -114,7 +114,7 @@ fn test_send_fails() {
     env.delete_canister(send_receiver).unwrap();
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositer_id, user, 1_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
 
@@ -141,14 +141,14 @@ fn test_send_fails() {
 fn test_send_input_rejected() {
     let env = &StateMachine::new();
     let ledger_id = install_ledger(env);
-    let depositer_id = install_depositer(env, ledger_id);
+    let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
         owner: PrincipalId::new_user_test_id(1).into(),
         subaccount: None,
     };
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositer_id, user, 1_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
 
@@ -156,7 +156,7 @@ fn test_send_input_rejected() {
     let send_amount = 999_000_000_000_u128;
     let send_result = send(env, ledger_id, user, SendArg{
         from_subaccount: None,
-        to: depositer_id.into(),
+        to: depositor_id.into(),
         fee: None,
         created_at_time: None,
         memo: None,
@@ -168,7 +168,7 @@ fn test_send_input_rejected() {
     // send from empty subaccount
     let send_result = send(env, ledger_id, user, SendArg{
         from_subaccount: Some([5; 32]),
-        to: depositer_id.into(),
+        to: depositor_id.into(),
         fee: None,
         created_at_time: None,
         memo: None,
@@ -180,7 +180,7 @@ fn test_send_input_rejected() {
     // bad fee
     let send_result = send(env, ledger_id, user, SendArg{
         from_subaccount: None,
-        to: depositer_id.into(),
+        to: depositor_id.into(),
         fee: Some(Nat::from(4)),
         created_at_time: None,
         memo: None,

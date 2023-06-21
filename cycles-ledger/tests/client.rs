@@ -1,6 +1,6 @@
 use candid::{Decode, Encode, Nat};
 use cycles_ledger::{endpoints::{DepositResult, SendArg, self}, Account};
-use depositer::endpoints::DepositArg;
+use depositor::endpoints::DepositArg;
 use ic_state_machine_tests::{CanisterId, StateMachine};
 use num_traits::ToPrimitive;
 
