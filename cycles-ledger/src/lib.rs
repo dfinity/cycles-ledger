@@ -61,6 +61,3 @@ impl From<Principal> for Account {
         }
     }
 }
-
-
-

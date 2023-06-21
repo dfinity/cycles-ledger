@@ -1,4 +1,4 @@
-use crate::{endpoints::Memo, Account};
+use crate::{endpoints::{Memo, BlockIndex}, Account};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -297,7 +297,7 @@ pub fn burn(
     amount: u128,
     memo: Option<Memo>,
     now: u64
-) -> (u64, Hash) {
+) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
@@ -322,6 +322,6 @@ pub fn burn(
             timestamp: now,
             phash,
         });
-        (s.blocks.len() - 1, block_hash)
+        (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
 }

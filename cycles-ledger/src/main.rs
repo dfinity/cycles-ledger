@@ -171,7 +171,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
         canister_id: args.to   
     };
     
-    // TODO: deduplication
+    // TODO(FI-767): Implement deduplication.
     
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
@@ -205,20 +205,21 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
     let encoded_memo = encoder.into_writer().into();
     let memo = validate_memo(Some(encoded_memo));
     
-    if storage::reserve_balance(&from, amount.saturating_add(config::FEE)).is_err() {
+    let reserved_balance = amount.saturating_add(config::FEE);
+    if storage::reserve_balance(&from, reserved_balance).is_err() {
         return Err(endpoints::SendError::InsufficientFunds {
             balance: Nat::from(balance),
         });
     }
-    if let Err((rejection_code, rejection_reason)) = management_canister::main::deposit_cycles(target_canister, amount).await {
-        storage::release_balance(&from, amount.saturating_add(config::FEE));
+    let deposit_cycles_result = management_canister::main::deposit_cycles(target_canister, amount).await;
+    storage::release_balance(&from, reserved_balance);
+
+    if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         let (burn, _burn_hash) = storage::burn(&from, 0, memo, now);
-        let burn = Nat::from(burn);
         Err(endpoints::SendError::FailedToSend { burn, rejection_code, rejection_reason })
 
     } else {
         let (burn, _burn_hash) =  storage::burn(&from, amount, memo, now);
-        let burn = Nat::from(burn);
         Ok(burn)
     }
 }
