@@ -10,45 +10,30 @@ use crate::client::{balance_of, send};
 
 mod client;
 
-fn cycles_ledger_wasm() -> Vec<u8> {
-    println!(
-        "{}",
-        std::path::Path::new("..").canonicalize().unwrap().display()
-    );
+fn get_wasm(name: &str) -> Vec<u8> {
     let binary = CargoBuild::new()
         .manifest_path("../Cargo.toml")
         .target("wasm32-unknown-unknown")
-        .bin("cycles-ledger")
+        .bin(name)
         .arg("--release")
         .run()
         .expect("Unable to run cargo build");
-    std::fs::read(binary.path()).expect("cycles-ledger wasm file not found")
-}
-
-fn depositer_wasm() -> Vec<u8> {
-    let binary = CargoBuild::new()
-        .manifest_path("../Cargo.toml")
-        .target("wasm32-unknown-unknown")
-        .bin("depositer")
-        .arg("--release")
-        .run()
-        .expect("Unable to run cargo build");
-    std::fs::read(binary.path()).expect("depositer wasm file not found")
+    std::fs::read(binary.path()).unwrap_or_else(|_| panic!("{} wasm file not found", name))
 }
 
 fn install_ledger(env: &StateMachine) -> CanisterId {
-    env.install_canister(cycles_ledger_wasm(), vec![], None)
+    env.install_canister(get_wasm("cycles-ledger"), vec![], None)
         .unwrap()
 }
 
-fn install_depositer(env: &StateMachine, ledger_id: CanisterId) -> CanisterId {
-    let depositer_init_arg = Encode!(&DeposterInitArg {
+fn install_depositor(env: &StateMachine, ledger_id: CanisterId) -> CanisterId {
+    let depositor_init_arg = Encode!(&DepositorInitArg {
         ledger_id: ledger_id.into()
     })
     .unwrap();
     env.install_canister_with_cycles(
-        depositer_wasm(),
-        depositer_init_arg,
+        get_wasm("depositor"),
+        depositor_init_arg,
         None,
         Cycles::new(u128::MAX),
     )
@@ -59,25 +44,22 @@ fn install_depositer(env: &StateMachine, ledger_id: CanisterId) -> CanisterId {
 fn test_deposit_flow() {
     let env = &StateMachine::new();
     let ledger_id = install_ledger(env);
-    let depositer_id = install_depositer(env, ledger_id);
+    let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
         owner: PrincipalId::new_user_test_id(1).into(),
         subaccount: None,
     };
 
-    // check that the user doesn't have any tokens before the first deposit
+    // Check that the user doesn't have any tokens before the first deposit.
     assert_eq!(balance_of(env, ledger_id, user), 0u128);
 
-    // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositer_id, user, 1_000_000_000);
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
-    // check that the user has the right balance
-    assert_eq!(
-        balance_of(env, ledger_id, user),
-        Nat::from(1_000_000_000 - FEE)
-    )
+    // Check that the user has the right balance.
+    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000))
 }
 
 #[test]

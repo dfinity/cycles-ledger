@@ -51,6 +51,7 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
 #[query]
 #[candid_method(query)]
 fn icrc1_total_supply() -> Nat {
+    // TODO(FI-765): Implement the total supply function.
     todo!()
 }
 
@@ -93,12 +94,14 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     // TODO: deduplication
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
-        ic_cdk::trap("deposit amount is unsufficient to cover fees");
+        ic_cdk::trap("deposit amount is insufficient to cover fees");
     }
     let memo = validate_memo(arg.memo);
     let (txid, balance, _phash) =
-        storage::record_deposit(&arg.to, amount - config::FEE, memo, ic_cdk::api::time());
-    // TODO: set the certified variable.
+        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
+
+    // TODO(FI-766): set the certified variable.
+
     endpoints::DepositResult {
         txid: Nat::from(txid),
         balance: Nat::from(balance),
@@ -115,7 +118,7 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
     let now = ic_cdk::api::time();
     let balance = storage::balance_of(&from);
 
-    // TODO: deduplication
+    // TODO(FI-767): Implement deduplication.
 
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,

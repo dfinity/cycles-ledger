@@ -5,5 +5,5 @@ members = [
     "cycles-ledger",
 
     # Crates used for testing only
-    "depositer",
+    "depositor",
 ]

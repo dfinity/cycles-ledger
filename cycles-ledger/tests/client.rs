@@ -6,7 +6,7 @@ use num_traits::ToPrimitive;
 
 pub fn deposit(
     env: &StateMachine,
-    depositer_id: CanisterId,
+    depositor_id: CanisterId,
     to: Account,
     cycles: u128,
 ) -> DepositResult {
@@ -17,7 +17,7 @@ pub fn deposit(
     })
     .unwrap();
     let res = env
-        .execute_ingress_as(to.owner.into(), depositer_id, "deposit", arg)
+        .execute_ingress_as(to.owner.into(), depositor_id, "deposit", arg)
         .unwrap();
     Decode!(&res.bytes(), DepositResult).unwrap()
 }
