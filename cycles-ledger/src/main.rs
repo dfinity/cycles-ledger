@@ -90,6 +90,7 @@ fn validate_memo(memo: Option<endpoints::Memo>) -> Option<endpoints::Memo> {
 #[candid_method]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
+    // TODO: deduplication
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
         ic_cdk::trap("deposit amount is unsufficient to cover fees");
