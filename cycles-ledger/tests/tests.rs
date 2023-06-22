@@ -1,6 +1,6 @@
 use candid::{Encode, Nat};
 use client::deposit;
-use cycles_ledger::{Account, config};
+use cycles_ledger::{config, Account};
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_state_machine_tests::{CanisterId, Cycles, PrincipalId, StateMachine};
@@ -58,7 +58,15 @@ fn test_deposit_flow() {
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
     // Check that the user has the right balance.
-    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000))
+    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000));
+
+    // Make another deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, user, 500_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(1));
+    assert_eq!(deposit_res.balance, Nat::from(1_500_000_000));
+
+    // Check that the user has the right balance after both deposits.
+    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_500_000_000));
 }
 
 #[test]
@@ -73,6 +81,5 @@ fn test_deposit_amount_below_fee() {
     };
 
     // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
-    let _deposit_result = deposit(env, depositor_id, user, config::FEE-1);
-
+    let _deposit_result = deposit(env, depositor_id, user, config::FEE - 1);
 }
