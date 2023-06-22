@@ -1,5 +1,6 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::memo::BurnMemo;
+use cycles_ledger::memo::SendMemo;
+use cycles_ledger::storage::mutate_state;
 use cycles_ledger::Account;
 use cycles_ledger::{config, endpoints, storage};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
@@ -91,14 +92,16 @@ fn validate_memo(memo: Option<endpoints::Memo>) -> Option<endpoints::Memo> {
 #[candid_method]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
-    // TODO: deduplication
+
+    // TODO(FI-767): Implement deduplication.
+
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
         ic_cdk::trap("deposit amount is insufficient to cover fees");
     }
     let memo = validate_memo(arg.memo);
     let (txid, balance, _phash) =
-        storage::record_deposit(&arg.to, amount - config::FEE, memo, ic_cdk::api::time());
+        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
 
     // TODO(FI-766): set the certified variable.
 
@@ -160,12 +163,24 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
 #[update]
 #[candid_method]
 async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
+    if args
+        .to
+        .as_slice()
+        .get(28) // candid::Principal::MAX_LENGTH_IN_BYTES - 1
+        .map(|b| *b == 2) // candid::Principal::SELF_AUTHENTICATING_TAG
+        .unwrap_or_default()
+    {
+        // self-authenticating ID means user is trying to send to a non-canister target
+        return Err(endpoints::SendError::InvalidReceiver { receiver: args.to });
+    }
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
+    let from_key = storage::to_account_key(&from);
     let now = ic_cdk::api::time();
-    let balance = storage::available_balance_of(&from);
+    let balance = storage::balance_of(&from);
+
     let target_canister = CanisterIdRecord {
         canister_id: args.to,
     };
@@ -196,7 +211,13 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
             }
         }
     }
-    let memo = BurnMemo {
+    let total_send_cost = amount.saturating_add(config::FEE);
+    if total_send_cost > balance {
+        return Err(endpoints::SendError::InsufficientFunds {
+            balance: Nat::from(balance),
+        });
+    }
+    let memo = SendMemo {
         receiver: target_canister.canister_id.as_slice(),
     };
     let mut encoder = Encoder::new(Vec::new());
@@ -204,26 +225,34 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
     let encoded_memo = encoder.into_writer().into();
     let memo = validate_memo(Some(encoded_memo));
 
-    let reserved_balance = amount.saturating_add(config::FEE);
-    if storage::reserve_balance(&from, reserved_balance).is_err() {
-        return Err(endpoints::SendError::InsufficientFunds {
-            balance: Nat::from(balance),
-        });
-    }
+    // While awaiting the deposit call the in-flight cycles shall not be available to the user
+    mutate_state(|s| {
+        let new_balance = balance - total_send_cost;
+        if new_balance == Nat::from(0) {
+            s.balances.remove(&from_key);
+        } else {
+            s.balances.insert(from_key, new_balance);
+        }
+    });
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
-    storage::release_balance(&from, reserved_balance);
+    // Revert in-flight deduction. 'Real' deduction happens in storage::send
+    let balance = storage::balance_of(&from);
+    mutate_state(|s| {
+        let new_balance = balance + total_send_cost;
+        s.balances.insert(from_key, new_balance);
+    });
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        let (burn, _burn_hash) = storage::burn(&from, 0, memo, now);
+        let (fee, _fee_hash) = storage::send(&from, 0, memo, now);
         Err(endpoints::SendError::FailedToSend {
-            burn,
+            fee,
             rejection_code,
             rejection_reason,
         })
     } else {
-        let (burn, _burn_hash) = storage::burn(&from, amount, memo, now);
-        Ok(burn)
+        let (send, _send_hash) = storage::send(&from, amount, memo, now);
+        Ok(send)
     }
 }
 

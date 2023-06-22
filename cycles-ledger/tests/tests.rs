@@ -1,10 +1,15 @@
 use candid::{Encode, Nat};
 use client::deposit;
-use cycles_ledger::{config::FEE, endpoints::SendArg, Account};
+use cycles_ledger::{
+    config::{self, FEE},
+    endpoints::{Memo, SendArg},
+    Account,
+};
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_state_machine_tests::{CanisterId, Cycles, PrincipalId, StateMachine};
+use serde_bytes::ByteBuf;
 
 use crate::client::{balance_of, send};
 
@@ -56,38 +61,57 @@ fn test_deposit_flow() {
     // Make the first deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
     // Check that the user has the right balance.
-    assert_eq!(
-        balance_of(env, ledger_id, user),
-        Nat::from(1_000_000_000 - FEE)
-    )
+    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000))
 }
 
 #[test]
 fn test_send_flow() {
+    // TODO(SDK-1145): Add re-entrancy test
+
     let env = &StateMachine::new();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
-    let user = Account {
+    let user_main_account = Account {
         owner: PrincipalId::new_user_test_id(1).into(),
         subaccount: None,
     };
+    let user_subaccount_1 = Account {
+        owner: PrincipalId::new_user_test_id(1).into(),
+        subaccount: Some([1; 32]),
+    };
+    let user_subaccount_2 = Account {
+        owner: PrincipalId::new_user_test_id(1).into(),
+        subaccount: Some([2; 32]),
+    };
+    let user_subaccount_3 = Account {
+        owner: PrincipalId::new_user_test_id(1).into(),
+        subaccount: Some([3; 32]),
+    };
+    let user_subaccount_4 = Account {
+        owner: PrincipalId::new_user_test_id(1).into(),
+        subaccount: Some([4; 32]),
+    };
     let send_receiver = env.create_canister(None);
-    let initial_send_receiver_balance = env.cycle_balance(send_receiver);
 
-    // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
+    // make deposits to the user and check the result
+    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    deposit(env, depositor_id, user_subaccount_1, 1_000_000_000);
+    deposit(env, depositor_id, user_subaccount_2, 1_000_000_000);
+    deposit(env, depositor_id, user_subaccount_3, 1_000_000_000);
+    deposit(env, depositor_id, user_subaccount_4, 1_000_000_000);
 
-    // send cycles to send_receiver
+    // send cycles from main account
+    let send_receiver_balance = env.cycle_balance(send_receiver);
     let send_amount = 500000000_u128;
     let _send_idx = send(
         env,
         ledger_id,
-        user,
+        user_main_account,
         SendArg {
             from_subaccount: None,
             to: send_receiver.into(),
@@ -99,16 +123,116 @@ fn test_send_flow() {
     )
     .unwrap();
     assert_eq!(
-        initial_send_receiver_balance + send_amount,
+        send_receiver_balance + send_amount,
         env.cycle_balance(send_receiver)
     );
-
-    // TODO(SDK-1145): Add re-entrancy test
-
-    // check that the user has the right balance
     assert_eq!(
-        balance_of(env, ledger_id, user),
-        Nat::from(1_000_000_000 - FEE - send_amount - FEE)
+        balance_of(env, ledger_id, user_main_account),
+        Nat::from(1_000_000_000 - send_amount - FEE)
+    );
+
+    // send cycles from subaccount
+    let send_receiver_balance = env.cycle_balance(send_receiver);
+    let send_amount = 100000000_u128;
+    let _send_idx = send(
+        env,
+        ledger_id,
+        user_subaccount_1,
+        SendArg {
+            from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
+            to: send_receiver.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_subaccount_1),
+        1_000_000_000 - send_amount - FEE
+    );
+
+    // send cycles from subaccount correct fee set
+    let send_receiver_balance = env.cycle_balance(send_receiver);
+    let send_amount = 200000000_u128;
+    let _send_idx = send(
+        env,
+        ledger_id,
+        user_subaccount_2,
+        SendArg {
+            from_subaccount: Some(*user_subaccount_2.effective_subaccount()),
+            to: send_receiver.into(),
+            fee: Some(Nat::from(config::FEE)),
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_subaccount_2),
+        1_000_000_000 - send_amount - FEE
+    );
+
+    // send cycles from subaccount with created_at_time set
+    let send_receiver_balance = env.cycle_balance(send_receiver);
+    let send_amount = 300000000_u128;
+    let _send_idx = send(
+        env,
+        ledger_id,
+        user_subaccount_3,
+        SendArg {
+            from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
+            to: send_receiver.into(),
+            fee: None,
+            created_at_time: Some(100_u64),
+            memo: None,
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_subaccount_3),
+        1_000_000_000 - send_amount - FEE
+    );
+
+    // send cycles from subaccount with Memo set
+    let send_receiver_balance = env.cycle_balance(send_receiver);
+    let send_amount = 300000000_u128;
+    let _send_idx = send(
+        env,
+        ledger_id,
+        user_subaccount_4,
+        SendArg {
+            from_subaccount: Some(*user_subaccount_4.effective_subaccount()),
+            to: send_receiver.into(),
+            fee: None,
+            created_at_time: None,
+            memo: Some(Memo(ByteBuf::from([5; 32]))),
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_subaccount_4),
+        1_000_000_000 - send_amount - FEE
     );
 }
 
@@ -125,7 +249,7 @@ fn test_send_fails() {
     // make the first deposit to the user and check the result
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000 - FEE));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
     // send more than available
     let send_result = send(
@@ -145,8 +269,9 @@ fn test_send_fails() {
     println!("send more than available result: {:?}", &send_result);
     assert!(matches!(
         send_result,
-        cycles_ledger::endpoints::SendError::InsufficientFunds { .. }
+        cycles_ledger::endpoints::SendError::InsufficientFunds { balance } if balance == 1_000_000_000
     ));
+    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
 
     // send from empty subaccount
     let send_result = send(
@@ -166,8 +291,9 @@ fn test_send_fails() {
     println!("send from empty subaccount result: {:?}", &send_result);
     assert!(matches!(
         send_result,
-        cycles_ledger::endpoints::SendError::InsufficientFunds { .. }
+        cycles_ledger::endpoints::SendError::InsufficientFunds { balance } if balance == 0
     ));
+    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
 
     // bad fee
     let send_result = send(
@@ -187,8 +313,38 @@ fn test_send_fails() {
     println!("bad fee result: {:?}", &send_result);
     assert!(matches!(
         send_result,
-        cycles_ledger::endpoints::SendError::BadFee { .. }
+        cycles_ledger::endpoints::SendError::BadFee { expected_fee } if expected_fee == config::FEE
     ));
+    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
+
+    // send cycles to user instead of canister
+    let self_authenticating_principal = candid::Principal::from_text(
+        "luwgt-ouvkc-k5rx5-xcqkq-jx5hm-r2rj2-ymqjc-pjvhb-kij4p-n4vms-gqe",
+    )
+    .unwrap();
+    let send_result = send(
+        env,
+        ledger_id,
+        user,
+        SendArg {
+            from_subaccount: None,
+            to: self_authenticating_principal,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(500_000_000_u128),
+        },
+    )
+    .unwrap_err();
+    println!(
+        "send to self-authenticating principal result: {:?}",
+        &send_result
+    );
+    assert!(matches!(
+        send_result,
+        cycles_ledger::endpoints::SendError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+    ));
+    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
 
     // send cycles to deleted canister
     let deleted_canister = env.create_canister(None);
@@ -209,7 +365,6 @@ fn test_send_fails() {
     )
     .unwrap_err();
     println!("send to deleted canister result: {:?}", &send_result);
-
     assert!(matches!(
         send_result,
         cycles_ledger::endpoints::SendError::FailedToSend {
@@ -217,10 +372,11 @@ fn test_send_fails() {
             ..
         }
     ));
+    assert_eq!(900_000_000_u128, balance_of(env, ledger_id, user));
 
     // check that the user has the right balance
     assert_eq!(
         balance_of(env, ledger_id, user),
-        Nat::from(1_000_000_000 - FEE - FEE)
+        Nat::from(1_000_000_000 - FEE)
     );
 }

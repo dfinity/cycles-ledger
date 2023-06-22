@@ -151,12 +151,15 @@ pub enum SendError {
         duplicate_of: BlockIndex,
     },
     FailedToSend {
-        burn: BlockIndex,
+        fee: BlockIndex,
         rejection_code: RejectionCode,
         rejection_reason: String,
     },
     GenericError {
         error_code: Nat,
         message: String,
+    },
+    InvalidReceiver {
+        receiver: Principal,
     },
 }

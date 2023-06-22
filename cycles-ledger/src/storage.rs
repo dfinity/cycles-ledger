@@ -8,9 +8,8 @@ use ic_stable_structures::{
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cell::RefCell;
-use std::{borrow::Cow, collections::BTreeMap};
-use thiserror::Error;
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -21,7 +20,6 @@ type VMem = VirtualMemory<DefaultMemoryImpl>;
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type ReservedBalances = BTreeMap<AccountKey, u128>;
 
 pub type Hash = [u8; 32];
 
@@ -89,7 +87,6 @@ impl Block {
 pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
-    pub reserved_balances: ReservedBalances,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -136,7 +133,6 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
-            reserved_balances: ReservedBalances::default(),
         })
     });
 }
@@ -180,7 +176,7 @@ where
     }
 }
 
-fn to_account_key(account: &Account) -> AccountKey {
+pub fn to_account_key(account: &Account) -> AccountKey {
     (
         Blob::try_from(account.owner.as_slice())
             .expect("principals cannot be longer than 29 bytes"),
@@ -190,48 +186,6 @@ fn to_account_key(account: &Account) -> AccountKey {
 
 pub fn balance_of(account: &Account) -> u128 {
     read_state(|s| s.balances.get(&to_account_key(account)).unwrap_or_default())
-}
-
-pub fn available_balance_of(account: &Account) -> u128 {
-    read_state(|s| {
-        let account_key = to_account_key(account);
-        s.balances
-            .get(&account_key)
-            .map(|balance| balance - s.reserved_balances.get(&account_key).unwrap_or(&0))
-            .unwrap_or_default()
-    })
-}
-
-#[derive(Error, Debug)]
-pub enum ReserveBalanceError {
-    #[error("Insufficient available balance")]
-    InsufficientAvailableBalance,
-}
-
-pub fn reserve_balance(account: &Account, amount: u128) -> Result<(), ReserveBalanceError> {
-    if available_balance_of(account) > amount {
-        let account_key = to_account_key(account);
-        mutate_state(|s| {
-            let reserved_balance = s.reserved_balances.entry(account_key).or_default();
-            *reserved_balance += amount;
-        });
-        Ok(())
-    } else {
-        Err(ReserveBalanceError::InsufficientAvailableBalance)
-    }
-}
-
-pub fn release_balance(account: &Account, amount: u128) {
-    mutate_state(|s| {
-        let account_key = to_account_key(account);
-        if let Some(reserved) = s.reserved_balances.get_mut(&account_key) {
-            if *reserved > amount {
-                *reserved -= amount;
-            } else {
-                let _ = s.reserved_balances.remove(&account_key);
-            }
-        }
-    })
 }
 
 pub fn record_deposit(
@@ -305,19 +259,17 @@ pub fn transfer(
     })
 }
 
-pub fn burn(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (BlockIndex, Hash) {
+pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
+        let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
-        assert!(from_balance >= amount.saturating_add(crate::config::FEE));
+        assert!(from_balance >= total_balance_deduction);
 
         s.balances
-            .insert(
-                from_key,
-                from_balance - amount.saturating_add(crate::config::FEE),
-            )
+            .insert(from_key, from_balance - total_balance_deduction)
             .expect("failed to update 'from' balance");
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
