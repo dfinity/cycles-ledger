@@ -1,6 +1,6 @@
 use candid::{Encode, Nat};
 use client::deposit;
-use cycles_ledger::Account;
+use cycles_ledger::{Account, config};
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_state_machine_tests::{CanisterId, Cycles, PrincipalId, StateMachine};
@@ -59,4 +59,20 @@ fn test_deposit_flow() {
 
     // Check that the user has the right balance.
     assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000))
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_amount_below_fee() {
+    let env = &StateMachine::new();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user = Account {
+        owner: PrincipalId::new_user_test_id(1).into(),
+        subaccount: None,
+    };
+
+    // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
+    let _deposit_result = deposit(env, depositor_id, user, config::FEE-1);
+
 }
