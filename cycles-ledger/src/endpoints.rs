@@ -135,7 +135,13 @@ pub struct SendArg {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum SendError {
+pub struct SendError {
+    pub fee_block: Nat,
+    pub reason: SendErrorReason,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum SendErrorReason {
     BadFee {
         expected_fee: NumCycles,
     },
@@ -151,7 +157,6 @@ pub enum SendError {
         duplicate_of: BlockIndex,
     },
     FailedToSend {
-        fee: BlockIndex,
         rejection_code: RejectionCode,
         rejection_reason: String,
     },

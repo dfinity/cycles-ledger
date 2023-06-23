@@ -2,7 +2,7 @@ use candid::{Encode, Nat};
 use client::deposit;
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{Memo, SendArg},
+    endpoints::{Memo, SendArg, SendErrorReason},
     Account,
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
@@ -247,11 +247,12 @@ fn test_send_fails() {
     };
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000_000);
     assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
     // send more than available
+    let balance_before_attempt = balance_of(env, ledger_id, user);
     let send_result = send(
         env,
         ledger_id,
@@ -262,16 +263,18 @@ fn test_send_fails() {
             fee: None,
             created_at_time: None,
             memo: None,
-            amount: Nat::from(999_000_000_000_u128),
+            amount: Nat::from(u128::MAX),
         },
     )
     .unwrap_err();
-    println!("send more than available result: {:?}", &send_result);
     assert!(matches!(
-        send_result,
-        cycles_ledger::endpoints::SendError::InsufficientFunds { balance } if balance == 1_000_000_000
+        send_result.reason,
+        SendErrorReason::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
     ));
-    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
+    assert_eq!(
+        balance_before_attempt - FEE,
+        balance_of(env, ledger_id, user)
+    );
 
     // send from empty subaccount
     let send_result = send(
@@ -288,14 +291,13 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    println!("send from empty subaccount result: {:?}", &send_result);
     assert!(matches!(
-        send_result,
-        cycles_ledger::endpoints::SendError::InsufficientFunds { balance } if balance == 0
+        send_result.reason,
+        SendErrorReason::InsufficientFunds { balance } if balance == 0
     ));
-    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
 
     // bad fee
+    let balance_before_attempt = balance_of(env, ledger_id, user);
     let send_result = send(
         env,
         ledger_id,
@@ -310,14 +312,17 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    println!("bad fee result: {:?}", &send_result);
     assert!(matches!(
-        send_result,
-        cycles_ledger::endpoints::SendError::BadFee { expected_fee } if expected_fee == config::FEE
+        send_result.reason,
+        SendErrorReason::BadFee { expected_fee } if expected_fee == config::FEE
     ));
-    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
+    assert_eq!(
+        balance_before_attempt - FEE,
+        balance_of(env, ledger_id, user)
+    );
 
     // send cycles to user instead of canister
+    let balance_before_attempt = balance_of(env, ledger_id, user);
     let self_authenticating_principal = candid::Principal::from_text(
         "luwgt-ouvkc-k5rx5-xcqkq-jx5hm-r2rj2-ymqjc-pjvhb-kij4p-n4vms-gqe",
     )
@@ -336,17 +341,17 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    println!(
-        "send to self-authenticating principal result: {:?}",
-        &send_result
-    );
     assert!(matches!(
-        send_result,
-        cycles_ledger::endpoints::SendError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+        send_result.reason,
+        SendErrorReason::InvalidReceiver { receiver } if receiver == self_authenticating_principal
     ));
-    assert_eq!(1_000_000_000_u128, balance_of(env, ledger_id, user));
+    assert_eq!(
+        balance_before_attempt - FEE,
+        balance_of(env, ledger_id, user)
+    );
 
     // send cycles to deleted canister
+    let balance_before_attempt = balance_of(env, ledger_id, user);
     let deleted_canister = env.create_canister(None);
     env.stop_canister(deleted_canister).unwrap();
     env.delete_canister(deleted_canister).unwrap();
@@ -364,19 +369,52 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    println!("send to deleted canister result: {:?}", &send_result);
     assert!(matches!(
-        send_result,
-        cycles_ledger::endpoints::SendError::FailedToSend {
+        send_result.reason,
+        SendErrorReason::FailedToSend {
             rejection_code: RejectionCode::DestinationInvalid,
             ..
         }
     ));
-    assert_eq!(900_000_000_u128, balance_of(env, ledger_id, user));
-
-    // check that the user has the right balance
     assert_eq!(
-        balance_of(env, ledger_id, user),
-        Nat::from(1_000_000_000 - FEE)
+        balance_before_attempt - FEE,
+        balance_of(env, ledger_id, user)
     );
+
+    // user loses all cycles if they don't have enough balance to pay the penal fee
+    let user_2 = Account {
+        owner: PrincipalId::new_user_test_id(2).into(),
+        subaccount: None,
+    };
+    deposit(env, depositor_id, user_2, FEE + 1);
+    send(
+        env,
+        ledger_id,
+        user_2,
+        SendArg {
+            from_subaccount: None,
+            to: depositor_id.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(u128::MAX),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(1, balance_of(env, ledger_id, user_2));
+    send(
+        env,
+        ledger_id,
+        user_2,
+        SendArg {
+            from_subaccount: None,
+            to: depositor_id.into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(u128::MAX),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(0, balance_of(env, ledger_id, user_2));
 }

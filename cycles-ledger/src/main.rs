@@ -1,4 +1,5 @@
 use candid::{candid_method, Nat};
+use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::mutate_state;
 use cycles_ledger::Account;
@@ -160,9 +161,19 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
     Ok(Nat::from(txid))
 }
 
+fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
+    let now = ic_cdk::api::time();
+    let (fee_block, _fee_hash) = storage::penalize(&from, now);
+    Err(SendError { fee_block, reason })
+}
+
 #[update]
 #[candid_method]
-async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
+async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
+    let from = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.from_subaccount,
+    };
     if args
         .to
         .as_slice()
@@ -171,14 +182,12 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
         .unwrap_or_default()
     {
         // self-authenticating ID means user is trying to send to a non-canister target
-        return Err(endpoints::SendError::InvalidReceiver { receiver: args.to });
+        return send_emit_error(
+            &from,
+            SendErrorReason::InvalidReceiver { receiver: args.to },
+        );
     }
-    let from = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.from_subaccount,
-    };
     let from_key = storage::to_account_key(&from);
-    let now = ic_cdk::api::time();
     let balance = storage::balance_of(&from);
 
     let target_canister = CanisterIdRecord {
@@ -190,32 +199,44 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
         None => {
-            return Err(endpoints::SendError::InsufficientFunds {
-                balance: Nat::from(balance),
-            });
+            return send_emit_error(
+                &from,
+                SendErrorReason::InsufficientFunds {
+                    balance: Nat::from(balance),
+                },
+            );
         }
     };
     if let Some(fee) = args.fee {
         match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
-                    return Err(endpoints::SendError::BadFee {
-                        expected_fee: Nat::from(config::FEE),
-                    });
+                    return send_emit_error(
+                        &from,
+                        SendErrorReason::BadFee {
+                            expected_fee: Nat::from(config::FEE),
+                        },
+                    );
                 }
             }
             None => {
-                return Err(endpoints::SendError::BadFee {
-                    expected_fee: Nat::from(config::FEE),
-                });
+                return send_emit_error(
+                    &from,
+                    SendErrorReason::BadFee {
+                        expected_fee: Nat::from(config::FEE),
+                    },
+                );
             }
         }
     }
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
-        return Err(endpoints::SendError::InsufficientFunds {
-            balance: Nat::from(balance),
-        });
+        return send_emit_error(
+            &from,
+            SendErrorReason::InsufficientFunds {
+                balance: Nat::from(balance),
+            },
+        );
     }
     let memo = SendMemo {
         receiver: target_canister.canister_id.as_slice(),
@@ -227,30 +248,28 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, endpoints::SendError> {
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
     mutate_state(|s| {
-        let new_balance = balance - total_send_cost;
-        if new_balance == Nat::from(0) {
-            s.balances.remove(&from_key);
-        } else {
-            s.balances.insert(from_key, new_balance);
-        }
+        let new_balance = balance.saturating_sub(total_send_cost);
+        s.balances.insert(from_key, new_balance);
     });
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
-    // Revert in-flight deduction. 'Real' deduction happens in storage::send
+    // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
     let balance = storage::balance_of(&from);
     mutate_state(|s| {
-        let new_balance = balance + total_send_cost;
+        let new_balance = balance.saturating_add(total_send_cost);
         s.balances.insert(from_key, new_balance);
     });
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        let (fee, _fee_hash) = storage::send(&from, 0, memo, now);
-        Err(endpoints::SendError::FailedToSend {
-            fee,
-            rejection_code,
-            rejection_reason,
-        })
+        return send_emit_error(
+            &from,
+            SendErrorReason::FailedToSend {
+                rejection_code,
+                rejection_reason,
+            },
+        );
     } else {
+        let now = ic_cdk::api::time();
         let (send, _send_hash) = storage::send(&from, amount, memo, now);
         Ok(send)
     }
