@@ -6,6 +6,10 @@ type Duration = nat64;
 
 type Subaccount = blob;
 
+type RejectionCode = nat;
+
+type BlockIndex = nat;
+
 type Account = record {
     owner : principal;
     subaccount : opt Subaccount;
@@ -25,8 +29,8 @@ type TransferError = variant {
     BadBurn : record { min_burn_amount : nat };
     InsufficientFunds : record { balance : nat };
     TooOld;
-    CreatedInFuture: record { ledger_time : Timestamp };
-    Duplicate : record { duplicate_of : nat };
+    CreatedInFuture : record { ledger_time : Timestamp };
+    Duplicate : record { duplicate_of : BlockIndex };
     TemporarilyUnavailable;
     GenericError : record { error_code : nat; message : text };
 };
@@ -38,8 +42,46 @@ type Value = variant {
     Blob : blob;
 };
 
+type SendArg = record {
+    amount : nat;
+    from_subaccount : opt Subaccount;
+    to : principal;
+    fee : opt nat;
+    created_at_time : opt Timestamp;
+    memo : opt blob;
+};
+
+type SendError = variant {
+    BadFee : record {
+        expected_fee : nat;
+    };
+    InsufficientFunds : record {
+        balance : nat;
+    };
+    TooOld;
+    CreatedInFuture : record {
+        ledger_time : Timestamp;
+    };
+    TemporarilyUnavailable;
+    Duplicate : record {
+        duplicate_of : BlockIndex;
+    };
+    FailedToSend : record {
+        fee : nat;
+        rejection_code : RejectionCode;
+        rejection_reason : text;
+    };
+    GenericError : record {
+        error_code : nat;
+        message : text;
+    };
+    InvalidReceiver : record {
+        receiver : principal;
+    };
+};
+
 service : {
-    icrc1_metadata : () -> (vec record { text; Value; }) query;
+    icrc1_metadata : () -> (vec record { text; Value }) query;
     icrc1_name : () -> (text) query;
     icrc1_symbol : () -> (text) query;
     icrc1_decimals : () -> (nat8) query;
@@ -47,9 +89,10 @@ service : {
     icrc1_total_supply : () -> (nat) query;
     icrc1_minting_account : () -> (opt Account) query;
     icrc1_balance_of : (Account) -> (nat) query;
-    icrc1_transfer : (TransferArgs) -> (variant { Ok : nat; Err : TransferError });
+    icrc1_transfer : (TransferArgs) -> (variant { Ok : BlockIndex; Err : TransferError });
     icrc1_supported_standards : () -> (vec record { name : text; url : text }) query;
 
     // Endpoints specific to the cycle ledger.
-    deposit : (record { to : Account; memo : opt blob }) -> (record { txid : nat; balance : nat });
+    deposit : (record { to : Account; memo : opt blob }) -> (record { txid : BlockIndex; balance : nat });
+    send : (SendArg) -> (variant { Ok : BlockIndex; Err : SendError });
 }
