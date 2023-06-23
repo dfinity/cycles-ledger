@@ -163,7 +163,7 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
 
 fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
     let now = ic_cdk::api::time();
-    let (fee_block, _fee_hash) = storage::penalize(&from, now);
+    let (fee_block, _fee_hash) = storage::penalize(from, now);
     Err(SendError { fee_block, reason })
 }
 
@@ -261,13 +261,13 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     });
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        return send_emit_error(
+        send_emit_error(
             &from,
             SendErrorReason::FailedToSend {
                 rejection_code,
                 rejection_reason,
             },
-        );
+        )
     } else {
         let now = ic_cdk::api::time();
         let (send, _send_hash) = storage::send(&from, amount, memo, now);
