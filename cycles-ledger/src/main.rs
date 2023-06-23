@@ -181,7 +181,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         .map(|b| *b == 2) // candid::Principal::SELF_AUTHENTICATING_TAG
         .unwrap_or_default()
     {
-        // self-authenticating ID means user is trying to send to a non-canister target
+        // if it is not an opaque principal ID, the user is trying to send to a non-canister target
         return send_emit_error(
             &from,
             SendErrorReason::InvalidReceiver { receiver: args.to },

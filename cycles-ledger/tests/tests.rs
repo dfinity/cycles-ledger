@@ -133,7 +133,7 @@ fn test_send_flow() {
 
     // send cycles from subaccount
     let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 100000000_u128;
+    let send_amount = 100_000_000_u128;
     let _send_idx = send(
         env,
         ledger_id,
@@ -159,7 +159,7 @@ fn test_send_flow() {
 
     // send cycles from subaccount correct fee set
     let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 200000000_u128;
+    let send_amount = 200_000_000_u128;
     let _send_idx = send(
         env,
         ledger_id,
@@ -185,7 +185,7 @@ fn test_send_flow() {
 
     // send cycles from subaccount with created_at_time set
     let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 300000000_u128;
+    let send_amount = 300_000_000_u128;
     let _send_idx = send(
         env,
         ledger_id,
@@ -211,7 +211,7 @@ fn test_send_flow() {
 
     // send cycles from subaccount with Memo set
     let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 300000000_u128;
+    let send_amount = 300_000_000_u128;
     let _send_idx = send(
         env,
         ledger_id,
