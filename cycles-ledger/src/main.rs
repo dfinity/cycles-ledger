@@ -102,7 +102,7 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
-        ic_cdk::trap("deposit amount is insufficient to cover fees");
+        ic_cdk::trap("deposit amount is insufficient");
     }
     let memo = validate_memo(arg.memo);
     let (txid, balance, _phash) =
