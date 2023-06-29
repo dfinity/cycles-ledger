@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod config;
 pub mod endpoints;
+pub mod memo;
 pub mod storage;
 
 pub type Subaccount = [u8; 32];

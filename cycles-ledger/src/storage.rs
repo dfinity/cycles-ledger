@@ -1,4 +1,7 @@
-use crate::{endpoints::Memo, Account};
+use crate::{
+    endpoints::{BlockIndex, Memo},
+    Account,
+};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -43,6 +46,17 @@ pub enum Operation {
         from: Account,
         #[serde(rename = "to")]
         to: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        #[serde(rename = "fee")]
+        fee: u128,
+        #[serde(rename = "memo")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memo: Option<Memo>,
+    },
+    Burn {
+        #[serde(rename = "from")]
+        from: Account,
         #[serde(rename = "amt")]
         amount: u128,
         #[serde(rename = "fee")]
@@ -162,7 +176,7 @@ where
     }
 }
 
-fn to_account_key(account: &Account) -> AccountKey {
+pub fn to_account_key(account: &Account) -> AccountKey {
     (
         Blob::try_from(account.owner.as_slice())
             .expect("principals cannot be longer than 29 bytes"),
@@ -242,5 +256,63 @@ pub fn transfer(
             phash,
         });
         (s.blocks.len() - 1, block_hash)
+    })
+}
+
+pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
+    let from_key = to_account_key(from);
+
+    mutate_state(|s| {
+        let balance = s.balances.get(&from_key).unwrap_or_default();
+
+        if crate::config::FEE >= balance {
+            s.balances.remove(&from_key);
+        } else {
+            s.balances
+                .insert(from_key, balance.saturating_sub(crate::config::FEE))
+                .expect("failed to update balance");
+        }
+        let phash = s.last_block_hash();
+        let block_hash = s.emit_block(Block {
+            op: Operation::Burn {
+                from: *from,
+                amount: 0,
+                memo: None,
+                fee: crate::config::FEE,
+            },
+            timestamp: now,
+            phash,
+        });
+        (BlockIndex::from(s.blocks.len() - 1), block_hash)
+    })
+}
+
+pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (BlockIndex, Hash) {
+    let from_key = to_account_key(from);
+
+    mutate_state(|s| {
+        let from_balance = s.balances.get(&from_key).unwrap_or_default();
+        let total_balance_deduction = amount.saturating_add(crate::config::FEE);
+
+        assert!(from_balance >= total_balance_deduction);
+
+        s.balances
+            .insert(
+                from_key,
+                from_balance.saturating_sub(total_balance_deduction),
+            )
+            .expect("failed to update balance");
+        let phash = s.last_block_hash();
+        let block_hash = s.emit_block(Block {
+            op: Operation::Burn {
+                from: *from,
+                amount,
+                memo,
+                fee: crate::config::FEE,
+            },
+            timestamp: now,
+            phash,
+        });
+        (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
 }

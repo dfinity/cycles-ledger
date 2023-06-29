@@ -15,6 +15,7 @@ ciborium = "0.2"
 ic-cdk = { version = "0.6.0" }
 ic-cdk-macros = { version = "0.6.0" }
 ic-stable-structures = "0.5.0"
+minicbor = {version = "0.19.1", features = ["alloc", "derive"]}
 num-traits = "0.2"
 serde = "1"
 serde_bytes = "0.11"

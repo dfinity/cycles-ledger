@@ -1,9 +1,19 @@
 use candid::{candid_method, Nat};
+use cycles_ledger::endpoints::{SendError, SendErrorReason};
+use cycles_ledger::memo::SendMemo;
+use cycles_ledger::storage::mutate_state;
 use cycles_ledger::Account;
 use cycles_ledger::{config, endpoints, storage};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
+use ic_cdk::api::management_canister;
+use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{query, update};
+use minicbor::Encoder;
 use num_traits::ToPrimitive;
+
+// candid::Principal has these two consts as private
+pub const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
+pub const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
 
 #[query]
 #[candid_method(query)]
@@ -87,6 +97,9 @@ fn validate_memo(memo: Option<endpoints::Memo>) -> Option<endpoints::Memo> {
 #[candid_method]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
+
+    // TODO(FI-767): Implement deduplication.
+
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
         ic_cdk::trap("deposit amount is insufficient");
@@ -150,6 +163,120 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
     let (txid, _hash) = storage::transfer(&from, &args.to, amount, memo, now);
 
     Ok(Nat::from(txid))
+}
+
+fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
+    let now = ic_cdk::api::time();
+    let (fee_block, _fee_hash) = storage::penalize(from, now);
+    Err(SendError { fee_block, reason })
+}
+
+#[update]
+#[candid_method]
+async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
+    let from = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.from_subaccount,
+    };
+    if args
+        .to
+        .as_slice()
+        .get(CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES - 1)
+        .map(|b| *b == CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG)
+        .unwrap_or_default()
+    {
+        // if it is not an opaque principal ID, the user is trying to send to a non-canister target
+        return send_emit_error(
+            &from,
+            SendErrorReason::InvalidReceiver { receiver: args.to },
+        );
+    }
+    let from_key = storage::to_account_key(&from);
+    let balance = storage::balance_of(&from);
+
+    let target_canister = CanisterIdRecord {
+        canister_id: args.to,
+    };
+
+    // TODO(FI-767): Implement deduplication.
+
+    let amount = match args.amount.0.to_u128() {
+        Some(value) => value,
+        None => {
+            return send_emit_error(
+                &from,
+                SendErrorReason::InsufficientFunds {
+                    balance: Nat::from(balance),
+                },
+            );
+        }
+    };
+    if let Some(fee) = args.fee {
+        match fee.0.to_u128() {
+            Some(fee) => {
+                if fee != config::FEE {
+                    return send_emit_error(
+                        &from,
+                        SendErrorReason::BadFee {
+                            expected_fee: Nat::from(config::FEE),
+                        },
+                    );
+                }
+            }
+            None => {
+                return send_emit_error(
+                    &from,
+                    SendErrorReason::BadFee {
+                        expected_fee: Nat::from(config::FEE),
+                    },
+                );
+            }
+        }
+    }
+    let total_send_cost = amount.saturating_add(config::FEE);
+    if total_send_cost > balance {
+        return send_emit_error(
+            &from,
+            SendErrorReason::InsufficientFunds {
+                balance: Nat::from(balance),
+            },
+        );
+    }
+    let memo = SendMemo {
+        receiver: target_canister.canister_id.as_slice(),
+    };
+    let mut encoder = Encoder::new(Vec::new());
+    encoder.encode(memo).expect("Encoding failed");
+    let encoded_memo = encoder.into_writer().into();
+    let memo = validate_memo(Some(encoded_memo));
+
+    // While awaiting the deposit call the in-flight cycles shall not be available to the user
+    mutate_state(|s| {
+        let new_balance = balance.saturating_sub(total_send_cost);
+        s.balances.insert(from_key, new_balance);
+    });
+    let deposit_cycles_result =
+        management_canister::main::deposit_cycles(target_canister, amount).await;
+    // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
+    let balance = storage::balance_of(&from);
+    mutate_state(|s| {
+        let new_balance = balance.saturating_add(total_send_cost);
+        s.balances.insert(from_key, new_balance);
+    });
+
+    if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
+        send_emit_error(
+            &from,
+            SendErrorReason::FailedToSend {
+                rejection_code,
+                rejection_reason,
+            },
+        )
+    } else {
+        let now = ic_cdk::api::time();
+        let (send, _send_hash) = storage::send(&from, amount, memo, now);
+        Ok(send)
+    }
 }
 
 fn main() {}

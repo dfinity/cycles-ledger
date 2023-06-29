@@ -1,4 +1,5 @@
-use candid::{CandidType, Deserialize, Int, Nat};
+use candid::{CandidType, Deserialize, Int, Nat, Principal};
+use ic_cdk::api::call::RejectionCode;
 use serde::Serialize;
 use serde_bytes::ByteBuf;
 use std::convert::Into;
@@ -7,7 +8,7 @@ pub type BlockIndex = Nat;
 
 use crate::{Account, Subaccount};
 
-pub type NumTokens = Nat;
+pub type NumCycles = Nat;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct TransferArg {
@@ -15,12 +16,12 @@ pub struct TransferArg {
     pub from_subaccount: Option<Subaccount>,
     pub to: Account,
     #[serde(default)]
-    pub fee: Option<NumTokens>,
+    pub fee: Option<NumCycles>,
     #[serde(default)]
     pub created_at_time: Option<u64>,
     #[serde(default)]
     pub memo: Option<Memo>,
-    pub amount: NumTokens,
+    pub amount: NumCycles,
 }
 
 #[derive(
@@ -55,9 +56,9 @@ impl From<Memo> for ByteBuf {
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum TransferError {
-    BadFee { expected_fee: NumTokens },
-    BadBurn { min_burn_amount: NumTokens },
-    InsufficientFunds { balance: NumTokens },
+    BadFee { expected_fee: NumCycles },
+    BadBurn { min_burn_amount: NumCycles },
+    InsufficientFunds { balance: NumCycles },
     TooOld,
     CreatedInFuture { ledger_time: u64 },
     TemporarilyUnavailable,
@@ -117,4 +118,53 @@ pub fn make_entry(name: impl ToString, value: impl Into<Value>) -> (String, Valu
 pub struct SupportedStandard {
     pub name: String,
     pub url: String,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SendArg {
+    #[serde(default)]
+    pub from_subaccount: Option<Subaccount>,
+    pub to: Principal,
+    #[serde(default)]
+    pub fee: Option<NumCycles>,
+    #[serde(default)]
+    pub created_at_time: Option<u64>,
+    #[serde(default)]
+    pub memo: Option<Memo>,
+    pub amount: NumCycles,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SendError {
+    pub fee_block: Nat,
+    pub reason: SendErrorReason,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum SendErrorReason {
+    BadFee {
+        expected_fee: NumCycles,
+    },
+    InsufficientFunds {
+        balance: NumCycles,
+    },
+    TooOld,
+    CreatedInFuture {
+        ledger_time: u64,
+    },
+    TemporarilyUnavailable,
+    Duplicate {
+        duplicate_of: BlockIndex,
+    },
+    FailedToSend {
+        rejection_code: RejectionCode,
+        rejection_reason: String,
+    },
+    GenericError {
+        error_code: Nat,
+        message: String,
+    },
+    InvalidReceiver {
+        receiver: Principal,
+    },
 }
