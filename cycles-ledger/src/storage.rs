@@ -265,7 +265,7 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     mutate_state(|s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
 
-        if crate::config::FEE > balance {
+        if crate::config::FEE >= balance {
             s.balances.remove(&from_key);
         } else {
             s.balances

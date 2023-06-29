@@ -157,7 +157,7 @@ fn test_send_flow() {
         1_000_000_000 - send_amount - FEE
     );
 
-    // send cycles from subaccount correct fee set
+    // send cycles from subaccount with the correct fee set
     let send_receiver_balance = env.cycle_balance(send_receiver);
     let send_amount = 200_000_000_u128;
     let _send_idx = send(
@@ -381,7 +381,7 @@ fn test_send_fails() {
         balance_of(env, ledger_id, user)
     );
 
-    // user loses all cycles if they don't have enough balance to pay the penal fee
+    // user loses all cycles if they don't have enough balance to pay the fee
     let user_2 = Account {
         owner: PrincipalId::new_user_test_id(2).into(),
         subaccount: None,
