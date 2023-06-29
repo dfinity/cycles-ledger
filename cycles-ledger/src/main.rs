@@ -11,6 +11,10 @@ use ic_cdk_macros::{query, update};
 use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
+// candid::Principal has these two consts as private
+pub const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
+pub const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
+
 #[query]
 #[candid_method(query)]
 fn icrc1_name() -> String {
@@ -177,8 +181,8 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     if args
         .to
         .as_slice()
-        .get(28) // candid::Principal::MAX_LENGTH_IN_BYTES - 1
-        .map(|b| *b == 2) // candid::Principal::SELF_AUTHENTICATING_TAG
+        .get(CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES - 1)
+        .map(|b| *b == CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG)
         .unwrap_or_default()
     {
         // if it is not an opaque principal ID, the user is trying to send to a non-canister target
