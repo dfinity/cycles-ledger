@@ -83,10 +83,11 @@ jobs:
       - name: Build WASM
         run: |
           dfx build --check cycles-ledger
-          shasum -a 256 .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm | cut -d" " -f1 > cycles-ledger.wasm.sha256
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.did
-          gh release upload ${{ env.TAG }} cycles-ledger.wasm.sha256
+          ls .dfx/local/canisters/cycles-ledger
+          shasum -a 256 .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz > cycles-ledger.wasm.gz.sha256
+          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
+          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/service.did
+          gh release upload ${{ env.TAG }} cycles-ledger.wasm.gz.sha256
           echo "uploaded!"
       - name: mark release as non-draft
         run: |
