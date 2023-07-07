@@ -74,12 +74,10 @@ jobs:
       - uses: actions/checkout@v3
         with:
           ref: ${{ env.TAG }}
-      - name: Get correct tag
-        run: echo "TAG=${{ needs.create-release.outputs.release-tag }}" >> $GITHUB_ENV
       - name: Install Rust
         run: rustup update 1.66.1 --no-self-update && rustup default 1.66.1
       - id: create-release
-        run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ inputs.release_tag }}" --notes="TBD"
+        run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ env.TAG }}" --notes="TBD"
       - name: Install dfx
         run: sh -ci "$(curl -fsSL https://internetcomputer.org/install.sh)"
       - name: Build WASM
