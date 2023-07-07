@@ -79,7 +79,7 @@ jobs:
       - name: Install Rust
         run: rustup update 1.66.1 --no-self-update && rustup default 1.66.1
       - id: create-release
-        run: gh release create ${{ env.TAG }} --draft --prerelease="$IS_PRERELEASE" --title="$ANNOUNCEMENT_TITLE" --notes="TBD"
+        run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ inputs.release_tag }}" --notes="TBD"
       - name: Install dfx
         run: sh -ci "$(curl -fsSL https://internetcomputer.org/install.sh)"
       - name: Build WASM
