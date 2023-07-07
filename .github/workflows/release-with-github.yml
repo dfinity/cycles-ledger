@@ -1,0 +1,106 @@
+name: Release with GitHub Action
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      semverBump:
+        description: 'Specify SemVer version you wish to bump (see: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md#bump-level)'
+        required: true
+        type: choice
+        options:
+        - custom
+        - release
+        - patch
+        - minor
+        - major
+        - alpha
+        - beta
+        - rc
+      semverVersion:
+        description: 'Specify exact SemVer version (corresponds to [version] listed here: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md#bump-level). Works only when you have selected [custom] in previous dropdox.'
+        default: ''
+        required: false
+        type: string
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    if: ${{ !(inputs.semverBump == 'custom' && inputs.semverVersion == '') }}
+    outputs:
+      nev_version: ${{ steps.determine_version.outputs.NEW_VERSION }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          wget https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz
+          tar -xvzf cargo-binstall-x86_64-unknown-linux-musl.tgz
+          rm cargo-binstall-x86_64-unknown-linux-musl.tgz
+          mv cargo-binstall $HOME/.cargo/bin
+          cargo binstall cargo-release -y
+          cargo binstall ripgrep -y
+      - name: Determine new version number by dry-running `cargo-release`
+        id: determine_version
+        continue-on-error: true
+        run: |
+          if [[ "${{ inputs.semverBump }}" == "custom" ]]
+          then
+            cargo release version -p ${{ inputs.whichCrate }} ${{ inputs.semverVersion }} &> cargo-release-output.txt
+          else
+            cargo release version -p ${{ inputs.whichCrate }} ${{ inputs.semverBump }} &> cargo-release-output.txt
+          fi
+          cat cargo-release-output.txt
+          NEW_VERSION=$(cat cargo-release-output.txt | rg "Upgrading .* from .* to (.*)" -r '$1' | tr -d ' ')
+          echo $NEW_VERSION
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          rm cargo-release-output.txt
+      - name: Switch to the release branch, and push it
+        run: |
+          BRANCH_NAME="release/${{ inputs.whichCrate }}-v${{ env.NEW_VERSION }}"
+          git checkout -b "$BRANCH_NAME"
+          git push --set-upstream origin "$BRANCH_NAME"
+      - name: Set up git config
+        run: |
+          git config author.email "${{ github.event.sender.id }}+${{ github.event.sender.login }}@users.noreply.github.com"
+          git config author.name "${{ github.event.sender.login }}"
+          git config committer.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config committer.name "GitHub Actions Bot"
+          git config user.email "${{ github.event.sender.id }}+${{ github.event.sender.login }}@users.noreply.github.com"
+          git config user.name "${{ github.event.sender.login }}"
+      - name: Execute `cargo-release`
+        if: ${{ inputs.semverBump != 'custom' }}
+        run: cargo release -p ${{ inputs.whichCrate }} --execute --no-confirm ${{ inputs.semverBump }}
+      - name: Execute `cargo-release`
+        if: ${{ inputs.semverBump == 'custom' }}
+        run: cargo release -p ${{ inputs.whichCrate }} --execute --no-confirm ${{ inputs.semverVersion }}
+
+
+  call-release-binaries-workflow:
+    needs: create-release
+    uses: ./.github/workflows/release.yml
+    with:
+      release_tag: ${{ inputs.whichCrate }}-v${{ needs.create-release.outputs.nev_version }}
+
+  create-release-pr:
+    needs: [create-release, call-release-binaries-workflow]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Open the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.whichCrate }}-v${{ needs.create-release.outputs.nev_version }}"
+          HEAD="release/$TAG"
+          TITLE="chore(${{ inputs.whichCrate }}): release v${{ needs.create-release.outputs.nev_version }}"
+          echo "PR created by this workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> BODY.md
+          echo "Link to release: https://github.com/dfinity/dfx-extensions/releases/tag/$TAG" >> BODY.md
+          gh pr create --base main --head "$HEAD" --title "$TITLE" --body-file BODY.md
