@@ -3,6 +3,9 @@ name = "cycles-ledger"
 version = "0.1.0"
 authors = ["DFINITY Stiftung <sdk@dfinity.org>"]
 edition = "2021"
+description = "The cycles ledger is a global ledger canister that enables principal IDs to hold cycles."
+license = "Apache-2.0"
+repository = "https://github.com/dfinity/cycles-ledger"
 
 [profile.release]
 lto = true
