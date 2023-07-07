@@ -79,9 +79,9 @@ jobs:
       - name: Install Rust
         run: rustup update 1.66.1 --no-self-update && rustup default 1.66.1
       - id: create-release
-        run: |
-          gh release create ${{ env.TAG }} --draft --prerelease="$IS_PRERELEASE" --title="$ANNOUNCEMENT_TITLE" --notes="TBD"
-          echo "created announcement!"
+        run: gh release create ${{ env.TAG }} --draft --prerelease="$IS_PRERELEASE" --title="$ANNOUNCEMENT_TITLE" --notes="TBD"
+      - name: Install dfx
+        run: sh -ci "$(curl -fsSL https://internetcomputer.org/install.sh)"
       - name: Build WASM
         run: |
           dfx build --check cycles-ledger
