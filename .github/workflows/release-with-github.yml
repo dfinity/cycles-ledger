@@ -52,9 +52,9 @@ jobs:
         run: |
           if [[ "${{ inputs.semverBump }}" == "custom" ]]
           then
-            cargo release version -p ${{ inputs.whichCrate }} ${{ inputs.semverVersion }} &> cargo-release-output.txt
+            cargo release version -p cycles-ledger ${{ inputs.semverVersion }} &> cargo-release-output.txt
           else
-            cargo release version -p ${{ inputs.whichCrate }} ${{ inputs.semverBump }} &> cargo-release-output.txt
+            cargo release version -p cycles-ledger ${{ inputs.semverBump }} &> cargo-release-output.txt
           fi
           cat cargo-release-output.txt
           NEW_VERSION=$(cat cargo-release-output.txt | rg "Upgrading .* from .* to (.*)" -r '$1' | tr -d ' ')
@@ -64,7 +64,7 @@ jobs:
           rm cargo-release-output.txt
       - name: Switch to the release branch, and push it
         run: |
-          BRANCH_NAME="release/${{ inputs.whichCrate }}-v${{ env.NEW_VERSION }}"
+          BRANCH_NAME="release/cycles-ledger-v${{ env.NEW_VERSION }}"
           git checkout -b "$BRANCH_NAME"
           git push --set-upstream origin "$BRANCH_NAME"
       - name: Set up git config
@@ -77,17 +77,17 @@ jobs:
           git config user.name "${{ github.event.sender.login }}"
       - name: Execute `cargo-release`
         if: ${{ inputs.semverBump != 'custom' }}
-        run: cargo release -p ${{ inputs.whichCrate }} --execute --no-confirm ${{ inputs.semverBump }}
+        run: cargo release -p cycles-ledger --execute --no-confirm ${{ inputs.semverBump }}
       - name: Execute `cargo-release`
         if: ${{ inputs.semverBump == 'custom' }}
-        run: cargo release -p ${{ inputs.whichCrate }} --execute --no-confirm ${{ inputs.semverVersion }}
+        run: cargo release -p cycles-ledger --execute --no-confirm ${{ inputs.semverVersion }}
 
 
   call-release-binaries-workflow:
     needs: create-release
     uses: ./.github/workflows/release.yml
     with:
-      release_tag: ${{ inputs.whichCrate }}-v${{ needs.create-release.outputs.nev_version }}
+      release_tag: cycles-ledger-v${{ needs.create-release.outputs.nev_version }}
 
   create-release-pr:
     needs: [create-release, call-release-binaries-workflow]
@@ -98,9 +98,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ inputs.whichCrate }}-v${{ needs.create-release.outputs.nev_version }}"
+          TAG="cycles-ledger-v${{ needs.create-release.outputs.nev_version }}"
           HEAD="release/$TAG"
-          TITLE="chore(${{ inputs.whichCrate }}): release v${{ needs.create-release.outputs.nev_version }}"
+          TITLE="chore(release): cycles-ledger-v${{ needs.create-release.outputs.nev_version }}"
           echo "PR created by this workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> BODY.md
-          echo "Link to release: https://github.com/dfinity/dfx-extensions/releases/tag/$TAG" >> BODY.md
+          echo "Link to release: https://github.com/dfinity/cycles-ledger/releases/tag/$TAG" >> BODY.md
           gh pr create --base main --head "$HEAD" --title "$TITLE" --body-file BODY.md
