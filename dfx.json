@@ -1,9 +1,9 @@
 {
   "canisters": {
     "cycles-ledger": {
-      "type": "custom",
+      "type": "rust",
       "candid": "./cycles-ledger/cycles-ledger.did",
-      "wasm": "./target/wasm32-unknown-unknown/release/cycles-ledger.wasm",
+      "package": "cycles-ledger",
       "optimize": "cycles",
       "gzip": true
     }
