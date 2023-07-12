@@ -17,24 +17,23 @@ use crate::client::{balance_of, send};
 
 mod client;
 
-#[cfg(target_os = "macos")]
-const PLATFORM: &str = "darwin";
-#[cfg(target_os = "linux")]
-const PLATFORM: &str = "linux";
-
 fn new_state_machine() -> StateMachine {
     let mut state_machine_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .to_path_buf();
 
-    let state_machine_file_name = format!("ic-test-state-machine");
-    state_machine_path.push(&state_machine_file_name);
+    state_machine_path.push("ic-test-state-machine");
 
     if !state_machine_path.exists() {
+        #[cfg(target_os = "macos")]
+        let platform: &str = "darwin";
+        #[cfg(target_os = "linux")]
+        let platform: &str = "linux";
         let suggested_ic_commit = "a17247bd86c7aa4e87742bf74d108614580f216d";
+
         // not run automatically because parallel test execution screws this up
-        panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {PLATFORM}");
+        panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
     }
     StateMachine::new(state_machine_path.to_str().unwrap(), false)
 }
