@@ -27,4 +27,4 @@ serde_bytes = "0.11"
 [dev-dependencies]
 depositor = { path = "../depositor" }
 escargot = { version = "0.5.7", features = ["print"] }
-ic-state-machine-tests = { git = "https://github.com/dfinity/ic" }
+ic-test-state-machine-client = "2.2.1"
