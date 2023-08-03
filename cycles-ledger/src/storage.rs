@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
 
+use crate::{ciborium_to_generic_value, compact_account};
+
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
@@ -28,59 +30,61 @@ pub struct Cache {
     pub phash: Option<Hash>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Operation {
     Mint {
-        #[serde(rename = "to")]
+        #[serde(with = "compact_account")]
         to: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        #[serde(rename = "fee")]
         fee: u128,
-        #[serde(rename = "memo")]
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
     },
     Transfer {
-        #[serde(rename = "from")]
+        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(rename = "to")]
+        #[serde(with = "compact_account")]
         to: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        #[serde(rename = "fee")]
         fee: u128,
-        #[serde(rename = "memo")]
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
     },
     Burn {
-        #[serde(rename = "from")]
+        #[serde(with = "compact_account")]
         from: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        #[serde(rename = "fee")]
         fee: u128,
-        #[serde(rename = "memo")]
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
     },
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Block {
-    #[serde(rename = "op")]
     op: Operation,
     #[serde(rename = "ts")]
     pub timestamp: u64,
-    #[serde(rename = "phash")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phash: Option<[u8; 32]>,
 }
 
 impl Block {
     pub fn hash(&self) -> Hash {
-        // FIXME
-        [0; 32]
+        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
+            panic!(
+                "Bug: unable to convert Block to Ciborium Value. Error: {}, Block: {:?}",
+                e, self
+            )
+        });
+        match ciborium_to_generic_value(value.clone(), 0) {
+            Ok(value) => value.hash(),
+            Err(err) =>
+                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
+        }
     }
 }
 
@@ -315,4 +319,29 @@ pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (Bloc
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use candid::Principal;
+    use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
+
+    use super::Block;
+
+    #[test]
+    fn test_block_hash() {
+        let block = Block {
+            op: super::Operation::Transfer {
+                from: Account::from(Principal::anonymous()),
+                to: Account::from(Principal::anonymous()),
+                amount: 20_000,
+                fee: 10_000,
+                memo: Some(Memo::default()),
+            },
+            timestamp: 1691065957,
+            phash: None,
+        };
+        // check that it doesn't panic and that it doesn't return a fake hash
+        assert_ne!(block.hash(), [0u8; 32]);
+    }
 }
