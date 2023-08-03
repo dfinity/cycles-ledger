@@ -44,11 +44,16 @@ type TransferError = variant {
 };
 
 type Value = variant {
-    Nat : nat;
-    Int : int;
-    Text : text;
     Blob : blob;
+    Text : text;
+    Nat : nat;
+    Nat64: nat64;
+    Int : int;
+    Array : vec Value;
+    Map : Map;
 };
+
+type Map = vec record { text; Value };
 
 type SendArg = record {
     amount : nat;
