@@ -323,8 +323,16 @@ pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (Bloc
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use candid::Principal;
-    use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
+    use icrc_ledger_types::{
+        icrc::generic_value::Value,
+        icrc1::{account::Account, transfer::Memo},
+    };
+    use num_bigint::BigUint;
+
+    use crate::ciborium_to_generic_value;
 
     use super::Block;
 
@@ -334,7 +342,7 @@ mod tests {
             op: super::Operation::Transfer {
                 from: Account::from(Principal::anonymous()),
                 to: Account::from(Principal::anonymous()),
-                amount: 20_000,
+                amount: u128::MAX,
                 fee: 10_000,
                 memo: Some(Memo::default()),
             },
@@ -343,5 +351,19 @@ mod tests {
         };
         // check that it doesn't panic and that it doesn't return a fake hash
         assert_ne!(block.hash(), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_u128_encoding() {
+        // ciborium_to_generic_value should convert u128 to Value::Nat
+        let num = u128::MAX; // u128::MAX is 340282366920938463463374607431768211455
+        let expected = Value::Nat(candid::Nat(
+            BigUint::from_str("340282366920938463463374607431768211455").unwrap(),
+        ));
+
+        let cvalue = ciborium::Value::serialized(&num).unwrap();
+        let value = ciborium_to_generic_value(cvalue.clone(), 0).unwrap();
+
+        assert_eq!(value, expected);
     }
 }
