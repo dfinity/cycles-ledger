@@ -2,12 +2,14 @@ use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::mutate_state;
-use cycles_ledger::Account;
 use cycles_ledger::{config, endpoints, storage};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{query, update};
+use icrc_ledger_types::icrc::generic_value::Value;
+use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
@@ -63,12 +65,18 @@ fn icrc1_total_supply() -> Nat {
 
 #[query]
 #[candid_method(query)]
-fn icrc1_metadata() -> Vec<(String, endpoints::Value)> {
+fn icrc1_metadata() -> Vec<(String, Value)> {
     vec![
-        endpoints::make_entry("icrc1:decimals", config::DECIMALS),
-        endpoints::make_entry("icrc1:fee", config::FEE),
-        endpoints::make_entry("icrc1:name", config::TOKEN_NAME),
-        endpoints::make_entry("icrc1:symbol", config::TOKEN_SYMBOL),
+        (
+            "icrc1:decimals".to_string(),
+            Value::Nat(config::DECIMALS.into()),
+        ),
+        ("icrc1:fee".to_string(), Value::Nat(config::FEE.into())),
+        ("icrc1:name".to_string(), Value::text(config::TOKEN_NAME)),
+        (
+            "icrc1:symbol".to_string(),
+            Value::text(config::TOKEN_SYMBOL),
+        ),
     ]
 }
 
@@ -78,7 +86,7 @@ fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
-fn validate_memo(memo: Option<endpoints::Memo>) -> Option<endpoints::Memo> {
+fn validate_memo(memo: Option<Memo>) -> Option<Memo> {
     match memo {
         Some(memo) => {
             if memo.0.len() as u64 > config::MAX_MEMO_LENGTH as u64 {
@@ -118,7 +126,7 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 
 #[update]
 #[candid_method]
-fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::TransferError> {
+fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
@@ -131,7 +139,7 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
         None => {
-            return Err(endpoints::TransferError::InsufficientFunds {
+            return Err(TransferError::InsufficientFunds {
                 balance: Nat::from(balance),
             });
         }
@@ -140,13 +148,13 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
         match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
-                    return Err(endpoints::TransferError::BadFee {
+                    return Err(TransferError::BadFee {
                         expected_fee: Nat::from(config::FEE),
                     });
                 }
             }
             None => {
-                return Err(endpoints::TransferError::BadFee {
+                return Err(TransferError::BadFee {
                     expected_fee: Nat::from(config::FEE),
                 });
             }
@@ -155,7 +163,7 @@ fn icrc1_transfer(args: endpoints::TransferArg) -> Result<Nat, endpoints::Transf
     let memo = validate_memo(args.memo);
 
     if balance < amount.saturating_add(config::FEE) {
-        return Err(endpoints::TransferError::InsufficientFunds {
+        return Err(TransferError::InsufficientFunds {
             balance: Nat::from(balance),
         });
     }

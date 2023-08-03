@@ -2,13 +2,13 @@ use candid::{Encode, Nat};
 use client::deposit;
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{Memo, SendArg, SendErrorReason},
-    Account,
+    endpoints::{SendArg, SendErrorReason},
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_state_machine_tests::{CanisterId, Cycles, PrincipalId, StateMachine};
+use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
 use serde_bytes::ByteBuf;
 
 use crate::client::{balance_of, send};

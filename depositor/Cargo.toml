@@ -8,4 +8,5 @@ cycles-ledger = { path = "../cycles-ledger" }
 candid = "0.8.4"
 ic-cdk = { version = "0.6.0" }
 ic-cdk-macros = { version = "0.6.0" }
+icrc-ledger-types = "0.1.0"
 serde = "1"

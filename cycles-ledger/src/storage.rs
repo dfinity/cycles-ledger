@@ -1,11 +1,11 @@
-use crate::{
-    endpoints::{BlockIndex, Memo},
-    Account,
-};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
+};
+use icrc_ledger_types::icrc1::{
+    account::Account,
+    transfer::{BlockIndex, Memo},
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
