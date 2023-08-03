@@ -362,7 +362,7 @@ mod tests {
         ));
 
         let cvalue = ciborium::Value::serialized(&num).unwrap();
-        let value = ciborium_to_generic_value(cvalue.clone(), 0).unwrap();
+        let value = ciborium_to_generic_value(cvalue, 0).unwrap();
 
         assert_eq!(value, expected);
     }
