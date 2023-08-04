@@ -1,5 +1,5 @@
 use candid::{CandidType, Principal};
-use cycles_ledger::{endpoints::Memo, Account};
+use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
 use serde::Deserialize;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]

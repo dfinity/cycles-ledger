@@ -1,10 +1,8 @@
 use candid::{Decode, Encode, Nat, Principal};
-use cycles_ledger::{
-    endpoints::{self, DepositResult, SendArg},
-    Account,
-};
+use cycles_ledger::endpoints::{self, DepositResult, SendArg};
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
+use icrc_ledger_types::icrc1::account::Account;
 use num_traits::ToPrimitive;
 
 pub fn deposit(
