@@ -7,6 +7,7 @@ jobs:
     strategy:
       matrix:
         rust: [ 1.66.1 ]
+        ic-commit: [ a17247bd86c7aa4e87742bf74d108614580f216d ]
 
     steps:
       - uses: actions/checkout@v2
@@ -34,6 +35,15 @@ jobs:
           rustup default ${{ matrix.rust }}
           rustup component add rustfmt
           rustup component add clippy
+
+      - name: Cache StateMachine
+        uses: actions/cache@v2
+        with:
+          path: ic-test-state-machine
+          key: ${{ matrix.ic-commit }}-statemachine-binary
+
+      - name: Download StateMachine binary
+        run: ./download-state-machine.sh ${{ matrix.ic-commit }} linux
 
       - name: Check Format
         run: cargo fmt --all -- --check

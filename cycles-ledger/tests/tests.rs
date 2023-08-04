@@ -1,4 +1,6 @@
-use candid::{Encode, Nat};
+use std::path::PathBuf;
+
+use candid::{Encode, Nat, Principal};
 use client::deposit;
 use cycles_ledger::{
     config::{self, FEE},
@@ -7,13 +9,34 @@ use cycles_ledger::{
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
-use ic_state_machine_tests::{CanisterId, Cycles, PrincipalId, StateMachine};
+use ic_test_state_machine_client::StateMachine;
 use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
 use serde_bytes::ByteBuf;
 
 use crate::client::{balance_of, send};
 
 mod client;
+
+fn new_state_machine() -> StateMachine {
+    let mut state_machine_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+
+    state_machine_path.push("ic-test-state-machine");
+
+    if !state_machine_path.exists() {
+        #[cfg(target_os = "macos")]
+        let platform: &str = "darwin";
+        #[cfg(target_os = "linux")]
+        let platform: &str = "linux";
+        let suggested_ic_commit = "a17247bd86c7aa4e87742bf74d108614580f216d";
+
+        // not run automatically because parallel test execution screws this up
+        panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
+    }
+    StateMachine::new(state_machine_path.to_str().unwrap(), false)
+}
 
 fn get_wasm(name: &str) -> Vec<u8> {
     let binary = CargoBuild::new()
@@ -26,32 +49,27 @@ fn get_wasm(name: &str) -> Vec<u8> {
     std::fs::read(binary.path()).unwrap_or_else(|_| panic!("{} wasm file not found", name))
 }
 
-fn install_ledger(env: &StateMachine) -> CanisterId {
-    env.install_canister(get_wasm("cycles-ledger"), vec![], None)
-        .unwrap()
+fn install_ledger(env: &StateMachine) -> Principal {
+    let canister = env.create_canister(None);
+    env.install_canister(canister, get_wasm("cycles-ledger"), vec![], None);
+    canister
 }
 
-fn install_depositor(env: &StateMachine, ledger_id: CanisterId) -> CanisterId {
-    let depositor_init_arg = Encode!(&DepositorInitArg {
-        ledger_id: ledger_id.into()
-    })
-    .unwrap();
-    env.install_canister_with_cycles(
-        get_wasm("depositor"),
-        depositor_init_arg,
-        None,
-        Cycles::new(u128::MAX),
-    )
-    .unwrap()
+fn install_depositor(env: &StateMachine, ledger_id: Principal) -> Principal {
+    let depositor_init_arg = Encode!(&DepositorInitArg { ledger_id }).unwrap();
+    let canister = env.create_canister(None);
+    env.install_canister(canister, get_wasm("depositor"), depositor_init_arg, None);
+    env.add_cycles(canister, u128::MAX);
+    canister
 }
 
 #[test]
 fn test_deposit_flow() {
-    let env = &StateMachine::new();
+    let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[0]),
         subaccount: None,
     };
 
@@ -78,11 +96,11 @@ fn test_deposit_flow() {
 #[test]
 #[should_panic]
 fn test_deposit_amount_below_fee() {
-    let env = &StateMachine::new();
+    let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
 
@@ -94,27 +112,27 @@ fn test_deposit_amount_below_fee() {
 fn test_send_flow() {
     // TODO(SDK-1145): Add re-entrancy test
 
-    let env = &StateMachine::new();
+    let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
     let user_main_account = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
     let user_subaccount_1 = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: Some([1; 32]),
     };
     let user_subaccount_2 = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: Some([2; 32]),
     };
     let user_subaccount_3 = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: Some([3; 32]),
     };
     let user_subaccount_4 = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: Some([4; 32]),
     };
     let send_receiver = env.create_canister(None);
@@ -137,7 +155,7 @@ fn test_send_flow() {
         user_main_account,
         SendArg {
             from_subaccount: None,
-            to: send_receiver.into(),
+            to: send_receiver,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -163,7 +181,7 @@ fn test_send_flow() {
         user_subaccount_1,
         SendArg {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
-            to: send_receiver.into(),
+            to: send_receiver,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -189,7 +207,7 @@ fn test_send_flow() {
         user_subaccount_2,
         SendArg {
             from_subaccount: Some(*user_subaccount_2.effective_subaccount()),
-            to: send_receiver.into(),
+            to: send_receiver,
             fee: Some(Nat::from(config::FEE)),
             created_at_time: None,
             memo: None,
@@ -215,7 +233,7 @@ fn test_send_flow() {
         user_subaccount_3,
         SendArg {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
-            to: send_receiver.into(),
+            to: send_receiver,
             fee: None,
             created_at_time: Some(100_u64),
             memo: None,
@@ -241,7 +259,7 @@ fn test_send_flow() {
         user_subaccount_4,
         SendArg {
             from_subaccount: Some(*user_subaccount_4.effective_subaccount()),
-            to: send_receiver.into(),
+            to: send_receiver,
             fee: None,
             created_at_time: None,
             memo: Some(Memo(ByteBuf::from([5; 32]))),
@@ -261,11 +279,11 @@ fn test_send_flow() {
 
 #[test]
 fn test_send_fails() {
-    let env = &StateMachine::new();
+    let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
     let user = Account {
-        owner: PrincipalId::new_user_test_id(1).into(),
+        owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
 
@@ -282,7 +300,7 @@ fn test_send_fails() {
         user,
         SendArg {
             from_subaccount: None,
-            to: depositor_id.into(),
+            to: depositor_id,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -306,7 +324,7 @@ fn test_send_fails() {
         user,
         SendArg {
             from_subaccount: Some([5; 32]),
-            to: depositor_id.into(),
+            to: depositor_id,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -327,7 +345,7 @@ fn test_send_fails() {
         user,
         SendArg {
             from_subaccount: None,
-            to: depositor_id.into(),
+            to: depositor_id,
             fee: Some(FEE + Nat::from(1)),
             created_at_time: None,
             memo: None,
@@ -376,15 +394,15 @@ fn test_send_fails() {
     // send cycles to deleted canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
     let deleted_canister = env.create_canister(None);
-    env.stop_canister(deleted_canister).unwrap();
-    env.delete_canister(deleted_canister).unwrap();
+    env.stop_canister(deleted_canister, None).unwrap();
+    env.delete_canister(deleted_canister, None).unwrap();
     let send_result = send(
         env,
         ledger_id,
         user,
         SendArg {
             from_subaccount: None,
-            to: deleted_canister.into(),
+            to: deleted_canister,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -406,7 +424,7 @@ fn test_send_fails() {
 
     // user loses all cycles if they don't have enough balance to pay the fee
     let user_2 = Account {
-        owner: PrincipalId::new_user_test_id(2).into(),
+        owner: Principal::from_slice(&[2]),
         subaccount: None,
     };
     deposit(env, depositor_id, user_2, FEE + 1);
@@ -416,7 +434,7 @@ fn test_send_fails() {
         user_2,
         SendArg {
             from_subaccount: None,
-            to: depositor_id.into(),
+            to: depositor_id,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -431,7 +449,7 @@ fn test_send_fails() {
         user_2,
         SendArg {
             from_subaccount: None,
-            to: depositor_id.into(),
+            to: depositor_id,
             fee: None,
             created_at_time: None,
             memo: None,
