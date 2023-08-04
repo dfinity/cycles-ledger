@@ -861,9 +861,11 @@ dependencies = [
  "ic-state-machine-tests",
  "icrc-ledger-types",
  "minicbor",
+ "num-bigint 0.4.3",
  "num-traits",
  "serde",
  "serde_bytes",
+ "thiserror",
 ]
 
 [[package]]
