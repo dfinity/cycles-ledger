@@ -75,7 +75,7 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       - name: Install Rust
-        run: rustup update 1.71.1 --no-self-update && rustup default 1.71.1
+        run: rustup show
       - id: create-release
         run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ env.TAG }}" --notes="TBD"
       - name: Install dfx
