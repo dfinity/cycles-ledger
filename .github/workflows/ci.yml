@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [ 1.66.1 ]
+        rust: [ 1.71.1 ]
         ic-commit: [ a17247bd86c7aa4e87742bf74d108614580f216d ]
 
     steps:
