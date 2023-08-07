@@ -1,7 +1,8 @@
+use candid::{CandidType, Decode, Deserialize as CandidDeserialize, Encode};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
-    DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
+    BoundedStorable, DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use icrc_ledger_types::icrc1::{
     account::Account,
@@ -16,12 +17,22 @@ use crate::{ciborium_to_generic_value, compact_account};
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
+const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
+
+pub type ApprovalKey = (AccountKey, AccountKey);
+#[derive(CandidType, CandidDeserialize)]
+pub struct Allowance {
+    pub amount: u128,
+    pub expires_at: Option<u64>,
+}
+const MAX_ALLOWANCE_SIZE: u32 = 30;
+pub type Approvals = StableBTreeMap<ApprovalKey, Allowance, VMem>;
 
 pub type Hash = [u8; 32];
 
@@ -88,9 +99,25 @@ impl Block {
     }
 }
 
+impl Storable for Allowance {
+    fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
+        Cow::Owned(Encode!(self).unwrap())
+    }
+
+    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
+        Decode!(bytes.as_ref(), Self).unwrap()
+    }
+}
+
+impl BoundedStorable for Allowance {
+    const MAX_SIZE: u32 = MAX_ALLOWANCE_SIZE;
+    const IS_FIXED_SIZE: bool = false;
+}
+
 pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
+    pub approvals: Approvals,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -137,6 +164,7 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
+            approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
         })
     });
 }
