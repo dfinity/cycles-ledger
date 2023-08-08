@@ -10,6 +10,8 @@ use ic_cdk_macros::{query, update};
 use icrc_ledger_types::icrc::generic_value::Value;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
+use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
@@ -285,6 +287,82 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         let (send, _send_hash) = storage::send(&from, amount, memo, now);
         Ok(send)
     }
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
+    let allowance = storage::allowance(&args.account, &args.spender, ic_cdk::api::time());
+    Allowance {
+        allowance: Nat::from(allowance.amount),
+        expires_at: allowance.expires_at,
+    }
+}
+
+#[update]
+#[candid_method]
+fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
+    let now = ic_cdk::api::time();
+
+    let from_account = Account {
+        owner: ic_cdk::api::caller(),
+        subaccount: args.from_subaccount,
+    };
+    if from_account.owner == args.spender.owner {
+        ic_cdk::trap("self approval is not allowed")
+    }
+    let memo = validate_memo(args.memo);
+    let amount = match args.amount.0.to_u128() {
+        Some(value) => value,
+        None => u128::MAX,
+    };
+    let expected_allowance = match args.expected_allowance {
+        Some(n) => match n.0.to_u128() {
+            Some(n) => Some(n),
+            None => {
+                let current_allowance =
+                    storage::allowance(&from_account, &args.spender, now).amount;
+                return Err(ApproveError::AllowanceChanged {
+                    current_allowance: current_allowance.into(),
+                });
+            }
+        },
+        None => None,
+    };
+    if let Some(fee) = args.fee {
+        match fee.0.to_u128() {
+            Some(fee) => {
+                if fee != config::FEE {
+                    return Err(ApproveError::BadFee {
+                        expected_fee: Nat::from(config::FEE),
+                    });
+                }
+            }
+            None => {
+                return Err(ApproveError::BadFee {
+                    expected_fee: Nat::from(config::FEE),
+                });
+            }
+        }
+    }
+    let balance = storage::balance_of(&from_account);
+    if balance < config::FEE {
+        return Err(ApproveError::InsufficientFunds {
+            balance: Nat::from(balance),
+        });
+    }
+
+    let txid = storage::approve(
+        &from_account,
+        &args.spender,
+        amount,
+        args.expires_at,
+        now,
+        expected_allowance,
+        memo,
+    )?;
+
+    Ok(Nat::from(txid))
 }
 
 fn main() {}

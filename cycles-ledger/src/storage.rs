@@ -77,6 +77,21 @@ pub enum Operation {
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
     },
+    Approve {
+        #[serde(with = "compact_account")]
+        from: Account,
+        #[serde(with = "compact_account")]
+        spender: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_allowance: Option<u128>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expires_at: Option<u64>,
+        fee: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memo: Option<Memo>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -380,18 +395,59 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> Allowance {
     }
 }
 
-const REMOTE_FUTURE: u64 = u64::MAX;
-
 pub fn approve(
-    account: &Account,
+    from: &Account,
     spender: &Account,
     amount: u128,
     expires_at: Option<u64>,
     now: u64,
     expected_allowance: Option<u128>,
-) -> Result<u128, ApproveError> {
+    memo: Option<Memo>,
+) -> Result<u64, ApproveError> {
+    let from_key = to_account_key(from);
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
+    assert!(from_balance >= crate::config::FEE);
+
+    record_approval(from, spender, amount, expires_at, now, expected_allowance)?;
+
+    mutate_state(|s| {
+        s.balances
+            .insert(from_key, from_balance - crate::config::FEE)
+            .expect("failed to update 'from' balance");
+
+        let phash = s.last_block_hash();
+        s.emit_block(Block {
+            op: Operation::Approve {
+                from: *from,
+                spender: *spender,
+                amount,
+                expected_allowance,
+                expires_at,
+                fee: crate::config::FEE,
+                memo,
+            },
+            timestamp: now,
+            phash,
+        });
+        Ok(s.blocks.len() - 1)
+    })
+}
+
+const APPROVE_PRUNE_LIMIT: usize = 100;
+const REMOTE_FUTURE: u64 = u64::MAX;
+
+fn record_approval(
+    from: &Account,
+    spender: &Account,
+    amount: u128,
+    expires_at: Option<u64>,
+    now: u64,
+    expected_allowance: Option<u128>,
+) -> Result<(), ApproveError> {
+    prune(now, APPROVE_PRUNE_LIMIT);
+
     debug_assert!(
-        account != spender,
+        from != spender,
         "self approvals are not allowed, should be checked in the endpoint"
     );
 
@@ -399,12 +455,12 @@ pub fn approve(
         return Err(ApproveError::Expired { ledger_time: now });
     }
 
-    let key = (to_account_key(account), to_account_key(spender));
+    let key = (to_account_key(from), to_account_key(spender));
 
     mutate_state(|s| match s.approvals.get(&key) {
         None => {
             if amount == 0 {
-                return Ok(amount);
+                return Ok(());
             }
             if let Some(expected_allowance) = expected_allowance {
                 if expected_allowance != 0 {
@@ -418,7 +474,7 @@ pub fn approve(
             }
             let allowance = Allowance { amount, expires_at };
             s.approvals.insert(key.clone(), allowance);
-            Ok(amount)
+            Ok(())
         }
         Some(allowance) => {
             if let Some(expected_allowance) = expected_allowance {
@@ -433,7 +489,7 @@ pub fn approve(
                     s.expiration_queue.remove(&(expires_at, key));
                 }
                 s.approvals.remove(&key);
-                return Ok(amount);
+                return Ok(());
             }
             let new_allowance = Allowance { amount, expires_at };
             s.approvals.insert(key.clone(), new_allowance);
@@ -445,7 +501,7 @@ pub fn approve(
                     s.expiration_queue.insert((expires_at, key.clone()), ());
                 }
             }
-            Ok(amount)
+            Ok(())
         }
     })
 }
@@ -495,7 +551,7 @@ pub fn use_allowance(
     })
 }
 
-pub fn prune(now: u64, limit: usize) -> usize {
+fn prune(now: u64, limit: usize) -> usize {
     let mut pruned = 0;
     mutate_state(|s| {
         for _ in 0..limit {
