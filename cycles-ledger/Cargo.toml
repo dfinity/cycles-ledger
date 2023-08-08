@@ -1,6 +1,6 @@
 [package]
 name = "cycles-ledger"
-version = "0.1.0"
+version = "11.31.34"
 authors = ["DFINITY Stiftung <sdk@dfinity.org>"]
 edition = "2021"
 description = "The cycles ledger is a global ledger canister that enables principal IDs to hold cycles."
