@@ -21,6 +21,7 @@ const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
 const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
+const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
@@ -36,6 +37,7 @@ pub struct Allowance {
 }
 const MAX_ALLOWANCE_SIZE: u32 = 30;
 pub type Approvals = StableBTreeMap<ApprovalKey, Allowance, VMem>;
+pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
 pub type Hash = [u8; 32];
 
@@ -130,6 +132,7 @@ pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
     pub approvals: Approvals,
+    pub expiration_queue: ExpirationQueue,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -177,6 +180,7 @@ thread_local! {
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
+            expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
 }
@@ -409,15 +413,12 @@ pub fn approve(
                     });
                 }
             }
-            // if let Some(expires_at) = expires_at {
-            //     self.expiration_queue.push(Reverse((expires_at, key)));
-            // }
-            let allowance = Allowance {
-                amount,
-                expires_at,
-            };
+            if let Some(expires_at) = expires_at {
+                s.expiration_queue.insert((expires_at, key.clone()), ());
+            }
+            let allowance = Allowance { amount, expires_at };
             s.approvals.insert(key.clone(), allowance);
-            Ok(amount)            
+            Ok(amount)
         }
         Some(allowance) => {
             if let Some(expected_allowance) = expected_allowance {
@@ -428,19 +429,22 @@ pub fn approve(
                 }
             }
             if amount == 0 {
+                if let Some(expires_at) = allowance.expires_at {
+                    s.expiration_queue.remove(&(expires_at, key));
+                }
                 s.approvals.remove(&key);
                 return Ok(amount);
             }
-            let new_allowance = Allowance {
-                amount,
-                expires_at,
-            };
+            let new_allowance = Allowance { amount, expires_at };
             s.approvals.insert(key.clone(), new_allowance);
-            // if expires_at != old_expiration {
-            //     if let Some(expires_at) = expires_at {
-            //         self.expiration_queue.push(Reverse((expires_at, key)));
-            //     }
-            // }
+            if expires_at != allowance.expires_at {
+                if let Some(expires_at) = allowance.expires_at {
+                    s.expiration_queue.remove(&(expires_at, key));
+                }
+                if let Some(expires_at) = expires_at {
+                    s.expiration_queue.insert((expires_at, key.clone()), ());
+                }
+            }
             Ok(amount)
         }
     })
@@ -455,19 +459,28 @@ pub fn use_allowance(
     let key = (to_account_key(account), to_account_key(spender));
 
     mutate_state(|s| match s.approvals.get(&key) {
-        None => Err(TransferFromError::InsufficientAllowance{allowance: Nat::from(0)}),
+        None => Err(TransferFromError::InsufficientAllowance {
+            allowance: Nat::from(0),
+        }),
         Some(allowance) => {
             if allowance.expires_at.unwrap_or(REMOTE_FUTURE) <= now {
-                Err(TransferFromError::InsufficientAllowance{allowance: Nat::from(0)})
+                Err(TransferFromError::InsufficientAllowance {
+                    allowance: Nat::from(0),
+                })
             } else {
                 if allowance.amount < amount {
-                    return Err(TransferFromError::InsufficientAllowance{allowance: Nat::from(allowance.amount)});
+                    return Err(TransferFromError::InsufficientAllowance {
+                        allowance: Nat::from(allowance.amount),
+                    });
                 }
                 let new_amount = allowance
                     .amount
                     .checked_sub(amount)
                     .expect("Underflow when using allowance");
                 if new_amount == 0 {
+                    if let Some(expires_at) = allowance.expires_at {
+                        s.expiration_queue.remove(&(expires_at, key));
+                    }
                     s.approvals.remove(&key);
                 } else {
                     let new_allowance = Allowance {
@@ -480,6 +493,32 @@ pub fn use_allowance(
             }
         }
     })
+}
+
+pub fn prune(now: u64, limit: usize) -> usize {
+    let mut pruned = 0;
+    mutate_state(|s| {
+        for _ in 0..limit {
+            match s.expiration_queue.first_key_value() {
+                Some((key, _value)) => {
+                    println!("{:?}", key);
+                    if key.0 > now {
+                        return ();
+                    }
+                }
+                None => {
+                    return ();
+                }
+            }
+            if let Some((key, _value)) = s.expiration_queue.first_key_value() {
+                if key.0 <= now {
+                    s.approvals.remove(&key.1);
+                    pruned += 1;
+                }
+            }
+        }
+    });
+    pruned
 }
 
 #[cfg(test)]
