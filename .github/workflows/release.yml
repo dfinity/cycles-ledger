@@ -84,7 +84,7 @@ jobs:
         run: |
           dfx build --check cycles-ledger
           ls .dfx/local/canisters/cycles-ledger
-          shasum -a 256 .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz > cycles-ledger.wasm.gz.sha256
+          (cd .dfx/local/canisters/cycles-ledger && shasum -a 256 cycles-ledger.wasm.gz) > cycles-ledger.wasm.gz.sha256
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/service.did
           gh release upload ${{ env.TAG }} cycles-ledger.wasm.gz.sha256
