@@ -1,12 +1,15 @@
-use candid::{CandidType, Decode, Deserialize as CandidDeserialize, Encode};
+use candid::{CandidType, Decode, Deserialize as CandidDeserialize, Encode, Nat};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
     BoundedStorable, DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
-use icrc_ledger_types::icrc1::{
-    account::Account,
-    transfer::{BlockIndex, Memo},
+use icrc_ledger_types::{
+    icrc1::{
+        account::Account,
+        transfer::{BlockIndex, Memo},
+    },
+    icrc2::{approve::ApproveError, transfer_from::TransferFromError},
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -26,7 +29,7 @@ pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
-#[derive(CandidType, CandidDeserialize)]
+#[derive(CandidType, CandidDeserialize, Clone)]
 pub struct Allowance {
     pub amount: u128,
     pub expires_at: Option<u64>,
@@ -112,6 +115,15 @@ impl Storable for Allowance {
 impl BoundedStorable for Allowance {
     const MAX_SIZE: u32 = MAX_ALLOWANCE_SIZE;
     const IS_FIXED_SIZE: bool = false;
+}
+
+impl Default for Allowance {
+    fn default() -> Self {
+        Self {
+            amount: 0,
+            expires_at: None,
+        }
+    }
 }
 
 pub struct State {
@@ -346,6 +358,127 @@ pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (Bloc
             phash,
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
+    })
+}
+
+pub fn allowance(account: &Account, spender: &Account, now: u64) -> Allowance {
+    let key = (to_account_key(account), to_account_key(spender));
+    let allowance = read_state(|s| s.approvals.get(&key).unwrap_or_default());
+    match allowance.expires_at {
+        Some(expires_at) => {
+            if expires_at > now {
+                allowance.clone()
+            } else {
+                Allowance::default()
+            }
+        }
+        None => allowance.clone(),
+    }
+}
+
+const REMOTE_FUTURE: u64 = u64::MAX;
+
+pub fn approve(
+    account: &Account,
+    spender: &Account,
+    amount: u128,
+    expires_at: Option<u64>,
+    now: u64,
+    expected_allowance: Option<u128>,
+) -> Result<u128, ApproveError> {
+    debug_assert!(
+        account != spender,
+        "self approvals are not allowed, should be checked in the endpoint"
+    );
+
+    if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+        return Err(ApproveError::Expired { ledger_time: now });
+    }
+
+    let key = (to_account_key(account), to_account_key(spender));
+
+    mutate_state(|s| match s.approvals.get(&key) {
+        None => {
+            if amount == 0 {
+                return Ok(amount);
+            }
+            if let Some(expected_allowance) = expected_allowance {
+                if expected_allowance != 0 {
+                    return Err(ApproveError::AllowanceChanged {
+                        current_allowance: Nat::from(0),
+                    });
+                }
+            }
+            // if let Some(expires_at) = expires_at {
+            //     self.expiration_queue.push(Reverse((expires_at, key)));
+            // }
+            let allowance = Allowance {
+                amount,
+                expires_at,
+            };
+            s.approvals.insert(key.clone(), allowance);
+            Ok(amount)            
+        }
+        Some(allowance) => {
+            if let Some(expected_allowance) = expected_allowance {
+                if expected_allowance != allowance.amount {
+                    return Err(ApproveError::AllowanceChanged {
+                        current_allowance: Nat::from(allowance.amount),
+                    });
+                }
+            }
+            if amount == 0 {
+                s.approvals.remove(&key);
+                return Ok(amount);
+            }
+            let new_allowance = Allowance {
+                amount,
+                expires_at,
+            };
+            s.approvals.insert(key.clone(), new_allowance);
+            // if expires_at != old_expiration {
+            //     if let Some(expires_at) = expires_at {
+            //         self.expiration_queue.push(Reverse((expires_at, key)));
+            //     }
+            // }
+            Ok(amount)
+        }
+    })
+}
+
+pub fn use_allowance(
+    account: &Account,
+    spender: &Account,
+    amount: u128,
+    now: u64,
+) -> Result<u128, TransferFromError> {
+    let key = (to_account_key(account), to_account_key(spender));
+
+    mutate_state(|s| match s.approvals.get(&key) {
+        None => Err(TransferFromError::InsufficientAllowance{allowance: Nat::from(0)}),
+        Some(allowance) => {
+            if allowance.expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+                Err(TransferFromError::InsufficientAllowance{allowance: Nat::from(0)})
+            } else {
+                if allowance.amount < amount {
+                    return Err(TransferFromError::InsufficientAllowance{allowance: Nat::from(allowance.amount)});
+                }
+                let new_amount = allowance
+                    .amount
+                    .checked_sub(amount)
+                    .expect("Underflow when using allowance");
+                if new_amount == 0 {
+                    s.approvals.remove(&key);
+                } else {
+                    let new_allowance = Allowance {
+                        amount: new_amount,
+                        expires_at: allowance.expires_at,
+                    };
+                    s.approvals.insert(key.clone(), new_allowance);
+                }
+                Ok(new_amount)
+            }
+        }
     })
 }
 
