@@ -243,9 +243,7 @@ pub fn transfer(
             .expect("failed to update 'from' balance");
 
         let to_balance = s.balances.get(&to_key).unwrap_or_default();
-        s.balances
-            .insert(to_key, to_balance + amount)
-            .expect("failed to update 'to' balance");
+        s.balances.insert(to_key, to_balance.saturating_add(amount));
 
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {

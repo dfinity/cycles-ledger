@@ -38,6 +38,6 @@ async fn deposit(arg: DepositArg) -> DepositResult {
     };
     let (result,): (DepositResult,) = call_with_payment128(ledger_id, "deposit", (arg,), cycles)
         .await
-        .expect("Unable to call deposit");
+        .expect(&format!("Unable to call deposit with {}",cycles));
     result
 }
