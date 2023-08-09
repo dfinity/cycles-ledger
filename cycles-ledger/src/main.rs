@@ -7,7 +7,7 @@ use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{query, update};
-use icrc_ledger_types::icrc::generic_value::Value;
+use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use minicbor::Encoder;
@@ -65,18 +65,12 @@ fn icrc1_total_supply() -> Nat {
 
 #[query]
 #[candid_method(query)]
-fn icrc1_metadata() -> Vec<(String, Value)> {
+fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     vec![
-        (
-            "icrc1:decimals".to_string(),
-            Value::Nat(config::DECIMALS.into()),
-        ),
-        ("icrc1:fee".to_string(), Value::Nat(config::FEE.into())),
-        ("icrc1:name".to_string(), Value::text(config::TOKEN_NAME)),
-        (
-            "icrc1:symbol".to_string(),
-            Value::text(config::TOKEN_SYMBOL),
-        ),
+        MetadataValue::entry("icrc1:decimals", config::DECIMALS as u64),
+        MetadataValue::entry("icrc1:name", config::TOKEN_NAME),
+        MetadataValue::entry("icrc1:symbol", config::TOKEN_SYMBOL),
+        MetadataValue::entry("icrc1:fee", config::FEE),
     ]
 }
 

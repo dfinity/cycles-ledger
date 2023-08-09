@@ -615,20 +615,19 @@ dependencies = [
 [[package]]
 name = "icrc1-test-env"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "742ac065f9340e129b1e2497036aafed4937d66d7ab225c4989a1405496b9b18"
+source = "git+https://github.com/dfinity/ICRC-1#5b5c528c3d5a72c6d1929595d4b8cd8dd6a5d36e"
 dependencies = [
  "anyhow",
  "async-trait",
  "candid",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
 name = "icrc1-test-env-state-machine"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bb1a0d52daac39df2db65b08e5abb1bd07ab0ce4969adcf2194cfb03098b7d4"
+source = "git+https://github.com/dfinity/ICRC-1#5b5c528c3d5a72c6d1929595d4b8cd8dd6a5d36e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -640,9 +639,8 @@ dependencies = [
 
 [[package]]
 name = "icrc1-test-suite"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e65c993be0c4fc3fa8f2209834ec39674fb327bde0ec07b5c0b2f40fd0dd8a9c"
+version = "0.1.1"
+source = "git+https://github.com/dfinity/ICRC-1#5b5c528c3d5a72c6d1929595d4b8cd8dd6a5d36e"
 dependencies = [
  "anyhow",
  "candid",

@@ -2,7 +2,7 @@ use futures::future::FutureExt;
 use std::{path::PathBuf, sync::Arc};
 
 use candid::{Encode, Nat, Principal};
-use client::deposit;
+use client::{deposit, transfer};
 use cycles_ledger::{
     config::{self, FEE},
     endpoints::{SendArg, SendErrorReason},
@@ -11,10 +11,13 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::StateMachine;
-use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
+use icrc_ledger_types::icrc1::{
+    account::Account,
+    transfer::{Memo, TransferArg, TransferError},
+};
 use serde_bytes::ByteBuf;
 
-use crate::client::{balance_of, send};
+use crate::client::{balance_of, fee, send};
 
 mod client;
 
@@ -488,4 +491,86 @@ fn test_icrc1_test_suite() {
     {
         panic!("The ICRC-1 test suite failed");
     }
+}
+
+#[test]
+fn test_transfer() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+    let fee = fee(env, ledger_id);
+
+    let transfer_amount = Nat::from(100_000);
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(balance_of(env, ledger_id, user2), transfer_amount.clone());
+    assert_eq!(
+        balance_of(env, ledger_id, user1),
+        Nat::from(deposit_amount) - fee.clone() - transfer_amount.clone()
+    );
+
+    // Should not be able to send back the full amount as the user2 cannot pay the fee
+    assert_eq!(
+        TransferError::InsufficientFunds {
+            balance: transfer_amount.clone()
+        },
+        transfer(
+            env,
+            ledger_id,
+            user2,
+            TransferArg {
+                from_subaccount: None,
+                to: user2,
+                fee: None,
+                created_at_time: None,
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
+
+    // Should not be able to set a fee that is incorrect
+    assert_eq!(
+        TransferError::BadFee {
+            expected_fee: fee.clone()
+        },
+        transfer(
+            env,
+            ledger_id,
+            user2,
+            TransferArg {
+                from_subaccount: None,
+                to: user1,
+                fee: Some(Nat::from(0)),
+                created_at_time: None,
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
 }
