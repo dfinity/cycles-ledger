@@ -894,3 +894,71 @@ fn test_approve_cap() {
         Nat::from(1_000_000_000 - FEE)
     );
 }
+
+#[test]
+fn test_approve_pruning() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    let spender2 = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    // First approval expiring 1 hour from now.
+    let expiration = system_time_to_nanos(env.time()) + Duration::from_secs(3600).as_nanos() as u64;
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender1,
+        100_000_000_u128,
+        None,
+        Some(expiration),
+    );
+    assert_eq!(block_index.unwrap(), 1);
+    let allowance = get_allowance(env, ledger_id, from, spender1);
+    assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(expiration));
+
+    // Second approval expiring 3 hour from now.
+    let expiration_3h =
+        system_time_to_nanos(env.time()) + Duration::from_secs(3 * 3600).as_nanos() as u64;
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender2,
+        200_000_000_u128,
+        None,
+        Some(expiration_3h),
+    );
+    assert_eq!(block_index.unwrap(), 2);
+    let allowance = get_allowance(env, ledger_id, from, spender2);
+    assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(expiration_3h));
+
+    // Test expired approval pruning, advance time 2 hours.
+    env.advance_time(Duration::from_secs(2 * 3600));
+    env.tick();
+    let allowance = get_allowance(env, ledger_id, from, spender1);
+    assert_eq!(allowance.allowance, Nat::from(0));
+    assert_eq!(allowance.expires_at, None);
+    let allowance = get_allowance(env, ledger_id, from, spender2);
+    assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(expiration_3h));
+}
