@@ -9,13 +9,13 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{BlockIndex, Memo},
     },
-    icrc2::{approve::ApproveError, transfer_from::TransferFromError},
+    icrc2::approve::ApproveError,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{ciborium_to_generic_value, compact_account};
+use crate::{ciborium_to_generic_value, compact_account, GenericTransferError};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -62,6 +62,12 @@ pub enum Operation {
         from: Account,
         #[serde(with = "compact_account")]
         to: Account,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "compact_account::opt"
+        )]
+        spender: Option<Account>,
         #[serde(rename = "amt")]
         amount: u128,
         fee: u128,
@@ -282,6 +288,7 @@ pub fn record_deposit(
 pub fn transfer(
     from: &Account,
     to: &Account,
+    spender: Option<Account>,
     amount: u128,
     memo: Option<Memo>,
     now: u64,
@@ -311,6 +318,7 @@ pub fn transfer(
             op: Operation::Transfer {
                 from: *from,
                 to: *to,
+                spender,
                 amount,
                 memo,
                 fee: crate::config::FEE,
@@ -511,22 +519,18 @@ pub fn use_allowance(
     spender: &Account,
     amount: u128,
     now: u64,
-) -> Result<u128, TransferFromError> {
+) -> Result<(), GenericTransferError> {
     let key = (to_account_key(account), to_account_key(spender));
 
     mutate_state(|s| match s.approvals.get(&key) {
-        None => Err(TransferFromError::InsufficientAllowance {
-            allowance: Nat::from(0),
-        }),
+        None => Err(GenericTransferError::InsufficientAllowance { allowance: 0 }),
         Some(allowance) => {
             if allowance.expires_at.unwrap_or(REMOTE_FUTURE) <= now {
-                Err(TransferFromError::InsufficientAllowance {
-                    allowance: Nat::from(0),
-                })
+                Err(GenericTransferError::InsufficientAllowance { allowance: 0 })
             } else {
                 if allowance.amount < amount {
-                    return Err(TransferFromError::InsufficientAllowance {
-                        allowance: Nat::from(allowance.amount),
+                    return Err(GenericTransferError::InsufficientAllowance {
+                        allowance: allowance.amount,
                     });
                 }
                 let new_amount = allowance
@@ -545,7 +549,7 @@ pub fn use_allowance(
                     };
                     s.approvals.insert(key.clone(), new_allowance);
                 }
-                Ok(new_amount)
+                Ok(())
             }
         }
     })
@@ -598,6 +602,7 @@ mod tests {
             op: super::Operation::Transfer {
                 from: Account::from(Principal::anonymous()),
                 to: Account::from(Principal::anonymous()),
+                spender: None,
                 amount: u128::MAX,
                 fee: 10_000,
                 memo: Some(Memo::default()),

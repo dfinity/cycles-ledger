@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
 
+use candid::Nat;
 use ciborium::Value as CiboriumValue;
-use icrc_ledger_types::icrc::generic_value::Value;
+use icrc_ledger_types::{
+    icrc::generic_value::Value, icrc1::transfer::TransferError,
+    icrc2::transfer_from::TransferFromError,
+};
 use serde_bytes::ByteBuf;
 use thiserror::Error;
 
@@ -92,4 +96,59 @@ mod known_tags {
 
     /// Tag for CBOR bignums; see https://www.rfc-editor.org/rfc/rfc8949.html#name-bignums.
     pub const BIGNUM: u64 = 2;
+}
+
+pub enum GenericTransferError {
+    BadFee { expected_fee: u128 },
+    BadBurn { min_burn_amount: u128 },
+    InsufficientFunds { balance: u128 },
+    InsufficientAllowance { allowance: u128 },
+}
+
+impl TryFrom<GenericTransferError> for TransferError {
+    type Error = String;
+
+    fn try_from(value: GenericTransferError) -> Result<Self, Self::Error> {
+        Ok(match value {
+            GenericTransferError::BadFee { expected_fee } => TransferError::BadFee {
+                expected_fee: Nat::from(expected_fee),
+            },
+            GenericTransferError::BadBurn { min_burn_amount } => TransferError::BadBurn {
+                min_burn_amount: Nat::from(min_burn_amount),
+            },
+            GenericTransferError::InsufficientFunds { balance } => {
+                TransferError::InsufficientFunds {
+                    balance: Nat::from(balance),
+                }
+            }
+            GenericTransferError::InsufficientAllowance { .. } => {
+                return Err(
+                    "InsufficientAllowance error should not happen for transfer".to_string()
+                );
+            }
+        })
+    }
+}
+
+impl From<GenericTransferError> for TransferFromError {
+    fn from(value: GenericTransferError) -> Self {
+        match value {
+            GenericTransferError::BadFee { expected_fee } => TransferFromError::BadFee {
+                expected_fee: Nat::from(expected_fee),
+            },
+            GenericTransferError::BadBurn { min_burn_amount } => TransferFromError::BadBurn {
+                min_burn_amount: Nat::from(min_burn_amount),
+            },
+            GenericTransferError::InsufficientFunds { balance } => {
+                TransferFromError::InsufficientFunds {
+                    balance: Nat::from(balance),
+                }
+            }
+            GenericTransferError::InsufficientAllowance { allowance } => {
+                TransferFromError::InsufficientAllowance {
+                    allowance: Nat::from(allowance),
+                }
+            }
+        }
+    }
 }

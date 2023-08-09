@@ -2,7 +2,7 @@ use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::mutate_state;
-use cycles_ledger::{config, endpoints, storage};
+use cycles_ledger::{config, endpoints, storage, GenericTransferError};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
@@ -12,6 +12,7 @@ use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
+use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
@@ -126,6 +127,58 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     }
 }
 
+fn execute_transfer(
+    from: &Account,
+    to: &Account,
+    spender: Option<Account>,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Memo>,
+) -> Result<Nat, GenericTransferError> {
+    let now = ic_cdk::api::time();
+    let balance = storage::balance_of(&from);
+
+    // TODO(FI-767): Implement deduplication.
+
+    let amount = match amount.0.to_u128() {
+        Some(value) => value,
+        None => {
+            return Err(GenericTransferError::InsufficientFunds { balance: balance });
+        }
+    };
+    if let Some(fee) = fee {
+        match fee.0.to_u128() {
+            Some(fee) => {
+                if fee != config::FEE {
+                    return Err(GenericTransferError::BadFee {
+                        expected_fee: config::FEE,
+                    });
+                }
+            }
+            None => {
+                return Err(GenericTransferError::BadFee {
+                    expected_fee: config::FEE,
+                });
+            }
+        }
+    }
+    let memo = validate_memo(memo);
+
+    let total_spent_amount = amount.saturating_add(config::FEE);
+
+    if balance < total_spent_amount {
+        return Err(GenericTransferError::InsufficientFunds { balance });
+    }
+
+    if spender.is_some() {
+        storage::use_allowance(&from, &spender.unwrap(), total_spent_amount, now)?;
+    }
+
+    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now);
+
+    Ok(Nat::from(txid))
+}
+
 #[update]
 #[candid_method]
 fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
@@ -133,46 +186,31 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
-    let now = ic_cdk::api::time();
-    let balance = storage::balance_of(&from);
 
-    // TODO(FI-767): Implement deduplication.
+    execute_transfer(&from, &args.to, None, args.amount, args.fee, args.memo).map_err(|err| {
+        let err: TransferError = match err.try_into() {
+            Ok(err) => err,
+            Err(err) => ic_cdk::trap(&err),
+        };
+        err
+    })
+}
 
-    let amount = match args.amount.0.to_u128() {
-        Some(value) => value,
-        None => {
-            return Err(TransferError::InsufficientFunds {
-                balance: Nat::from(balance),
-            });
-        }
+#[update]
+#[candid_method]
+fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError> {
+    let spender = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.spender_subaccount,
     };
-    if let Some(fee) = args.fee {
-        match fee.0.to_u128() {
-            Some(fee) => {
-                if fee != config::FEE {
-                    return Err(TransferError::BadFee {
-                        expected_fee: Nat::from(config::FEE),
-                    });
-                }
-            }
-            None => {
-                return Err(TransferError::BadFee {
-                    expected_fee: Nat::from(config::FEE),
-                });
-            }
-        }
-    }
-    let memo = validate_memo(args.memo);
-
-    if balance < amount.saturating_add(config::FEE) {
-        return Err(TransferError::InsufficientFunds {
-            balance: Nat::from(balance),
-        });
-    }
-
-    let (txid, _hash) = storage::transfer(&from, &args.to, amount, memo, now);
-
-    Ok(Nat::from(txid))
+    Ok(execute_transfer(
+        &args.from,
+        &args.to,
+        Some(spender),
+        args.amount,
+        args.fee,
+        args.memo,
+    )?)
 }
 
 fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
