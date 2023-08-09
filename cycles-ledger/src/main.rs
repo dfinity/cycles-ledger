@@ -53,10 +53,18 @@ fn icrc1_minting_account() -> Option<Account> {
 #[query]
 #[candid_method(query)]
 fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
-    vec![endpoints::SupportedStandard {
-        name: "ICRC-1".to_string(),
-        url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-1/README.md".to_string(),
-    }]
+    vec![
+        endpoints::SupportedStandard {
+            name: "ICRC-1".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-1/README.md"
+                .to_string(),
+        },
+        endpoints::SupportedStandard {
+            name: "ICRC-2".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md"
+                .to_string(),
+        },
+    ]
 }
 
 #[query]
