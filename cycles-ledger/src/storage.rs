@@ -35,7 +35,7 @@ pub struct Allowance {
     pub amount: u128,
     pub expires_at: Option<u64>,
 }
-const MAX_ALLOWANCE_SIZE: u32 = 30;
+const MAX_ALLOWANCE_SIZE: u32 = 51;
 pub type Approvals = StableBTreeMap<ApprovalKey, Allowance, VMem>;
 pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 

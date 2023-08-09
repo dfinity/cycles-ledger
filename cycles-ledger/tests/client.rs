@@ -1,8 +1,19 @@
+use core::panic;
+
 use candid::{Decode, Encode, Nat, Principal};
-use cycles_ledger::endpoints::{self, DepositResult, SendArg};
+use cycles_ledger::{
+    config::FEE,
+    endpoints::{self, DepositResult, SendArg},
+};
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
-use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::{
+    icrc1::account::Account,
+    icrc2::{
+        allowance::{Allowance, AllowanceArgs},
+        approve::{ApproveArgs, ApproveError},
+    },
+};
 use num_traits::ToPrimitive;
 
 pub fn deposit(
@@ -50,5 +61,64 @@ pub fn send(
         Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::SendError>).unwrap()
     } else {
         panic!("send rejected")
+    }
+}
+
+pub fn get_allowance(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    spender: Account,
+) -> Allowance {
+    let args = AllowanceArgs {
+        account: from,
+        spender,
+    };
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "icrc2_allowance",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Allowance).unwrap()
+    } else {
+        panic!("allowance rejected")
+    }
+}
+
+pub fn approve(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    spender: Account,
+    amount: u128,
+    expected_allowance: Option<u128>,
+    expires_at: Option<u64>,
+) -> Result<Nat, ApproveError> {
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: amount.into(),
+        expected_allowance: expected_allowance.map(Nat::from),
+        expires_at,
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: None,
+    };
+    if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            from.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, ApproveError>).unwrap()
+    } else {
+        panic!("icrc2_approve rejected")
     }
 }

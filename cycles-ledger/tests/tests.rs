@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 
 use candid::{Encode, Nat, Principal};
 use client::deposit;
@@ -10,10 +13,13 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::StateMachine;
-use icrc_ledger_types::icrc1::{account::Account, transfer::Memo};
+use icrc_ledger_types::{
+    icrc1::{account::Account, transfer::Memo},
+    icrc2::approve::ApproveError,
+};
 use serde_bytes::ByteBuf;
 
-use crate::client::{balance_of, send};
+use crate::client::{approve, balance_of, get_allowance, send};
 
 mod client;
 
@@ -458,4 +464,233 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert_eq!(0, balance_of(env, ledger_id, user_2));
+}
+
+#[test]
+fn test_approve_smoke() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let spender_sub_1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: Some([1; 32]),
+    };
+
+    // Check that the users don't have any tokens before the first deposit.
+    assert_eq!(balance_of(env, ledger_id, from), 0u128);
+    assert_eq!(balance_of(env, ledger_id, spender), 0u128);
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    // Check that the users have the right balance.
+    assert_eq!(balance_of(env, ledger_id, from), Nat::from(1_000_000_000));
+    assert_eq!(balance_of(env, ledger_id, spender), Nat::from(0u128));
+
+    // Check that the allowance is 0 at the beginning
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(0));
+    assert_eq!(allowance.expires_at, None);
+
+    let block_index = approve(env, ledger_id, from, spender, 200_000_000_u128, None, None);
+    assert_eq!(block_index.unwrap(), 1);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
+    );
+
+    // Check that the allowance is 200M
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
+
+    // Check that the allowance for spender_sub_1 is still 0
+    let allowance = get_allowance(env, ledger_id, from, spender_sub_1);
+    assert_eq!(allowance.allowance, Nat::from(0));
+    assert_eq!(allowance.expires_at, None);
+
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender_sub_1,
+        300_000_000_u128,
+        None,
+        None,
+    );
+    assert_eq!(block_index.unwrap(), 2);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - 2 * FEE)
+    );
+
+    // Check that the spender allowance is still 200M
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
+
+    // Check that the allowance for spender_sub_1 is 300M
+    let allowance = get_allowance(env, ledger_id, from, spender_sub_1);
+    assert_eq!(allowance.allowance, Nat::from(300_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
+
+    // The spenders should have no tokens
+    assert_eq!(balance_of(env, ledger_id, spender), Nat::from(0));
+    assert_eq!(balance_of(env, ledger_id, spender_sub_1), Nat::from(0));
+}
+
+fn system_time_to_nanos(t: SystemTime) -> u64 {
+    t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as u64
+}
+
+#[test]
+fn test_approve_expiration() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    // Expiration in the past
+    let past_expiration =
+        Some(system_time_to_nanos(env.time()) - Duration::from_secs(5 * 3600).as_nanos() as u64);
+    assert_eq!(
+        approve(
+            env,
+            ledger_id,
+            from,
+            spender,
+            100_000_000_u128,
+            None,
+            past_expiration
+        ),
+        Err(ApproveError::Expired {
+            ledger_time: system_time_to_nanos(env.time())
+        })
+    );
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(0));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(balance_of(env, ledger_id, from), Nat::from(1_000_000_000));
+
+    // Correct expiration
+    let expiration =
+        system_time_to_nanos(env.time()) + Duration::from_secs(5 * 3600).as_nanos() as u64;
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender,
+        100_000_000_u128,
+        None,
+        Some(expiration),
+    );
+    assert_eq!(block_index.unwrap(), 1);
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(expiration));
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
+    );
+
+    // Decrease expiration
+    let new_expiration = expiration - Duration::from_secs(3600).as_nanos() as u64;
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender,
+        200_000_000_u128,
+        None,
+        Some(new_expiration),
+    );
+    assert_eq!(block_index.unwrap(), 2);
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(new_expiration));
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - 2 * FEE)
+    );
+
+    // Increase expiration
+    let new_expiration = expiration + Duration::from_secs(3600).as_nanos() as u64;
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender,
+        300_000_000_u128,
+        None,
+        Some(new_expiration),
+    );
+    assert_eq!(block_index.unwrap(), 3);
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(300_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(new_expiration));
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - 3 * FEE)
+    );
+}
+
+#[test]
+fn test_approve_max_allowance_size() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    // Largest possible allowance in terms of size in bytes - max amount and expiration
+    let block_index = approve(
+        env,
+        ledger_id,
+        from,
+        spender,
+        u128::MAX,
+        None,
+        Some(u64::MAX),
+    );
+    assert_eq!(block_index.unwrap(), 1);
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(u128::MAX));
+    assert_eq!(allowance.expires_at, Some(u64::MAX));
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
+    );
 }
