@@ -168,6 +168,13 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         });
     }
 
+    // Transaction cannot be created in the future
+    if let Some(time) = args.created_at_time {
+        if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
+            return Err(TransferError::CreatedInFuture { ledger_time: now });
+        }
+    }
+
     let (txid, _hash) = storage::transfer(&from, &args.to, amount, memo, now);
 
     Ok(Nat::from(txid))
