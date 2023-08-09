@@ -478,11 +478,11 @@ fn test_transfer() {
     };
     let deposit_amount = 1_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
-    let fee = fee(&env, ledger_id);
+    let fee = fee(env, ledger_id);
 
     let transfer_amount = Nat::from(100_000);
     transfer(
-        &env,
+        env,
         ledger_id,
         user1,
         TransferArg {
@@ -496,9 +496,9 @@ fn test_transfer() {
     )
     .unwrap();
 
-    assert_eq!(balance_of(&env, ledger_id, user2), transfer_amount.clone());
+    assert_eq!(balance_of(env, ledger_id, user2), transfer_amount.clone());
     assert_eq!(
-        balance_of(&env, ledger_id, user1),
+        balance_of(env, ledger_id, user1),
         Nat::from(deposit_amount) - fee.clone() - transfer_amount.clone()
     );
 
@@ -508,7 +508,7 @@ fn test_transfer() {
             balance: transfer_amount.clone()
         },
         transfer(
-            &env,
+            env,
             ledger_id,
             user2,
             TransferArg {
@@ -529,7 +529,7 @@ fn test_transfer() {
             expected_fee: fee.clone()
         },
         transfer(
-            &env,
+            env,
             ledger_id,
             user2,
             TransferArg {
