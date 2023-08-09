@@ -17,6 +17,7 @@ use icrc_ledger_types::{
     icrc1::{account::Account, transfer::Memo},
     icrc2::approve::{ApproveArgs, ApproveError},
 };
+use num_bigint::BigUint;
 use serde_bytes::ByteBuf;
 
 use crate::client::{approve, balance_of, get_allowance, send};
@@ -803,5 +804,93 @@ fn test_approve_expected_allowance() {
     assert_eq!(
         balance_of(env, ledger_id, from),
         Nat::from(1_000_000_000 - 2 * FEE)
+    );
+}
+
+#[test]
+fn test_approve_can_pay_fee() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 150_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(150_000_000));
+
+    // Can pay the fee
+    let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None);
+    assert_eq!(block_index.unwrap(), 1);
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(balance_of(env, ledger_id, from), Nat::from(50_000_000));
+
+    // Not enough funds to pay the fee
+    assert_eq!(
+        approve(env, ledger_id, from, spender, 200_000_000_u128, None, None),
+        Err(ApproveError::InsufficientFunds {
+            balance: Nat::from(50_000_000_u128)
+        })
+    );
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(balance_of(env, ledger_id, from), Nat::from(50_000_000));
+}
+
+#[test]
+fn test_approve_cap() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    // Approve amount capped at u128::MAX
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: Nat::from(
+            BigUint::parse_bytes(b"1000000000000000000000000000000000000000", 10).unwrap(),
+        ),
+        expected_allowance: None,
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: None,
+    };
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(u128::MAX));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
     );
 }
