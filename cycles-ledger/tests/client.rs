@@ -12,6 +12,7 @@ use icrc_ledger_types::{
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},
+        transfer_from::{TransferFromArgs, TransferFromError},
     },
 };
 use num_traits::ToPrimitive;
@@ -99,7 +100,7 @@ pub fn approve(
     expires_at: Option<u64>,
 ) -> Result<Nat, ApproveError> {
     let args = ApproveArgs {
-        from_subaccount: None,
+        from_subaccount: from.subaccount,
         spender,
         amount: amount.into(),
         expected_allowance: expected_allowance.map(Nat::from),
@@ -120,5 +121,37 @@ pub fn approve(
         Decode!(&res, Result<Nat, ApproveError>).unwrap()
     } else {
         panic!("icrc2_approve rejected")
+    }
+}
+
+pub fn transfer_from(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    to: Account,
+    spender: Account,
+    amount: u128,
+) -> Result<Nat, TransferFromError> {
+    let args = TransferFromArgs {
+        spender_subaccount: None,
+        from,
+        to,
+        amount: amount.into(),
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: None,
+    };
+    if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            spender.owner,
+            "icrc2_transfer_from",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, TransferFromError>).unwrap()
+    } else {
+        panic!("icrc2_transfer_from rejected")
     }
 }

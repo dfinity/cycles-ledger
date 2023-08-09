@@ -15,12 +15,15 @@ use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
     icrc1::{account::Account, transfer::Memo},
-    icrc2::approve::{ApproveArgs, ApproveError},
+    icrc2::{
+        approve::{ApproveArgs, ApproveError},
+        transfer_from::TransferFromError,
+    },
 };
 use num_bigint::BigUint;
 use serde_bytes::ByteBuf;
 
-use crate::client::{approve, balance_of, get_allowance, send};
+use crate::client::{approve, balance_of, get_allowance, send, transfer_from};
 
 mod client;
 
@@ -503,8 +506,9 @@ fn test_approve_smoke() {
     assert_eq!(allowance.allowance, Nat::from(0));
     assert_eq!(allowance.expires_at, None);
 
-    let block_index = approve(env, ledger_id, from, spender, 200_000_000_u128, None, None);
-    assert_eq!(block_index.unwrap(), 1);
+    let block_index = approve(env, ledger_id, from, spender, 200_000_000_u128, None, None)
+        .expect("approve failed");
+    assert_eq!(block_index, 1);
     assert_eq!(
         balance_of(env, ledger_id, from),
         Nat::from(1_000_000_000 - FEE)
@@ -528,8 +532,9 @@ fn test_approve_smoke() {
         300_000_000_u128,
         None,
         None,
-    );
-    assert_eq!(block_index.unwrap(), 2);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 2);
     assert_eq!(
         balance_of(env, ledger_id, from),
         Nat::from(1_000_000_000 - 2 * FEE)
@@ -606,8 +611,9 @@ fn test_approve_expiration() {
         100_000_000_u128,
         None,
         Some(expiration),
-    );
-    assert_eq!(block_index.unwrap(), 1);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 1);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration));
@@ -626,8 +632,9 @@ fn test_approve_expiration() {
         200_000_000_u128,
         None,
         Some(new_expiration),
-    );
-    assert_eq!(block_index.unwrap(), 2);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 2);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(new_expiration));
@@ -646,8 +653,9 @@ fn test_approve_expiration() {
         300_000_000_u128,
         None,
         Some(new_expiration),
-    );
-    assert_eq!(block_index.unwrap(), 3);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 3);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(300_000_000_u128));
     assert_eq!(allowance.expires_at, Some(new_expiration));
@@ -685,8 +693,9 @@ fn test_approve_max_allowance_size() {
         u128::MAX,
         None,
         Some(u64::MAX),
-    );
-    assert_eq!(block_index.unwrap(), 1);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 1);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(u128::MAX));
     assert_eq!(allowance.expires_at, Some(u64::MAX));
@@ -754,8 +763,9 @@ fn test_approve_expected_allowance() {
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
     // Approve 100M
-    let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None);
-    assert_eq!(block_index.unwrap(), 1);
+    let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None)
+        .expect("approve failed");
+    assert_eq!(block_index, 1);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, None);
@@ -796,8 +806,9 @@ fn test_approve_expected_allowance() {
         200_000_000_u128,
         Some(100_000_000_u128),
         None,
-    );
-    assert_eq!(block_index.unwrap(), 2);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 2);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, None);
@@ -827,8 +838,9 @@ fn test_approve_can_pay_fee() {
     assert_eq!(deposit_res.balance, Nat::from(150_000_000));
 
     // Can pay the fee
-    let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None);
-    assert_eq!(block_index.unwrap(), 1);
+    let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None)
+        .expect("approve failed");
+    assert_eq!(block_index, 1);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, None);
@@ -929,8 +941,9 @@ fn test_approve_approval_expiring() {
         100_000_000_u128,
         None,
         Some(expiration),
-    );
-    assert_eq!(block_index.unwrap(), 1);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 1);
     let allowance = get_allowance(env, ledger_id, from, spender1);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration));
@@ -946,8 +959,9 @@ fn test_approve_approval_expiring() {
         200_000_000_u128,
         None,
         Some(expiration_3h),
-    );
-    assert_eq!(block_index.unwrap(), 2);
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 2);
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
@@ -961,4 +975,68 @@ fn test_approve_approval_expiring() {
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
+}
+
+#[test]
+fn test_transfer_from_smoke() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let from_sub_1 = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: Some([1; 32]),
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    let to = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    let deposit_res = deposit(env, depositor_id, from_sub_1, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(1));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    // Transfer from without allowanced
+    assert_eq!(
+        transfer_from(env, ledger_id, from, to, spender, 30_000_000_u128),
+        Err(TransferFromError::InsufficientAllowance {
+            allowance: Nat::from(0)
+        })
+    );
+
+    let block_index = approve(env, ledger_id, from, spender, 150_000_000_u128, None, None)
+        .expect("approve failed");
+    assert_eq!(block_index, 2);
+    let block_index = approve(
+        env,
+        ledger_id,
+        from_sub_1,
+        spender,
+        50_000_000_u128,
+        None,
+        None,
+    )
+    .expect("approve failed");
+    assert_eq!(block_index, 3);
+
+    let block_index = transfer_from(env, ledger_id, from, to, spender, 30_000_000_u128)
+        .expect("transfer_from failed");
+    assert_eq!(block_index, 4);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
+    );
+    assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
 }
