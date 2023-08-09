@@ -12,10 +12,10 @@ use cycles_ledger::{
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
-use ic_test_state_machine_client::StateMachine;
+use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
     icrc1::{account::Account, transfer::Memo},
-    icrc2::approve::ApproveError,
+    icrc2::approve::{ApproveArgs, ApproveError},
 };
 use serde_bytes::ByteBuf;
 
@@ -693,4 +693,42 @@ fn test_approve_max_allowance_size() {
         balance_of(env, ledger_id, from),
         Nat::from(1_000_000_000 - FEE)
     );
+}
+
+#[test]
+fn test_approve_self() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+
+    // Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender: from,
+        amount: Nat::from(100),
+        expected_allowance: None,
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: None,
+    };
+    let err = env
+        .update_call(
+            ledger_id,
+            from.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::CanisterCalledTrap);
+    assert!(err.description.ends_with("self approval is not allowed"));
+    assert_eq!(balance_of(env, ledger_id, from), Nat::from(1_000_000_000));
 }
