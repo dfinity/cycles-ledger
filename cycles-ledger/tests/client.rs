@@ -2,7 +2,10 @@ use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::endpoints::{self, DepositResult, SendArg};
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
-use icrc_ledger_types::icrc1::account::Account;
+use icrc_ledger_types::icrc1::{
+    account::Account,
+    transfer::{TransferArg, TransferError},
+};
 use num_traits::ToPrimitive;
 
 pub fn deposit(
@@ -50,5 +53,34 @@ pub fn send(
         Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::SendError>).unwrap()
     } else {
         panic!("send rejected")
+    }
+}
+
+pub fn transfer(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    args: TransferArg,
+) -> Result<Nat, TransferError> {
+    let arg = Encode!(&args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .update_call(ledger_id, from.owner, "icrc1_transfer", arg)
+        .unwrap()
+    {
+        Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
+    } else {
+        panic!("transfer rejected")
+    }
+}
+
+pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(ledger_id, Principal::anonymous(), "icrc1_fee", arg)
+        .unwrap()
+    {
+        Decode!(&res, Nat).unwrap()
+    } else {
+        panic!("fee call rejected")
     }
 }
