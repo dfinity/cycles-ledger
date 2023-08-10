@@ -6,7 +6,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [ 1.66.1 ]
         ic-commit: [ a17247bd86c7aa4e87742bf74d108614580f216d ]
 
     steps:
@@ -31,10 +30,7 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup update ${{ matrix.rust }} --no-self-update
-          rustup default ${{ matrix.rust }}
-          rustup component add rustfmt
-          rustup component add clippy
+          rustup show
 
       - name: Cache StateMachine
         uses: actions/cache@v2
