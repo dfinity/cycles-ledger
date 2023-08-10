@@ -144,14 +144,14 @@ fn execute_transfer(
     memo: Option<Memo>,
 ) -> Result<Nat, GenericTransferError> {
     let now = ic_cdk::api::time();
-    let balance = storage::balance_of(&from);
+    let balance = storage::balance_of(from);
 
     // TODO(FI-767): Implement deduplication.
 
     let amount = match amount.0.to_u128() {
         Some(value) => value,
         None => {
-            return Err(GenericTransferError::InsufficientFunds { balance: balance });
+            return Err(GenericTransferError::InsufficientFunds { balance });
         }
     };
     if let Some(fee) = fee {
