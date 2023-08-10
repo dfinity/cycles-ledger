@@ -172,17 +172,12 @@ fn execute_transfer(
     }
     let memo = validate_memo(memo);
 
-    let total_spent_amount = amount.saturating_add(config::FEE);
-
-    if balance < total_spent_amount {
+    if balance < amount.saturating_add(config::FEE)
+    {
         return Err(GenericTransferError::InsufficientFunds { balance });
     }
 
-    if spender.is_some() && spender.unwrap() != *from {
-        storage::use_allowance(&from, &spender.unwrap(), total_spent_amount, now)?;
-    }
-
-    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now);
+    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now)?;
 
     Ok(Nat::from(txid))
 }

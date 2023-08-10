@@ -298,19 +298,23 @@ pub fn transfer(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
-) -> (u64, Hash) {
+) -> Result<(u64, Hash), GenericTransferError> {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
 
+    let total_spent_amount = amount.saturating_add(crate::config::FEE);
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());    
+    assert!(from_balance >= total_spent_amount);
+
+    if spender.is_some() && spender.unwrap() != *from {
+        use_allowance(&from, &spender.unwrap(), total_spent_amount, now)?;
+    }    
+
     mutate_state(|s| {
-        let from_balance = s.balances.get(&from_key).unwrap_or_default();
-
-        assert!(from_balance >= amount.saturating_add(crate::config::FEE));
-
         s.balances
             .insert(
                 from_key,
-                from_balance - amount.saturating_add(crate::config::FEE),
+                from_balance - total_spent_amount,
             )
             .expect("failed to update 'from' balance");
 
@@ -330,7 +334,7 @@ pub fn transfer(
             timestamp: now,
             phash,
         });
-        (s.blocks.len() - 1, block_hash)
+        Ok((s.blocks.len() - 1, block_hash))
     })
 }
 
