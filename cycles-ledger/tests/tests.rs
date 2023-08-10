@@ -920,9 +920,12 @@ fn test_approve_approval_expiring() {
         owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
-
     let spender2 = Account {
         owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let spender3 = Account {
+        owner: Principal::from_slice(&[3]),
         subaccount: None,
     };
 
@@ -969,6 +972,22 @@ fn test_approve_approval_expiring() {
     // Test expired approval pruning, advance time 2 hours.
     env.advance_time(Duration::from_secs(2 * 3600));
     env.tick();
+
+    // Add additional approval to trigger expired approval pruning
+    approve(
+        env,
+        ledger_id,
+        from,
+        spender3,
+        300_000_000_u128,
+        None,
+        Some(expiration_3h),
+    )
+    .expect("approve failed");
+    let allowance = get_allowance(env, ledger_id, from, spender3);
+    assert_eq!(allowance.allowance, Nat::from(300_000_000_u128));
+    assert_eq!(allowance.expires_at, Some(expiration_3h));
+
     let allowance = get_allowance(env, ledger_id, from, spender1);
     assert_eq!(allowance.allowance, Nat::from(0));
     assert_eq!(allowance.expires_at, None);

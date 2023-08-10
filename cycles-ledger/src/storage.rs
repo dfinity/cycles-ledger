@@ -565,7 +565,6 @@ fn prune(now: u64, limit: usize) -> usize {
         for _ in 0..limit {
             match s.expiration_queue.first_key_value() {
                 Some((key, _value)) => {
-                    println!("{:?}", key);
                     if key.0 > now {
                         return ();
                     }
@@ -577,10 +576,17 @@ fn prune(now: u64, limit: usize) -> usize {
             if let Some((key, _value)) = s.expiration_queue.first_key_value() {
                 if key.0 <= now {
                     s.approvals.remove(&key.1);
+                    s.expiration_queue.remove(&key);
                     pruned += 1;
                 }
             }
         }
+        debug_assert!(
+            s.expiration_queue.len() <= s.approvals.len(),
+            "expiration_queue len ({}) larger than approvals len ({})",
+            s.expiration_queue.len(),
+            s.approvals.len()
+        );
     });
     pruned
 }
