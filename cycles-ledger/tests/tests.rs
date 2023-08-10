@@ -1000,13 +1000,9 @@ fn test_transfer_from_smoke() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
-    let deposit_res = deposit(env, depositor_id, from_sub_1, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(1));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Make the first deposits.
+    deposit(env, depositor_id, from, 350_000_000);
+    deposit(env, depositor_id, from_sub_1, 1_000_000_000);
 
     // Transfer from without allowanced
     assert_eq!(
@@ -1016,27 +1012,68 @@ fn test_transfer_from_smoke() {
         })
     );
 
-    let block_index = approve(env, ledger_id, from, spender, 150_000_000_u128, None, None)
-        .expect("approve failed");
+    let block_index =
+        approve(env, ledger_id, from, spender, 500_000_000, None, None).expect("approve failed");
     assert_eq!(block_index, 2);
-    let block_index = approve(
-        env,
-        ledger_id,
-        from_sub_1,
-        spender,
-        50_000_000_u128,
-        None,
-        None,
-    )
-    .expect("approve failed");
+    let block_index = approve(env, ledger_id, from_sub_1, spender, 150_000_000, None, None)
+        .expect("approve failed");
     assert_eq!(block_index, 3);
 
-    let block_index = transfer_from(env, ledger_id, from, to, spender, 30_000_000_u128)
-        .expect("transfer_from failed");
+    // Transfer_from `from`
+    let block_index =
+        transfer_from(env, ledger_id, from, to, spender, 30_000_000).expect("transfer_from failed");
     assert_eq!(block_index, 4);
     assert_eq!(
         balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
+        Nat::from(350_000_000 - 30_000_000 - 2 * FEE)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, from_sub_1),
+        Nat::from(1_000_000_000 - FEE)
     );
     assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(
+        allowance.allowance,
+        Nat::from(500_000_000 - 30_000_000 - FEE)
+    );
+    assert_eq!(allowance.expires_at, None);
+    let allowance = get_allowance(env, ledger_id, from_sub_1, spender);
+    assert_eq!(allowance.allowance, Nat::from(150_000_000));
+    assert_eq!(allowance.expires_at, None);
+
+    // Transfer from with insufficient funds
+    assert_eq!(
+        transfer_from(env, ledger_id, from, to, spender, 30_000_000),
+        Err(TransferFromError::InsufficientFunds {
+            balance: Nat::from(350_000_000 - 30_000_000 - 2 * FEE)
+        })
+    );
+
+    // Transfer_from `from_sub_1`
+    let block_index = transfer_from(env, ledger_id, from_sub_1, to, spender, 30_000_000)
+        .expect("transfer_from failed");
+    assert_eq!(block_index, 5);
+    assert_eq!(
+        balance_of(env, ledger_id, from_sub_1),
+        Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
+    );
+    let allowance = get_allowance(env, ledger_id, from_sub_1, spender);
+    assert_eq!(
+        allowance.allowance,
+        Nat::from(150_000_000 - 30_000_000 - FEE)
+    );
+    assert_eq!(allowance.expires_at, None);
+
+    // Transfer from with insufficient allowance
+    assert_eq!(
+        transfer_from(env, ledger_id, from_sub_1, to, spender, 30_000_000),
+        Err(TransferFromError::InsufficientAllowance {
+            allowance: Nat::from(150_000_000 - 30_000_000 - FEE)
+        })
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, from_sub_1),
+        Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
+    );
 }

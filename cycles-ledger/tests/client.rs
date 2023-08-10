@@ -133,7 +133,7 @@ pub fn transfer_from(
     amount: u128,
 ) -> Result<Nat, TransferFromError> {
     let args = TransferFromArgs {
-        spender_subaccount: None,
+        spender_subaccount: spender.subaccount,
         from,
         to,
         amount: amount.into(),
