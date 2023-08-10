@@ -1123,7 +1123,7 @@ fn test_transfer_from_self() {
     assert_eq!(block_index, 1);
     assert_eq!(
         balance_of(env, ledger_id, from),
-        Nat::from(350_000_000 - 30_000_000 - 1 * FEE)
+        Nat::from(350_000_000 - 30_000_000 - FEE)
     );
     assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
 }
