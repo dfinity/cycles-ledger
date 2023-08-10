@@ -510,7 +510,7 @@ fn record_approval(
     })
 }
 
-pub fn use_allowance(
+fn use_allowance(
     account: &Account,
     spender: &Account,
     amount: u128,
