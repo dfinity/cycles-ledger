@@ -1,3 +1,4 @@
+use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -5,23 +6,25 @@ use ic_stable_structures::{
 };
 use icrc_ledger_types::icrc1::{
     account::Account,
-    transfer::{BlockIndex, Memo},
+    transfer::{BlockIndex, Memo, TransferError},
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{ciborium_to_generic_value, compact_account};
+use crate::{ciborium_to_generic_value, compact_account, config};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
+const OPERATIONS_MEMORY_ID: MemoryId = MemoryId::new(4);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
+pub type OperationsLog = StableBTreeMap<Hash, u64, VMem>;
 
 pub type Hash = [u8; 32];
 
@@ -63,6 +66,22 @@ pub enum Operation {
     },
 }
 
+impl Operation {
+    pub fn hash(&self) -> Hash {
+        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
+            panic!(
+                "Bug: unable to convert Operation to Ciborium Value. Error: {}, Block: {:?}",
+                e, self
+            )
+        });
+        match ciborium_to_generic_value(value.clone(), 0) {
+            Ok(value) => value.hash(),
+            Err(err) =>
+                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Block {
     op: Operation,
@@ -91,6 +110,7 @@ impl Block {
 pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
+    pub operations: OperationsLog,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -103,9 +123,12 @@ impl State {
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
+        let tx_hash = b.op.hash();
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
+        // Add block index to the list of operations and set the hash as its key
+        self.operations.insert(tx_hash, self.blocks.len() - 1);
         hash
     }
 
@@ -137,6 +160,7 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
+            operations: OperationsLog::init(mm.get(OPERATIONS_MEMORY_ID)),
         })
     });
 }
@@ -220,45 +244,73 @@ pub fn record_deposit(
     })
 }
 
-pub fn transfer(
-    from: &Account,
-    to: &Account,
-    amount: u128,
-    memo: Option<Memo>,
+pub fn deduplicate(
+    created_at_timestamp: Option<u64>,
+    tx_hash: [u8; 32],
     now: u64,
-) -> (u64, Hash) {
-    let from_key = to_account_key(from);
-    let to_key = to_account_key(to);
+) -> Result<(), TransferError> {
+    // TODO: purge old transactions
+    if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
+        // The caller requested deduplication.
+        if created_at_time + (config::TRANSACTION_WINDOW.as_nanos() as u64) < now {
+            return Err(TransferError::TooOld);
+        }
 
-    mutate_state(|s| {
-        let from_balance = s.balances.get(&from_key).unwrap_or_default();
+        if created_at_time > now + (config::PERMITTED_DRIFT.as_nanos() as u64) {
+            return Err(TransferError::CreatedInFuture { ledger_time: now });
+        }
 
-        assert!(from_balance >= amount.saturating_add(crate::config::FEE));
+        if let Some(block_height) = read_state(|state| state.operations.get(&tx_hash)) {
+            return Err(TransferError::Duplicate {
+                duplicate_of: Nat::from(block_height),
+            });
+        }
+    }
+    Ok(())
+}
 
-        s.balances
-            .insert(
-                from_key,
-                from_balance - amount.saturating_add(crate::config::FEE),
-            )
-            .expect("failed to update 'from' balance");
+pub fn transfer(operation: Operation, now: u64) -> (u64, Hash) {
+    match operation {
+        Operation::Transfer {
+            from,
+            to,
+            amount,
+            fee,
+            memo: _,
+        } => {
+            let from_key = to_account_key(&from);
+            let to_key = to_account_key(&to);
 
-        let to_balance = s.balances.get(&to_key).unwrap_or_default();
-        s.balances.insert(to_key, to_balance + amount);
+            mutate_state(|s| {
+                let from_balance = s.balances.get(&from_key).unwrap_or_default();
 
-        let phash = s.last_block_hash();
-        let block_hash = s.emit_block(Block {
-            op: Operation::Transfer {
-                from: *from,
-                to: *to,
-                amount,
-                memo,
-                fee: crate::config::FEE,
-            },
-            timestamp: now,
-            phash,
-        });
-        (s.blocks.len() - 1, block_hash)
-    })
+                assert!(from_balance >= amount.saturating_add(crate::config::FEE));
+                assert!(fee == crate::config::FEE);
+
+                s.balances
+                    .insert(
+                        from_key,
+                        from_balance - amount.saturating_add(crate::config::FEE),
+                    )
+                    .expect("failed to update 'from' balance");
+
+                let to_balance = s.balances.get(&to_key).unwrap_or_default();
+                s.balances.insert(to_key, to_balance + amount);
+
+                let phash = s.last_block_hash();
+                let block_hash = s.emit_block(Block {
+                    op: operation.clone(),
+                    timestamp: now,
+                    phash,
+                });
+                (s.blocks.len() - 1, block_hash)
+            })
+        }
+        _ => ic_cdk::trap(&format!(
+            "Transfer call received unexpected operation: {:?}, expected Operation::Transfer",
+            operation,
+        )),
+    }
 }
 
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {

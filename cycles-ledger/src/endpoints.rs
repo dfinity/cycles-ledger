@@ -2,7 +2,7 @@ use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::api::call::RejectionCode;
 use icrc_ledger_types::icrc1::{
     account::{Account, Subaccount},
-    transfer::{BlockIndex, Memo},
+    transfer::{BlockIndex, Memo, TransferError},
 };
 
 pub type NumCycles = Nat;
@@ -72,4 +72,36 @@ pub enum SendErrorReason {
     InvalidReceiver {
         receiver: Principal,
     },
+    BadBurn {
+        min_burn_amount: Nat,
+    },
+}
+
+impl From<TransferError> for SendErrorReason {
+    fn from(value: TransferError) -> Self {
+        match value {
+            TransferError::BadFee { expected_fee } => SendErrorReason::BadFee { expected_fee },
+            TransferError::BadBurn { min_burn_amount } => {
+                SendErrorReason::BadBurn { min_burn_amount }
+            }
+            TransferError::InsufficientFunds { balance } => {
+                SendErrorReason::InsufficientFunds { balance }
+            }
+            TransferError::TooOld => SendErrorReason::TooOld,
+            TransferError::CreatedInFuture { ledger_time } => {
+                SendErrorReason::CreatedInFuture { ledger_time }
+            }
+            TransferError::TemporarilyUnavailable => SendErrorReason::TemporarilyUnavailable,
+            TransferError::Duplicate { duplicate_of } => {
+                SendErrorReason::Duplicate { duplicate_of }
+            }
+            TransferError::GenericError {
+                error_code,
+                message,
+            } => SendErrorReason::GenericError {
+                error_code,
+                message,
+            },
+        }
+    }
 }
