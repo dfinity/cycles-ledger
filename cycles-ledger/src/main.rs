@@ -142,6 +142,7 @@ fn execute_transfer(
     amount: Nat,
     fee: Option<Nat>,
     memo: Option<Memo>,
+    created_at_time: Option<u64>,
 ) -> Result<Nat, GenericTransferError> {
     let now = ic_cdk::api::time();
     let balance = storage::balance_of(from);
@@ -176,6 +177,13 @@ fn execute_transfer(
         return Err(GenericTransferError::InsufficientFunds { balance });
     }
 
+    // Transaction cannot be created in the future
+    if let Some(time) = created_at_time {
+        if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
+            return Err(GenericTransferError::CreatedInFuture { ledger_time: now });
+        }
+    }
+    
     let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now)?;
 
     Ok(Nat::from(txid))
@@ -189,7 +197,7 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         subaccount: args.from_subaccount,
     };
 
-    execute_transfer(&from, &args.to, None, args.amount, args.fee, args.memo).map_err(|err| {
+    execute_transfer(&from, &args.to, None, args.amount, args.fee, args.memo, args.created_at_time).map_err(|err| {
         let err: TransferError = match err.try_into() {
             Ok(err) => err,
             Err(err) => ic_cdk::trap(&err),
@@ -212,6 +220,7 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
         args.amount,
         args.fee,
         args.memo,
+        args.created_at_time,
     )?)
 }
 

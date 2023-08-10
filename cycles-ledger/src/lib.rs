@@ -103,6 +103,7 @@ pub enum GenericTransferError {
     BadBurn { min_burn_amount: u128 },
     InsufficientFunds { balance: u128 },
     InsufficientAllowance { allowance: u128 },
+    CreatedInFuture { ledger_time: u64 },
 }
 
 impl TryFrom<GenericTransferError> for TransferError {
@@ -126,6 +127,7 @@ impl TryFrom<GenericTransferError> for TransferError {
                     "InsufficientAllowance error should not happen for transfer".to_string()
                 );
             }
+            GenericTransferError::CreatedInFuture { ledger_time } => TransferError::CreatedInFuture { ledger_time },
         })
     }
 }
@@ -149,6 +151,7 @@ impl From<GenericTransferError> for TransferFromError {
                     allowance: Nat::from(allowance),
                 }
             }
+            GenericTransferError::CreatedInFuture { ledger_time } => TransferFromError::CreatedInFuture { ledger_time },
         }
     }
 }

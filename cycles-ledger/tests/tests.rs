@@ -1196,7 +1196,7 @@ fn test_transfer() {
         transfer(
             env,
             ledger_id,
-            user2,
+            user1,
             TransferArg {
                 from_subaccount: None,
                 to: user1,
@@ -1208,4 +1208,44 @@ fn test_transfer() {
         )
         .unwrap_err()
     );
+
+    // Should not be able commit a transaction that was created in the future
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    assert_eq!(
+        TransferError::CreatedInFuture { ledger_time: now },
+        transfer(
+            env,
+            ledger_id,
+            user1,
+            TransferArg {
+                from_subaccount: None,
+                to: user1,
+                fee: None,
+                created_at_time: Some(u64::MAX),
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
+
+    // Should be able to make a transfer when created time is valid
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: Some(now),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
 }
