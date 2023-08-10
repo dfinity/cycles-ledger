@@ -30,7 +30,7 @@ pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Allowance {
     pub amount: u128,
     pub expires_at: Option<u64>,
@@ -144,15 +144,6 @@ impl Storable for Allowance {
 impl BoundedStorable for Allowance {
     const MAX_SIZE: u32 = MAX_ALLOWANCE_SIZE;
     const IS_FIXED_SIZE: bool = false;
-}
-
-impl Default for Allowance {
-    fn default() -> Self {
-        Self {
-            amount: 0,
-            expires_at: None,
-        }
-    }
 }
 
 pub struct State {
@@ -307,7 +298,7 @@ pub fn transfer(
     assert!(from_balance >= total_spent_amount);
 
     if spender.is_some() && spender.unwrap() != *from {
-        use_allowance(&from, &spender.unwrap(), total_spent_amount, now)?;
+        use_allowance(from, &spender.unwrap(), total_spent_amount, now)?;
     }
 
     mutate_state(|s| {
@@ -483,10 +474,10 @@ fn record_approval(
                 }
             }
             if let Some(expires_at) = expires_at {
-                s.expiration_queue.insert((expires_at, key.clone()), ());
+                s.expiration_queue.insert((expires_at, key), ());
             }
             let allowance = Allowance { amount, expires_at };
-            s.approvals.insert(key.clone(), allowance);
+            s.approvals.insert(key, allowance);
             Ok(())
         }
         Some(allowance) => {
@@ -505,13 +496,13 @@ fn record_approval(
                 return Ok(());
             }
             let new_allowance = Allowance { amount, expires_at };
-            s.approvals.insert(key.clone(), new_allowance);
+            s.approvals.insert(key, new_allowance);
             if expires_at != allowance.expires_at {
                 if let Some(expires_at) = allowance.expires_at {
                     s.expiration_queue.remove(&(expires_at, key));
                 }
                 if let Some(expires_at) = expires_at {
-                    s.expiration_queue.insert((expires_at, key.clone()), ());
+                    s.expiration_queue.insert((expires_at, key), ());
                 }
             }
             Ok(())
@@ -552,7 +543,7 @@ pub fn use_allowance(
                         amount: new_amount,
                         expires_at: allowance.expires_at,
                     };
-                    s.approvals.insert(key.clone(), new_allowance);
+                    s.approvals.insert(key, new_allowance);
                 }
                 Ok(())
             }
@@ -567,11 +558,11 @@ fn prune(now: u64, limit: usize) -> usize {
             match s.expiration_queue.first_key_value() {
                 Some((key, _value)) => {
                     if key.0 > now {
-                        return ();
+                        return;
                     }
                 }
                 None => {
-                    return ();
+                    return;
                 }
             }
             if let Some((key, _value)) = s.expiration_queue.first_key_value() {
