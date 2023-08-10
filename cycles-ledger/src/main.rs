@@ -178,7 +178,7 @@ fn execute_transfer(
         return Err(GenericTransferError::InsufficientFunds { balance });
     }
 
-    if spender.is_some() {
+    if spender.is_some() && spender.unwrap() != *from {
         storage::use_allowance(&from, &spender.unwrap(), total_spent_amount, now)?;
     }
 

@@ -1077,3 +1077,31 @@ fn test_transfer_from_smoke() {
         Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
     );
 }
+
+#[test]
+fn test_transfer_from_self() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let to = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+
+    // Make the first deposit.
+    deposit(env, depositor_id, from, 350_000_000);
+
+    // Transfer_from `from`
+    let block_index =
+        transfer_from(env, ledger_id, from, to, from, 30_000_000).expect("transfer_from failed");
+    assert_eq!(block_index, 1);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(350_000_000 - 30_000_000 - 1 * FEE)
+    );
+    assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
+}
