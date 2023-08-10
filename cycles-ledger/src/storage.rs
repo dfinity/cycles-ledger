@@ -1,4 +1,4 @@
-use candid::{CandidType, Decode, Deserialize as CandidDeserialize, Encode, Nat};
+use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -30,12 +30,12 @@ pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
-#[derive(CandidType, CandidDeserialize, Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Allowance {
     pub amount: u128,
     pub expires_at: Option<u64>,
 }
-const MAX_ALLOWANCE_SIZE: u32 = 51;
+const MAX_ALLOWANCE_SIZE: u32 = 46;
 pub type Approvals = StableBTreeMap<ApprovalKey, Allowance, VMem>;
 pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
@@ -127,11 +127,17 @@ impl Block {
 
 impl Storable for Allowance {
     fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        Cow::Owned(Encode!(self).unwrap())
+        let mut buf = vec![];
+        ciborium::ser::into_writer(self, &mut buf).unwrap_or_else(|err| {
+            ic_cdk::trap(&format!("{:?}", err));
+        });
+        Cow::Owned(buf)
     }
 
     fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
-        Decode!(bytes.as_ref(), Self).unwrap()
+        ciborium::de::from_reader(&bytes[..]).unwrap_or_else(|err| {
+            ic_cdk::trap(&format!("{:?}", err));
+        })
     }
 }
 
