@@ -127,7 +127,9 @@ impl TryFrom<GenericTransferError> for TransferError {
                     "InsufficientAllowance error should not happen for transfer".to_string()
                 );
             }
-            GenericTransferError::CreatedInFuture { ledger_time } => TransferError::CreatedInFuture { ledger_time },
+            GenericTransferError::CreatedInFuture { ledger_time } => {
+                TransferError::CreatedInFuture { ledger_time }
+            }
         })
     }
 }
@@ -151,7 +153,9 @@ impl From<GenericTransferError> for TransferFromError {
                     allowance: Nat::from(allowance),
                 }
             }
-            GenericTransferError::CreatedInFuture { ledger_time } => TransferFromError::CreatedInFuture { ledger_time },
+            GenericTransferError::CreatedInFuture { ledger_time } => {
+                TransferFromError::CreatedInFuture { ledger_time }
+            }
         }
     }
 }

@@ -183,7 +183,7 @@ fn execute_transfer(
             return Err(GenericTransferError::CreatedInFuture { ledger_time: now });
         }
     }
-    
+
     let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now)?;
 
     Ok(Nat::from(txid))
@@ -197,7 +197,16 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         subaccount: args.from_subaccount,
     };
 
-    execute_transfer(&from, &args.to, None, args.amount, args.fee, args.memo, args.created_at_time).map_err(|err| {
+    execute_transfer(
+        &from,
+        &args.to,
+        None,
+        args.amount,
+        args.fee,
+        args.memo,
+        args.created_at_time,
+    )
+    .map_err(|err| {
         let err: TransferError = match err.try_into() {
             Ok(err) => err,
             Err(err) => ic_cdk::trap(&err),
