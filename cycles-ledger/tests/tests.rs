@@ -14,7 +14,10 @@ use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
-    icrc1::{account::Account, transfer::Memo},
+    icrc1::{
+        account::Account,
+        transfer::{Memo, TransferArg, TransferError},
+    },
     icrc2::{
         approve::{ApproveArgs, ApproveError},
         transfer_from::TransferFromError,
@@ -23,15 +26,7 @@ use icrc_ledger_types::{
 use num_bigint::BigUint;
 use serde_bytes::ByteBuf;
 
-use crate::client::{approve, balance_of, get_allowance, send, transfer_from};
-use ic_test_state_machine_client::StateMachine;
-use icrc_ledger_types::icrc1::{
-    account::Account,
-    transfer::{Memo, TransferArg, TransferError},
-};
-use serde_bytes::ByteBuf;
-
-use crate::client::{balance_of, fee, send};
+use crate::client::{approve, balance_of, fee, get_allowance, send, transfer_from};
 
 mod client;
 
@@ -1133,6 +1128,7 @@ fn test_transfer_from_self() {
     assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
 }
 
+#[test]
 fn test_transfer() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);

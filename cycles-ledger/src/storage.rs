@@ -303,19 +303,16 @@ pub fn transfer(
     let to_key = to_account_key(to);
 
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
-    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());    
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
     assert!(from_balance >= total_spent_amount);
 
     if spender.is_some() && spender.unwrap() != *from {
         use_allowance(&from, &spender.unwrap(), total_spent_amount, now)?;
-    }    
+    }
 
     mutate_state(|s| {
         s.balances
-            .insert(
-                from_key,
-                from_balance - total_spent_amount,
-            )
+            .insert(from_key, from_balance - total_spent_amount)
             .expect("failed to update 'from' balance");
 
         let to_balance = s.balances.get(&to_key).unwrap_or_default();

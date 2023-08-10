@@ -172,8 +172,7 @@ fn execute_transfer(
     }
     let memo = validate_memo(memo);
 
-    if balance < amount.saturating_add(config::FEE)
-    {
+    if balance < amount.saturating_add(config::FEE) {
         return Err(GenericTransferError::InsufficientFunds { balance });
     }
 
