@@ -228,6 +228,11 @@ fn test_send_flow() {
     );
 
     // send cycles from subaccount with created_at_time set
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
     let send_receiver_balance = env.cycle_balance(send_receiver);
     let send_amount = 300_000_000_u128;
     let _send_idx = send(
@@ -238,7 +243,7 @@ fn test_send_flow() {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
             to: send_receiver,
             fee: None,
-            created_at_time: Some(100_u64),
+            created_at_time: Some(now),
             memo: None,
             amount: Nat::from(send_amount),
         },
@@ -481,7 +486,7 @@ fn test_transfer() {
     let fee = fee(env, ledger_id);
 
     let transfer_amount = Nat::from(100_000);
-    transfer(
+    let idx = transfer(
         env,
         ledger_id,
         user1,
@@ -568,7 +573,9 @@ fn test_transfer() {
         .unwrap_err()
     );
 
-    // Should be able to make a transfer when created time is valid
+    // When making the same transaction again
+    assert_eq!(
+        TransferError::Duplicate { duplicate_of: idx },
     transfer(
         env,
         ledger_id,
@@ -582,5 +589,5 @@ fn test_transfer() {
             amount: transfer_amount.clone(),
         },
     )
-    .unwrap();
+    .unwrap_err());
 }

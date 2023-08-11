@@ -251,7 +251,7 @@ pub fn deduplicate(
 ) -> Result<(), TransferError> {
     // TODO: purge old transactions
     if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
-        // The caller requested deduplication.
+        // If the created timestamp is outside of the Transaction
         if created_at_time + (config::TRANSACTION_WINDOW.as_nanos() as u64) < now {
             return Err(TransferError::TooOld);
         }
@@ -261,9 +261,25 @@ pub fn deduplicate(
         }
 
         if let Some(block_height) = read_state(|state| state.operations.get(&tx_hash)) {
-            return Err(TransferError::Duplicate {
-                duplicate_of: Nat::from(block_height),
-            });
+            if let Some(block) = read_state(|state| state.blocks.get(block_height)) {
+                if block
+                    .0
+                    .timestamp
+                    .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+                    .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+                    < now
+                {
+                    if !mutate_state(|state| state.operations.remove(&tx_hash)).is_some() {
+                        ic_cdk::trap(&format!("Could not remove tx hash {:?}", tx_hash))
+                    }
+                } else {
+                    return Err(TransferError::Duplicate {
+                        duplicate_of: Nat::from(block_height),
+                    });
+                }
+            } else {
+                ic_cdk::trap(&format!("Could not find block index {}", block_height))
+            }
         }
     }
     Ok(())

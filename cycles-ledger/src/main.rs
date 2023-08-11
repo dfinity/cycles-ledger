@@ -106,7 +106,7 @@ fn validate_memo(memo: Option<Memo>) -> Option<Memo> {
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
 
-    // TODO(FI-767): Implement deduplication.
+    // TODO(FI-884): Implement deduplication.
 
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
@@ -219,7 +219,6 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         canister_id: args.to,
     };
 
-    // TODO(FI-767): Implement deduplication.
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
         None => {
