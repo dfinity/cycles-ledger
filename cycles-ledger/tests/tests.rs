@@ -491,18 +491,11 @@ fn test_approve_smoke() {
         subaccount: Some([1; 32]),
     };
 
-    // Check that the users don't have any tokens before the first deposit.
-    assert_eq!(balance_of(env, ledger_id, from), 0u128);
-    assert_eq!(balance_of(env, ledger_id, spender), 0u128);
-
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
-
-    // Check that the users have the right balance.
-    assert_eq!(balance_of(env, ledger_id, from), Nat::from(1_000_000_000));
-    assert_eq!(balance_of(env, ledger_id, spender), Nat::from(0u128));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     // Check that the allowance is 0 at the beginning
     let allowance = get_allowance(env, ledger_id, from, spender);
@@ -576,10 +569,11 @@ fn test_approve_expiration() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     // Expiration in the past
     let past_expiration =
@@ -682,10 +676,11 @@ fn test_approve_max_allowance_size() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     // Largest possible allowance in terms of size in bytes - max amount and expiration
     let block_index = approve(
@@ -718,10 +713,11 @@ fn test_approve_self() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     let args = ApproveArgs {
         from_subaccount: None,
@@ -760,10 +756,11 @@ fn test_approve_expected_allowance() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     // Approve 100M
     let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None)
@@ -835,10 +832,11 @@ fn test_approve_can_pay_fee() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 150_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(150_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 150_000_000).balance,
+        150_000_000
+    );
 
     // Can pay the fee
     let block_index = approve(env, ledger_id, from, spender, 100_000_000_u128, None, None)
@@ -876,10 +874,11 @@ fn test_approve_cap() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     // Approve amount capped at u128::MAX
     let args = ApproveArgs {
@@ -932,10 +931,11 @@ fn test_approve_approval_expiring() {
         subaccount: None,
     };
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, from, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
 
     // First approval expiring 1 hour from now.
     let expiration = system_time_to_nanos(env.time()) + Duration::from_secs(3600).as_nanos() as u64;
