@@ -229,10 +229,10 @@ fn test_send_flow() {
 
     // send cycles from subaccount with created_at_time set
     let now = env
-        .time()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
+    .time()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .unwrap()
+    .as_nanos() as u64;
     let send_receiver_balance = env.cycle_balance(send_receiver);
     let send_amount = 300_000_000_u128;
     let _send_idx = send(
@@ -486,7 +486,7 @@ fn test_transfer() {
     let fee = fee(env, ledger_id);
 
     let transfer_amount = Nat::from(100_000);
-    let idx = transfer(
+    transfer(
         env,
         ledger_id,
         user1,
@@ -550,7 +550,7 @@ fn test_transfer() {
     );
 
     // Should not be able commit a transaction that was created in the future
-    let now = env
+    let mut now = env
         .time()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -573,9 +573,66 @@ fn test_transfer() {
         .unwrap_err()
     );
 
-    // When making the same transaction again
+    // Should be able to make a transfer when created time is valid
+    let tx: Nat= transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: Some(now),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    // Should not be able send the same transfer twice if created_at_time is set
     assert_eq!(
-        TransferError::Duplicate { duplicate_of: idx },
+        TransferError::Duplicate { duplicate_of: tx},
+        transfer(
+            env,
+            ledger_id,
+            user1,
+            TransferArg {
+                from_subaccount: None,
+                to: user2,
+                fee: None,
+                created_at_time: Some(now),
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
+    
+    // Setting a different memo field should result in no deduplication
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: Some(now),
+            memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+    
+    // Advance time so that the deduplication window is over
+    env.advance_time(config::TRANSACTION_WINDOW*2);
+    now = env
+    .time()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .unwrap()
+    .as_nanos() as u64;
+
+    // Now the transfer which was deduplicated previously should be ok
     transfer(
         env,
         ledger_id,
@@ -589,5 +646,6 @@ fn test_transfer() {
             amount: transfer_amount.clone(),
         },
     )
-    .unwrap_err());
+    .unwrap();
+
 }
