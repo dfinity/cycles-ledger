@@ -283,7 +283,7 @@ pub fn deduplicate(
                     .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
                     < now
                 {
-                    if !mutate_state(|state| state.operations.remove(&tx_hash)).is_some() {
+                    if mutate_state(|state| state.operations.remove(&tx_hash)).is_none() {
                         ic_cdk::trap(&format!("Could not remove tx hash {:?}", tx_hash))
                     }
                 } else {
