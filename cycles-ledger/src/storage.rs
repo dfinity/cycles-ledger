@@ -40,6 +40,10 @@ pub enum Operation {
         fee: u128,
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "ts")]
+        created_at_time: Option<u64>,
     },
     Transfer {
         #[serde(with = "compact_account")]
@@ -51,6 +55,10 @@ pub enum Operation {
         fee: u128,
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "ts")]
+        created_at_time: Option<u64>,
     },
     Burn {
         #[serde(with = "compact_account")]
@@ -60,6 +68,10 @@ pub enum Operation {
         fee: u128,
         #[serde(skip_serializing_if = "Option::is_none")]
         memo: Option<Memo>,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "ts")]
+        created_at_time: Option<u64>,
     },
 }
 
@@ -197,6 +209,7 @@ pub fn record_deposit(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
+    created_at_time: Option<u64>,
 ) -> (u64, u128, Hash) {
     assert!(amount >= crate::config::FEE);
 
@@ -212,6 +225,7 @@ pub fn record_deposit(
                 amount,
                 memo,
                 fee: crate::config::FEE,
+                created_at_time,
             },
             timestamp: now,
             phash,
@@ -226,6 +240,7 @@ pub fn transfer(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
+    created_at_time: Option<u64>,
 ) -> (u64, Hash) {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
@@ -253,6 +268,7 @@ pub fn transfer(
                 amount,
                 memo,
                 fee: crate::config::FEE,
+                created_at_time,
             },
             timestamp: now,
             phash,
@@ -281,6 +297,7 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
                 amount: 0,
                 memo: None,
                 fee: crate::config::FEE,
+                created_at_time: None,
             },
             timestamp: now,
             phash,
@@ -289,7 +306,13 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     })
 }
 
-pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (BlockIndex, Hash) {
+pub fn send(
+    from: &Account,
+    amount: u128,
+    memo: Option<Memo>,
+    now: u64,
+    created_at_time: Option<u64>,
+) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
@@ -311,6 +334,7 @@ pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (Bloc
                 amount,
                 memo,
                 fee: crate::config::FEE,
+                created_at_time,
             },
             timestamp: now,
             phash,
@@ -343,6 +367,7 @@ mod tests {
                 amount: u128::MAX,
                 fee: 10_000,
                 memo: Some(Memo::default()),
+                created_at_time: None,
             },
             timestamp: 1691065957,
             phash: None,

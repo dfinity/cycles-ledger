@@ -113,8 +113,13 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
         ic_cdk::trap("deposit amount is insufficient");
     }
     let memo = validate_memo(arg.memo);
-    let (txid, balance, _phash) =
-        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
+    let (txid, balance, _phash) = storage::record_deposit(
+        &arg.to,
+        amount,
+        memo,
+        ic_cdk::api::time(),
+        arg.created_at_time,
+    );
 
     // TODO(FI-766): set the certified variable.
 
@@ -175,7 +180,7 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         }
     }
 
-    let (txid, _hash) = storage::transfer(&from, &args.to, amount, memo, now);
+    let (txid, _hash) = storage::transfer(&from, &args.to, amount, memo, now, args.created_at_time);
 
     Ok(Nat::from(txid))
 }
@@ -289,7 +294,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         )
     } else {
         let now = ic_cdk::api::time();
-        let (send, _send_hash) = storage::send(&from, amount, memo, now);
+        let (send, _send_hash) = storage::send(&from, amount, memo, now, args.created_at_time);
         Ok(send)
     }
 }
