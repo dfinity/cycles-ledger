@@ -229,10 +229,10 @@ fn test_send_flow() {
 
     // send cycles from subaccount with created_at_time set
     let now = env
-    .time()
-    .duration_since(SystemTime::UNIX_EPOCH)
-    .unwrap()
-    .as_nanos() as u64;
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
     let send_receiver_balance = env.cycle_balance(send_receiver);
     let send_amount = 300_000_000_u128;
     let _send_idx = send(
@@ -574,7 +574,7 @@ fn test_transfer() {
     );
 
     // Should be able to make a transfer when created time is valid
-    let tx: Nat= transfer(
+    let tx: Nat = transfer(
         env,
         ledger_id,
         user1,
@@ -591,7 +591,7 @@ fn test_transfer() {
 
     // Should not be able send the same transfer twice if created_at_time is set
     assert_eq!(
-        TransferError::Duplicate { duplicate_of: tx},
+        TransferError::Duplicate { duplicate_of: tx },
         transfer(
             env,
             ledger_id,
@@ -607,7 +607,7 @@ fn test_transfer() {
         )
         .unwrap_err()
     );
-    
+
     // Setting a different memo field should result in no deduplication
     transfer(
         env,
@@ -623,14 +623,14 @@ fn test_transfer() {
         },
     )
     .unwrap();
-    
+
     // Advance time so that the deduplication window is over
-    env.advance_time(config::TRANSACTION_WINDOW*2);
+    env.advance_time(config::TRANSACTION_WINDOW * 2);
     now = env
-    .time()
-    .duration_since(SystemTime::UNIX_EPOCH)
-    .unwrap()
-    .as_nanos() as u64;
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
 
     // Now the transfer which was deduplicated previously should be ok
     transfer(
@@ -647,5 +647,4 @@ fn test_transfer() {
         },
     )
     .unwrap();
-
 }

@@ -307,7 +307,7 @@ pub fn transfer(operation: Operation, now: u64) -> (u64, Hash) {
             amount,
             fee,
             memo: _,
-            created_at_time:_
+            created_at_time: _,
         } => {
             let from_key = to_account_key(&from);
             let to_key = to_account_key(&to);

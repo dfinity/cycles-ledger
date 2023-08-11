@@ -183,7 +183,7 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         amount,
         fee: config::FEE,
         memo,
-        created_at_time: args.created_at_time
+        created_at_time: args.created_at_time,
     };
 
     deduplicate(args.created_at_time, operation.hash(), now)?;
@@ -280,7 +280,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         amount,
         fee: config::FEE,
         memo: memo.clone(),
-        created_at_time: args.created_at_time
+        created_at_time: args.created_at_time,
     };
     let now = ic_cdk::api::time();
     deduplicate(args.created_at_time, operation.hash(), now)
