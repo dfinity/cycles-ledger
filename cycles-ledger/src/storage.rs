@@ -31,6 +31,18 @@ pub struct Cache {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Transaction {
+    pub operation: Operation,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "ts")]
+    pub created_at_time: Option<u64>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo: Option<Memo>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Operation {
     Mint {
         #[serde(with = "compact_account")]
@@ -38,8 +50,6 @@ pub enum Operation {
         #[serde(rename = "amt")]
         amount: u128,
         fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
     },
     Transfer {
         #[serde(with = "compact_account")]
@@ -49,8 +59,6 @@ pub enum Operation {
         #[serde(rename = "amt")]
         amount: u128,
         fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
     },
     Burn {
         #[serde(with = "compact_account")]
@@ -58,14 +66,12 @@ pub enum Operation {
         #[serde(rename = "amt")]
         amount: u128,
         fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
     },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Block {
-    op: Operation,
+    transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,6 +203,7 @@ pub fn record_deposit(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
+    created_at_time: Option<u64>,
 ) -> (u64, u128, Hash) {
     assert!(amount >= crate::config::FEE);
 
@@ -207,11 +214,14 @@ pub fn record_deposit(
         s.balances.insert(key, new_balance);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Mint {
-                to: *account,
-                amount,
+            transaction: Transaction {
+                operation: Operation::Mint {
+                    to: *account,
+                    amount,
+                    fee: crate::config::FEE,
+                },
                 memo,
-                fee: crate::config::FEE,
+                created_at_time,
             },
             timestamp: now,
             phash,
@@ -226,6 +236,7 @@ pub fn transfer(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
+    created_at_time: Option<u64>,
 ) -> (u64, Hash) {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
@@ -247,12 +258,15 @@ pub fn transfer(
 
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Transfer {
-                from: *from,
-                to: *to,
-                amount,
+            transaction: Transaction {
+                operation: Operation::Transfer {
+                    from: *from,
+                    to: *to,
+                    amount,
+                    fee: crate::config::FEE,
+                },
                 memo,
-                fee: crate::config::FEE,
+                created_at_time,
             },
             timestamp: now,
             phash,
@@ -276,11 +290,14 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
         }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Burn {
-                from: *from,
-                amount: 0,
+            transaction: Transaction {
+                operation: Operation::Burn {
+                    from: *from,
+                    amount: 0,
+                    fee: crate::config::FEE,
+                },
                 memo: None,
-                fee: crate::config::FEE,
+                created_at_time: None,
             },
             timestamp: now,
             phash,
@@ -289,7 +306,13 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     })
 }
 
-pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (BlockIndex, Hash) {
+pub fn send(
+    from: &Account,
+    amount: u128,
+    memo: Option<Memo>,
+    now: u64,
+    created_at_time: Option<u64>,
+) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
@@ -306,11 +329,14 @@ pub fn send(from: &Account, amount: u128, memo: Option<Memo>, now: u64) -> (Bloc
             .expect("failed to update balance");
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Burn {
-                from: *from,
-                amount,
+            transaction: Transaction {
+                operation: Operation::Burn {
+                    from: *from,
+                    amount,
+                    fee: crate::config::FEE,
+                },
                 memo,
-                fee: crate::config::FEE,
+                created_at_time,
             },
             timestamp: now,
             phash,
@@ -330,19 +356,25 @@ mod tests {
     };
     use num_bigint::BigUint;
 
-    use crate::ciborium_to_generic_value;
+    use crate::{
+        ciborium_to_generic_value,
+        storage::{Operation, Transaction},
+    };
 
     use super::Block;
 
     #[test]
     fn test_block_hash() {
         let block = Block {
-            op: super::Operation::Transfer {
-                from: Account::from(Principal::anonymous()),
-                to: Account::from(Principal::anonymous()),
-                amount: u128::MAX,
-                fee: 10_000,
+            transaction: Transaction {
+                operation: Operation::Transfer {
+                    from: Account::from(Principal::anonymous()),
+                    to: Account::from(Principal::anonymous()),
+                    amount: u128::MAX,
+                    fee: 10_000,
+                },
                 memo: Some(Memo::default()),
+                created_at_time: None,
             },
             timestamp: 1691065957,
             phash: None,
