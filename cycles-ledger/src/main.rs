@@ -1,5 +1,5 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{SendError, SendErrorReason};
+use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::{deduplicate, mutate_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage};
@@ -188,7 +188,17 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         created_at_time: args.created_at_time,
     };
 
-    deduplicate(args.created_at_time, transaction.clone().hash(), now)?;
+    deduplicate(args.created_at_time, transaction.clone().hash(), now).map_err(
+        |err| match err {
+            DeduplicationError::TooOld => TransferError::TooOld,
+            DeduplicationError::CreatedInFuture { ledger_time } => {
+                TransferError::CreatedInFuture { ledger_time }
+            }
+            DeduplicationError::Duplicate { duplicate_of } => {
+                TransferError::Duplicate { duplicate_of }
+            }
+        },
+    )?;
     let (txid, _hash) = storage::transfer(
         from,
         args.to,

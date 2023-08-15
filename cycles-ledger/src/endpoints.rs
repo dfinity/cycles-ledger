@@ -2,7 +2,7 @@ use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::api::call::RejectionCode;
 use icrc_ledger_types::icrc1::{
     account::{Account, Subaccount},
-    transfer::{BlockIndex, Memo, TransferError},
+    transfer::{BlockIndex, Memo},
 };
 
 pub type NumCycles = Nat;
@@ -76,31 +76,22 @@ pub enum SendErrorReason {
     },
 }
 
-impl From<TransferError> for SendErrorReason {
-    fn from(value: TransferError) -> Self {
+pub enum DeduplicationError {
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: BlockIndex },
+}
+
+impl From<DeduplicationError> for SendErrorReason {
+    fn from(value: DeduplicationError) -> Self {
         match value {
-            TransferError::BadFee { expected_fee } => SendErrorReason::BadFee { expected_fee },
-            TransferError::BadBurn { min_burn_amount: _ } => {
-                panic!("SendError does not support BadBurn Error")
-            }
-            TransferError::InsufficientFunds { balance } => {
-                SendErrorReason::InsufficientFunds { balance }
-            }
-            TransferError::TooOld => SendErrorReason::TooOld,
-            TransferError::CreatedInFuture { ledger_time } => {
+            DeduplicationError::TooOld => SendErrorReason::TooOld,
+            DeduplicationError::CreatedInFuture { ledger_time } => {
                 SendErrorReason::CreatedInFuture { ledger_time }
             }
-            TransferError::TemporarilyUnavailable => SendErrorReason::TemporarilyUnavailable,
-            TransferError::Duplicate { duplicate_of } => {
+            DeduplicationError::Duplicate { duplicate_of } => {
                 SendErrorReason::Duplicate { duplicate_of }
             }
-            TransferError::GenericError {
-                error_code,
-                message,
-            } => SendErrorReason::GenericError {
-                error_code,
-                message,
-            },
         }
     }
 }

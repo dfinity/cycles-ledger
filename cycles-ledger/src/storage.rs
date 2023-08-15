@@ -6,13 +6,13 @@ use ic_stable_structures::{
 };
 use icrc_ledger_types::icrc1::{
     account::Account,
-    transfer::{BlockIndex, Memo, TransferError},
+    transfer::{BlockIndex, Memo},
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{ciborium_to_generic_value, compact_account, config};
+use crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -258,16 +258,16 @@ pub fn deduplicate(
     created_at_timestamp: Option<u64>,
     tx_hash: [u8; 32],
     now: u64,
-) -> Result<(), TransferError> {
+) -> Result<(), DeduplicationError> {
     // TODO: purge old transactions
     if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
         // If the created timestamp is outside of the Transaction
         if created_at_time + (config::TRANSACTION_WINDOW.as_nanos() as u64) < now {
-            return Err(TransferError::TooOld);
+            return Err(DeduplicationError::TooOld);
         }
 
         if created_at_time > now + (config::PERMITTED_DRIFT.as_nanos() as u64) {
-            return Err(TransferError::CreatedInFuture { ledger_time: now });
+            return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
         }
 
         if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
@@ -283,7 +283,7 @@ pub fn deduplicate(
                         ic_cdk::trap(&format!("Could not remove tx hash {:?}", tx_hash))
                     }
                 } else {
-                    return Err(TransferError::Duplicate {
+                    return Err(DeduplicationError::Duplicate {
                         duplicate_of: Nat::from(block_height),
                     });
                 }
