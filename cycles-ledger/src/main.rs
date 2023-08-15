@@ -1,7 +1,7 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
-use cycles_ledger::storage::{deduplicate, mutate_state, Operation};
+use cycles_ledger::storage::{deduplicate, mutate_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
@@ -177,17 +177,27 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
             return Err(TransferError::CreatedInFuture { ledger_time: now });
         }
     }
-    let operation = Operation::Transfer {
-        from,
-        to: args.to,
-        amount,
-        fee: config::FEE,
-        memo,
+    let transaction = Transaction {
+        operation: Operation::Transfer {
+            from,
+            to: args.to,
+            amount,
+            fee: config::FEE,
+        },
+        memo: memo.clone(),
         created_at_time: args.created_at_time,
     };
 
-    deduplicate(args.created_at_time, operation.hash(), now)?;
-    let (txid, _hash) = storage::transfer(operation, now);
+    deduplicate(args.created_at_time, transaction.clone().hash(), now)?;
+    let (txid, _hash) = storage::transfer(
+        from,
+        args.to,
+        amount,
+        config::FEE,
+        args.created_at_time,
+        memo,
+        now,
+    );
 
     Ok(Nat::from(txid))
 }
@@ -275,15 +285,18 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     let encoded_memo = encoder.into_writer().into();
     let memo = validate_memo(Some(encoded_memo));
 
-    let operation = Operation::Burn {
-        from,
-        amount,
-        fee: config::FEE,
+    let transaction = Transaction {
+        operation: Operation::Burn {
+            from,
+            amount,
+            fee: config::FEE,
+        },
         memo: memo.clone(),
         created_at_time: args.created_at_time,
     };
+
     let now = ic_cdk::api::time();
-    deduplicate(args.created_at_time, operation.hash(), now)
+    deduplicate(args.created_at_time, transaction.clone().hash(), now)
         .map_err(|err| send_error(&from, err.into()))?;
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user

@@ -74,17 +74,14 @@ pub enum SendErrorReason {
     InvalidReceiver {
         receiver: Principal,
     },
-    BadBurn {
-        min_burn_amount: Nat,
-    },
 }
 
 impl From<TransferError> for SendErrorReason {
     fn from(value: TransferError) -> Self {
         match value {
             TransferError::BadFee { expected_fee } => SendErrorReason::BadFee { expected_fee },
-            TransferError::BadBurn { min_burn_amount } => {
-                SendErrorReason::BadBurn { min_burn_amount }
+            TransferError::BadBurn { min_burn_amount: _ } => {
+                panic!("SendError does not support BadBurn Error")
             }
             TransferError::InsufficientFunds { balance } => {
                 SendErrorReason::InsufficientFunds { balance }

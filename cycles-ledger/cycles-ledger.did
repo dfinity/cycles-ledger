@@ -95,9 +95,6 @@ type SendErrorReason = variant {
     InvalidReceiver : record {
         receiver : principal;
     };
-    BadBurn : record { 
-        min_burn_amount : nat 
-    };
 
 };
 

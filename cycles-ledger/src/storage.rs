@@ -17,14 +17,14 @@ use crate::{ciborium_to_generic_value, compact_account, config};
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
-const OPERATIONS_MEMORY_ID: MemoryId = MemoryId::new(4);
+const TRANSACTIONS_MEMORY_ID: MemoryId = MemoryId::new(4);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type OperationsLog = StableBTreeMap<Hash, u64, VMem>;
+pub type TransactionsLog = StableBTreeMap<Hash, u64, VMem>;
 
 pub type Hash = [u8; 32];
 
@@ -34,51 +34,18 @@ pub struct Cache {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum Operation {
-    Mint {
-        #[serde(with = "compact_account")]
-        to: Account,
-        #[serde(rename = "amt")]
-        amount: u128,
-        fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(rename = "ts")]
-        created_at_time: Option<u64>,
-    },
-    Transfer {
-        #[serde(with = "compact_account")]
-        from: Account,
-        #[serde(with = "compact_account")]
-        to: Account,
-        #[serde(rename = "amt")]
-        amount: u128,
-        fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(rename = "ts")]
-        created_at_time: Option<u64>,
-    },
-    Burn {
-        #[serde(with = "compact_account")]
-        from: Account,
-        #[serde(rename = "amt")]
-        amount: u128,
-        fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(rename = "ts")]
-        created_at_time: Option<u64>,
-    },
+pub struct Transaction {
+    pub operation: Operation,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "ts")]
+    pub created_at_time: Option<u64>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo: Option<Memo>,
 }
 
-impl Operation {
+impl Transaction {
     pub fn hash(&self) -> Hash {
         let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
             panic!(
@@ -95,8 +62,35 @@ impl Operation {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum Operation {
+    Mint {
+        #[serde(with = "compact_account")]
+        to: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        fee: u128,
+    },
+    Transfer {
+        #[serde(with = "compact_account")]
+        from: Account,
+        #[serde(with = "compact_account")]
+        to: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        fee: u128,
+    },
+    Burn {
+        #[serde(with = "compact_account")]
+        from: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        fee: u128,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Block {
-    op: Operation,
+    transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -122,7 +116,7 @@ impl Block {
 pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
-    pub operations: OperationsLog,
+    pub transactions: TransactionsLog,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -135,12 +129,12 @@ impl State {
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
-        let tx_hash = b.op.hash();
+        let tx_hash = b.transaction.hash();
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
-        // Add block index to the list of operations and set the hash as its key
-        self.operations.insert(tx_hash, self.blocks.len() - 1);
+        // Add block index to the list of transactions and set the hash as its key
+        self.transactions.insert(tx_hash, self.blocks.len() - 1);
         hash
     }
 
@@ -172,7 +166,7 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
-            operations: OperationsLog::init(mm.get(OPERATIONS_MEMORY_ID)),
+            transactions: TransactionsLog::init(mm.get(TRANSACTIONS_MEMORY_ID)),
         })
     });
 }
@@ -244,11 +238,13 @@ pub fn record_deposit(
         s.balances.insert(key, new_balance);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Mint {
-                to: *account,
-                amount,
+            transaction: Transaction {
+                operation: Operation::Mint {
+                    to: *account,
+                    amount,
+                    fee: crate::config::FEE,
+                },
                 memo,
-                fee: crate::config::FEE,
                 created_at_time,
             },
             timestamp: now,
@@ -274,7 +270,7 @@ pub fn deduplicate(
             return Err(TransferError::CreatedInFuture { ledger_time: now });
         }
 
-        if let Some(block_height) = read_state(|state| state.operations.get(&tx_hash)) {
+        if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
             if let Some(block) = read_state(|state| state.blocks.get(block_height)) {
                 if block
                     .0
@@ -283,7 +279,7 @@ pub fn deduplicate(
                     .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
                     < now
                 {
-                    if mutate_state(|state| state.operations.remove(&tx_hash)).is_none() {
+                    if mutate_state(|state| state.transactions.remove(&tx_hash)).is_none() {
                         ic_cdk::trap(&format!("Could not remove tx hash {:?}", tx_hash))
                     }
                 } else {
@@ -299,49 +295,51 @@ pub fn deduplicate(
     Ok(())
 }
 
-pub fn transfer(operation: Operation, now: u64) -> (u64, Hash) {
-    match operation {
-        Operation::Transfer {
-            from,
-            to,
-            amount,
-            fee,
-            memo: _,
-            created_at_time: _,
-        } => {
-            let from_key = to_account_key(&from);
-            let to_key = to_account_key(&to);
+pub fn transfer(
+    from: Account,
+    to: Account,
+    amount: u128,
+    fee: u128,
+    created_at_time: Option<u64>,
+    memo: Option<Memo>,
+    now: u64,
+) -> (u64, Hash) {
+    let from_key = to_account_key(&from);
+    let to_key = to_account_key(&to);
 
-            mutate_state(|s| {
-                let from_balance = s.balances.get(&from_key).unwrap_or_default();
+    mutate_state(|s| {
+        let from_balance = s.balances.get(&from_key).unwrap_or_default();
 
-                assert!(from_balance >= amount.saturating_add(crate::config::FEE));
-                assert!(fee == crate::config::FEE);
+        assert!(from_balance >= amount.saturating_add(crate::config::FEE));
+        assert!(fee == crate::config::FEE);
 
-                s.balances
-                    .insert(
-                        from_key,
-                        from_balance - amount.saturating_add(crate::config::FEE),
-                    )
-                    .expect("failed to update 'from' balance");
+        s.balances
+            .insert(
+                from_key,
+                from_balance - amount.saturating_add(crate::config::FEE),
+            )
+            .expect("failed to update 'from' balance");
 
-                let to_balance = s.balances.get(&to_key).unwrap_or_default();
-                s.balances.insert(to_key, to_balance + amount);
+        let to_balance = s.balances.get(&to_key).unwrap_or_default();
+        s.balances.insert(to_key, to_balance + amount);
 
-                let phash = s.last_block_hash();
-                let block_hash = s.emit_block(Block {
-                    op: operation.clone(),
-                    timestamp: now,
-                    phash,
-                });
-                (s.blocks.len() - 1, block_hash)
-            })
-        }
-        _ => ic_cdk::trap(&format!(
-            "Transfer call received unexpected operation: {:?}, expected Operation::Transfer",
-            operation,
-        )),
-    }
+        let phash = s.last_block_hash();
+        let block_hash = s.emit_block(Block {
+            transaction: Transaction {
+                operation: Operation::Transfer {
+                    from,
+                    to,
+                    amount,
+                    fee,
+                },
+                created_at_time,
+                memo,
+            },
+            timestamp: now,
+            phash,
+        });
+        (s.blocks.len() - 1, block_hash)
+    })
 }
 
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
@@ -359,11 +357,13 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
         }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Burn {
-                from: *from,
-                amount: 0,
+            transaction: Transaction {
+                operation: Operation::Burn {
+                    from: *from,
+                    amount: 0,
+                    fee: crate::config::FEE,
+                },
                 memo: None,
-                fee: crate::config::FEE,
                 created_at_time: None,
             },
             timestamp: now,
@@ -396,11 +396,13 @@ pub fn send(
             .expect("failed to update balance");
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
-            op: Operation::Burn {
-                from: *from,
-                amount,
+            transaction: Transaction {
+                operation: Operation::Burn {
+                    from: *from,
+                    amount,
+                    fee: crate::config::FEE,
+                },
                 memo,
-                fee: crate::config::FEE,
                 created_at_time,
             },
             timestamp: now,
@@ -421,18 +423,23 @@ mod tests {
     };
     use num_bigint::BigUint;
 
-    use crate::ciborium_to_generic_value;
+    use crate::{
+        ciborium_to_generic_value,
+        storage::{Operation, Transaction},
+    };
 
     use super::Block;
 
     #[test]
     fn test_block_hash() {
         let block = Block {
-            op: super::Operation::Transfer {
-                from: Account::from(Principal::anonymous()),
-                to: Account::from(Principal::anonymous()),
-                amount: u128::MAX,
-                fee: 10_000,
+            transaction: Transaction {
+                operation: Operation::Transfer {
+                    from: Account::from(Principal::anonymous()),
+                    to: Account::from(Principal::anonymous()),
+                    amount: u128::MAX,
+                    fee: 10_000,
+                },
                 memo: Some(Memo::default()),
                 created_at_time: None,
             },
