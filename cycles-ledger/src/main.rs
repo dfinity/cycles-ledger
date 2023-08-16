@@ -20,6 +20,8 @@ use num_traits::ToPrimitive;
 pub const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
 pub const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
 
+const REMOTE_FUTURE: u64 = u64::MAX;
+
 #[query]
 #[candid_method(query)]
 fn icrc1_name() -> String {
@@ -422,11 +424,15 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         });
     }
 
-    // Transaction cannot be created in the future
+    // Approvals cannot be created in the future
     if let Some(time) = args.created_at_time {
         if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
             return Err(ApproveError::CreatedInFuture { ledger_time: now });
         }
+    }
+
+    if args.expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+        return Err(ApproveError::Expired { ledger_time: now });
     }
 
     let txid = storage::approve(

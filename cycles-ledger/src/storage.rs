@@ -413,22 +413,21 @@ pub fn approve(
     created_at_time: Option<u64>,
 ) -> Result<u64, ApproveError> {
     let from_key = to_account_key(from);
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
+
+    check_approve_preconditions(
+        from,
+        from_balance,
+        spender,
+        expires_at,
+        now,
+        created_at_time,
+    );
 
     mutate_state(|s| {
         prune(s, now, APPROVE_PRUNE_LIMIT);
 
-        let from_balance = s.balances.get(&from_key).unwrap_or_default();
-        assert!(from_balance >= crate::config::FEE);
-
-        record_approval(
-            s,
-            from,
-            spender,
-            amount,
-            expires_at,
-            now,
-            expected_allowance,
-        )?;
+        record_approval(s, from, spender, amount, expires_at, expected_allowance)?;
 
         s.balances
             .insert(from_key, from_balance - crate::config::FEE)
@@ -455,6 +454,35 @@ pub fn approve(
     })
 }
 
+fn check_approve_preconditions(
+    from: &Account,
+    from_balance: u128,
+    spender: &Account,
+    expires_at: Option<u64>,
+    now: u64,
+    created_at_time: Option<u64>,
+) {
+    assert!(from_balance >= crate::config::FEE);
+    assert!(
+        from != spender,
+        "self approvals are not allowed, should be checked in the endpoint"
+    );
+    assert!(
+        expires_at.unwrap_or(REMOTE_FUTURE) > now,
+        "Approval expiration time ({}) should be later than now ({})",
+        expires_at.unwrap_or(REMOTE_FUTURE),
+        now
+    );
+    if let Some(time) = created_at_time {
+        assert!(
+            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
+            "Approval created in the future, created_at_time: {}, now: {}",
+            time,
+            now
+        );
+    }
+}
+
 const APPROVE_PRUNE_LIMIT: usize = 100;
 const REMOTE_FUTURE: u64 = u64::MAX;
 
@@ -464,18 +492,8 @@ fn record_approval(
     spender: &Account,
     amount: u128,
     expires_at: Option<u64>,
-    now: u64,
     expected_allowance: Option<u128>,
 ) -> Result<(), ApproveError> {
-    debug_assert!(
-        from != spender,
-        "self approvals are not allowed, should be checked in the endpoint"
-    );
-
-    if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
-        return Err(ApproveError::Expired { ledger_time: now });
-    }
-
     let key = (to_account_key(from), to_account_key(spender));
 
     let expires_at = expires_at.unwrap_or(0);
