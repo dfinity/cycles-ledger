@@ -457,8 +457,6 @@ fn record_approval(
     now: u64,
     expected_allowance: Option<u128>,
 ) -> Result<(), ApproveError> {
-    prune(now, APPROVE_PRUNE_LIMIT);
-
     debug_assert!(
         from != spender,
         "self approvals are not allowed, should be checked in the endpoint"
@@ -470,10 +468,7 @@ fn record_approval(
 
     let key = (to_account_key(from), to_account_key(spender));
 
-    let expires_at = match expires_at {
-        Some(expires_at) => expires_at,
-        None => 0,
-    };
+    let expires_at = expires_at.unwrap_or(0);
 
     mutate_state(|s| match s.approvals.get(&key) {
         None => {
