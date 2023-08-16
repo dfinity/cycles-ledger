@@ -238,12 +238,12 @@ pub fn record_deposit(
     now: u64,
     created_at_time: Option<u64>,
 ) -> (u64, u128, Hash) {
-    prune(now, APPROVE_PRUNE_LIMIT);
-
     assert!(amount >= crate::config::FEE);
 
     let key = to_account_key(account);
     mutate_state(|s| {
+        prune(s, now, APPROVE_PRUNE_LIMIT);
+
         let balance = s.balances.get(&key).unwrap_or_default();
         let new_balance = balance + amount;
         s.balances.insert(key, new_balance);
@@ -274,20 +274,20 @@ pub fn transfer(
     now: u64,
     created_at_time: Option<u64>,
 ) -> Result<(u64, Hash), GenericTransferError> {
-    prune(now, APPROVE_PRUNE_LIMIT);
-
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
 
-    let total_spent_amount = amount.saturating_add(crate::config::FEE);
-    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
-    assert!(from_balance >= total_spent_amount);
-
-    if spender.is_some() && spender.unwrap() != *from {
-        use_allowance(from, &spender.unwrap(), total_spent_amount, now)?;
-    }
-
     mutate_state(|s| {
+        prune(s, now, APPROVE_PRUNE_LIMIT);
+
+        let total_spent_amount = amount.saturating_add(crate::config::FEE);
+        let from_balance = s.balances.get(&from_key).unwrap_or_default();
+        assert!(from_balance >= total_spent_amount);
+
+        if spender.is_some() && spender.unwrap() != *from {
+            use_allowance(s, from, &spender.unwrap(), total_spent_amount, now)?;
+        }
+
         s.balances
             .insert(from_key, from_balance - total_spent_amount)
             .expect("failed to update 'from' balance");
@@ -316,11 +316,11 @@ pub fn transfer(
 }
 
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
-    prune(now, APPROVE_PRUNE_LIMIT);
-
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
+        prune(s, now, APPROVE_PRUNE_LIMIT);
+
         let balance = s.balances.get(&from_key).unwrap_or_default();
 
         if crate::config::FEE >= balance {
@@ -355,11 +355,11 @@ pub fn send(
     now: u64,
     created_at_time: Option<u64>,
 ) -> (BlockIndex, Hash) {
-    prune(now, APPROVE_PRUNE_LIMIT);
-
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
+        prune(s, now, APPROVE_PRUNE_LIMIT);
+
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
@@ -412,15 +412,24 @@ pub fn approve(
     memo: Option<Memo>,
     created_at_time: Option<u64>,
 ) -> Result<u64, ApproveError> {
-    prune(now, APPROVE_PRUNE_LIMIT);
-
     let from_key = to_account_key(from);
-    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
-    assert!(from_balance >= crate::config::FEE);
-
-    record_approval(from, spender, amount, expires_at, now, expected_allowance)?;
 
     mutate_state(|s| {
+        prune(s, now, APPROVE_PRUNE_LIMIT);
+
+        let from_balance = s.balances.get(&from_key).unwrap_or_default();
+        assert!(from_balance >= crate::config::FEE);
+
+        record_approval(
+            s,
+            from,
+            spender,
+            amount,
+            expires_at,
+            now,
+            expected_allowance,
+        )?;
+
         s.balances
             .insert(from_key, from_balance - crate::config::FEE)
             .expect("failed to update 'from' balance");
@@ -450,6 +459,7 @@ const APPROVE_PRUNE_LIMIT: usize = 100;
 const REMOTE_FUTURE: u64 = u64::MAX;
 
 fn record_approval(
+    s: &mut State,
     from: &Account,
     spender: &Account,
     amount: u128,
@@ -470,7 +480,7 @@ fn record_approval(
 
     let expires_at = expires_at.unwrap_or(0);
 
-    mutate_state(|s| match s.approvals.get(&key) {
+    match s.approvals.get(&key) {
         None => {
             if amount == 0 {
                 return Ok(());
@@ -514,10 +524,11 @@ fn record_approval(
             }
             Ok(())
         }
-    })
+    }
 }
 
 fn use_allowance(
+    s: &mut State,
     account: &Account,
     spender: &Account,
     amount: u128,
@@ -525,7 +536,7 @@ fn use_allowance(
 ) -> Result<(), GenericTransferError> {
     let key = (to_account_key(account), to_account_key(spender));
 
-    mutate_state(|s| match s.approvals.get(&key) {
+    match s.approvals.get(&key) {
         None => Err(GenericTransferError::InsufficientAllowance { allowance: 0 }),
         Some(allowance) => {
             if allowance.1 != 0 && allowance.1 <= now {
@@ -551,38 +562,37 @@ fn use_allowance(
                 Ok(())
             }
         }
-    })
+    }
 }
 
-fn prune(now: u64, limit: usize) -> usize {
+fn prune(s: &mut State, now: u64, limit: usize) -> usize {
     let mut pruned = 0;
-    mutate_state(|s| {
-        for _ in 0..limit {
-            match s.expiration_queue.first_key_value() {
-                Some((key, _value)) => {
-                    if key.0 > now {
-                        return;
-                    }
-                }
-                None => {
-                    return;
+
+    for _ in 0..limit {
+        match s.expiration_queue.first_key_value() {
+            Some((key, _value)) => {
+                if key.0 > now {
+                    return pruned;
                 }
             }
-            if let Some((key, _value)) = s.expiration_queue.first_key_value() {
-                if key.0 <= now {
-                    s.approvals.remove(&key.1);
-                    s.expiration_queue.remove(&key);
-                    pruned += 1;
-                }
+            None => {
+                return pruned;
             }
         }
-        debug_assert!(
-            s.expiration_queue.len() <= s.approvals.len(),
-            "expiration_queue len ({}) larger than approvals len ({})",
-            s.expiration_queue.len(),
-            s.approvals.len()
-        );
-    });
+        if let Some((key, _value)) = s.expiration_queue.first_key_value() {
+            if key.0 <= now {
+                s.approvals.remove(&key.1);
+                s.expiration_queue.remove(&key);
+                pruned += 1;
+            }
+        }
+    }
+    debug_assert!(
+        s.expiration_queue.len() <= s.approvals.len(),
+        "expiration_queue len ({}) larger than approvals len ({})",
+        s.expiration_queue.len(),
+        s.approvals.len()
+    );
     pruned
 }
 
