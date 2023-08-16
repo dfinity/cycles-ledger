@@ -101,8 +101,6 @@ pub enum Operation {
         #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<u64>,
         fee: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        memo: Option<Memo>,
     },
 }
 
@@ -433,6 +431,7 @@ pub fn approve(
     now: u64,
     expected_allowance: Option<u128>,
     memo: Option<Memo>,
+    created_at_time: Option<u64>,
 ) -> Result<u64, ApproveError> {
     let from_key = to_account_key(from);
     let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
@@ -447,14 +446,17 @@ pub fn approve(
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
-            transaction: Operation::Approve {
-                from: *from,
-                spender: *spender,
-                amount,
-                expected_allowance,
-                expires_at,
-                fee: crate::config::FEE,
+            transaction: Transaction {
+                operation: Operation::Approve {
+                    from: *from,
+                    spender: *spender,
+                    amount,
+                    expected_allowance,
+                    expires_at,
+                    fee: crate::config::FEE,
+                },
                 memo,
+                created_at_time,
             },
             timestamp: now,
             phash,

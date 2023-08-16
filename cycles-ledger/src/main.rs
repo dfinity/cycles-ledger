@@ -415,6 +415,13 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         });
     }
 
+    // Transaction cannot be created in the future
+    if let Some(time) = args.created_at_time {
+        if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
+            return Err(ApproveError::CreatedInFuture { ledger_time: now });
+        }
+    }
+
     let txid = storage::approve(
         &from_account,
         &args.spender,
@@ -423,6 +430,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         now,
         expected_allowance,
         memo,
+        args.created_at_time,
     )?;
 
     Ok(Nat::from(txid))
