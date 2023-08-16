@@ -573,7 +573,7 @@ fn test_transfer() {
         .unwrap_err()
     );
 
-    // Should be able to make a transfer when created time is valid
+    // Should be able to make a transfer when created_at_ time is valid
     let tx: Nat = transfer(
         env,
         ledger_id,
