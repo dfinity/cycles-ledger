@@ -910,7 +910,7 @@ fn test_approve_cap() {
 }
 
 #[test]
-fn test_approve_approval_expiring() {
+fn test_approval_expiring() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
