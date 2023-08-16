@@ -9,7 +9,7 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{BlockIndex, Memo},
     },
-    icrc2::approve::{ApproveArgs, ApproveError},
+    icrc2::approve::ApproveError,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -425,24 +425,19 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> Allowance {
 
 pub fn approve(
     from: &Account,
+    spender: &Account,
     amount: u128,
+    expires_at: Option<u64>,
     now: u64,
     expected_allowance: Option<u128>,
     memo: Option<Memo>,
-    approve_args: &ApproveArgs,
+    created_at_time: Option<u64>,
 ) -> Result<u64, ApproveError> {
     let from_key = to_account_key(from);
     let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
     assert!(from_balance >= crate::config::FEE);
 
-    record_approval(
-        from,
-        &approve_args.spender,
-        amount,
-        approve_args.expires_at,
-        now,
-        expected_allowance,
-    )?;
+    record_approval(from, spender, amount, expires_at, now, expected_allowance)?;
 
     mutate_state(|s| {
         s.balances
@@ -454,14 +449,14 @@ pub fn approve(
             transaction: Transaction {
                 operation: Operation::Approve {
                     from: *from,
-                    spender: approve_args.spender,
+                    spender: *spender,
                     amount,
                     expected_allowance,
-                    expires_at: approve_args.expires_at,
+                    expires_at,
                     fee: crate::config::FEE,
                 },
                 memo,
-                created_at_time: approve_args.created_at_time,
+                created_at_time,
             },
             timestamp: now,
             phash,
