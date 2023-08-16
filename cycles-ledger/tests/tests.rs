@@ -1026,7 +1026,7 @@ fn test_transfer_from_smoke() {
     deposit(env, depositor_id, from, 350_000_000);
     deposit(env, depositor_id, from_sub_1, 1_000_000_000);
 
-    // Transfer from without allowanced
+    // Transfer from without allowance
     assert_eq!(
         transfer_from(env, ledger_id, from, to, spender, 30_000_000_u128),
         Err(TransferFromError::InsufficientAllowance {
