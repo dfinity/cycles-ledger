@@ -356,9 +356,13 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
 #[candid_method(query)]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     let allowance = storage::allowance(&args.account, &args.spender, ic_cdk::api::time());
+    let mut expires_at = None;
+    if allowance.1 > 0 {
+        expires_at = Some(allowance.1);
+    }
     Allowance {
-        allowance: Nat::from(allowance.amount),
-        expires_at: allowance.expires_at,
+        allowance: Nat::from(allowance.0),
+        expires_at,
     }
 }
 
@@ -383,8 +387,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         Some(n) => match n.0.to_u128() {
             Some(n) => Some(n),
             None => {
-                let current_allowance =
-                    storage::allowance(&from_account, &args.spender, now).amount;
+                let current_allowance = storage::allowance(&from_account, &args.spender, now).0;
                 return Err(ApproveError::AllowanceChanged {
                     current_allowance: current_allowance.into(),
                 });

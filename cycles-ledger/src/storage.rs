@@ -2,7 +2,7 @@ use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
-    BoundedStorable, DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
+    DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use icrc_ledger_types::{
     icrc1::{
@@ -30,13 +30,7 @@ pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
-#[derive(Clone, Default, Deserialize, Serialize)]
-pub struct Allowance {
-    pub amount: u128,
-    pub expires_at: Option<u64>,
-}
-const MAX_ALLOWANCE_SIZE: u32 = 46;
-pub type Approvals = StableBTreeMap<ApprovalKey, Allowance, VMem>;
+pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
 pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
 pub type Hash = [u8; 32];
@@ -127,27 +121,6 @@ impl Block {
                 panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
         }
     }
-}
-
-impl Storable for Allowance {
-    fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        let mut buf = vec![];
-        ciborium::ser::into_writer(self, &mut buf).unwrap_or_else(|err| {
-            ic_cdk::trap(&format!("{:?}", err));
-        });
-        Cow::Owned(buf)
-    }
-
-    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
-        ciborium::de::from_reader(&bytes[..]).unwrap_or_else(|err| {
-            ic_cdk::trap(&format!("{:?}", err));
-        })
-    }
-}
-
-impl BoundedStorable for Allowance {
-    const MAX_SIZE: u32 = MAX_ALLOWANCE_SIZE;
-    const IS_FIXED_SIZE: bool = false;
 }
 
 pub struct State {
@@ -408,19 +381,17 @@ pub fn send(
     })
 }
 
-pub fn allowance(account: &Account, spender: &Account, now: u64) -> Allowance {
+pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
     let key = (to_account_key(account), to_account_key(spender));
     let allowance = read_state(|s| s.approvals.get(&key).unwrap_or_default());
-    match allowance.expires_at {
-        Some(expires_at) => {
-            if expires_at > now {
-                allowance.clone()
-            } else {
-                Allowance::default()
-            }
+    if allowance.1 > 0 {
+        if allowance.1 > now {
+            return allowance;
+        } else {
+            return (0, 0);
         }
-        None => allowance.clone(),
     }
+    allowance
 }
 
 pub fn approve(
@@ -489,6 +460,11 @@ fn record_approval(
 
     let key = (to_account_key(from), to_account_key(spender));
 
+    let expires_at = match expires_at {
+        Some(expires_at) => expires_at,
+        None => 0,
+    };
+
     mutate_state(|s| match s.approvals.get(&key) {
         None => {
             if amount == 0 {
@@ -501,35 +477,33 @@ fn record_approval(
                     });
                 }
             }
-            if let Some(expires_at) = expires_at {
+            if expires_at > 0 {
                 s.expiration_queue.insert((expires_at, key), ());
             }
-            let allowance = Allowance { amount, expires_at };
-            s.approvals.insert(key, allowance);
+            s.approvals.insert(key, (amount, expires_at));
             Ok(())
         }
         Some(allowance) => {
             if let Some(expected_allowance) = expected_allowance {
-                if expected_allowance != allowance.amount {
+                if expected_allowance != allowance.0 {
                     return Err(ApproveError::AllowanceChanged {
-                        current_allowance: Nat::from(allowance.amount),
+                        current_allowance: Nat::from(allowance.0),
                     });
                 }
             }
             if amount == 0 {
-                if let Some(expires_at) = allowance.expires_at {
-                    s.expiration_queue.remove(&(expires_at, key));
+                if allowance.1 > 0 {
+                    s.expiration_queue.remove(&(allowance.1, key));
                 }
                 s.approvals.remove(&key);
                 return Ok(());
             }
-            let new_allowance = Allowance { amount, expires_at };
-            s.approvals.insert(key, new_allowance);
-            if expires_at != allowance.expires_at {
-                if let Some(expires_at) = allowance.expires_at {
-                    s.expiration_queue.remove(&(expires_at, key));
+            s.approvals.insert(key, (amount, expires_at));
+            if expires_at != allowance.1 {
+                if allowance.1 > 0 {
+                    s.expiration_queue.remove(&(allowance.1, key));
                 }
-                if let Some(expires_at) = expires_at {
+                if expires_at > 0 {
                     s.expiration_queue.insert((expires_at, key), ());
                 }
             }
@@ -549,29 +523,25 @@ fn use_allowance(
     mutate_state(|s| match s.approvals.get(&key) {
         None => Err(GenericTransferError::InsufficientAllowance { allowance: 0 }),
         Some(allowance) => {
-            if allowance.expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+            if allowance.1 != 0 && allowance.1 <= now {
                 Err(GenericTransferError::InsufficientAllowance { allowance: 0 })
             } else {
-                if allowance.amount < amount {
+                if allowance.0 < amount {
                     return Err(GenericTransferError::InsufficientAllowance {
-                        allowance: allowance.amount,
+                        allowance: allowance.0,
                     });
                 }
                 let new_amount = allowance
-                    .amount
+                    .0
                     .checked_sub(amount)
                     .expect("Underflow when using allowance");
                 if new_amount == 0 {
-                    if let Some(expires_at) = allowance.expires_at {
-                        s.expiration_queue.remove(&(expires_at, key));
+                    if allowance.1 > 0 {
+                        s.expiration_queue.remove(&(allowance.1, key));
                     }
                     s.approvals.remove(&key);
                 } else {
-                    let new_allowance = Allowance {
-                        amount: new_amount,
-                        expires_at: allowance.expires_at,
-                    };
-                    s.approvals.insert(key, new_allowance);
+                    s.approvals.insert(key, (new_amount, allowance.1));
                 }
                 Ok(())
             }
