@@ -233,7 +233,7 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
         owner: ic_cdk::caller(),
         subaccount: args.spender_subaccount,
     };
-    Ok(execute_transfer(
+    execute_transfer(
         &args.from,
         &args.to,
         Some(spender),
@@ -241,7 +241,7 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
         args.fee,
         args.memo,
         args.created_at_time,
-    )?)
+    )
 }
 
 fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
