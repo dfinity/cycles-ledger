@@ -238,6 +238,8 @@ pub fn record_deposit(
     now: u64,
     created_at_time: Option<u64>,
 ) -> (u64, u128, Hash) {
+    prune(now, APPROVE_PRUNE_LIMIT);
+
     assert!(amount >= crate::config::FEE);
 
     let key = to_account_key(account);
@@ -272,6 +274,8 @@ pub fn transfer(
     now: u64,
     created_at_time: Option<u64>,
 ) -> Result<(u64, Hash), GenericTransferError> {
+    prune(now, APPROVE_PRUNE_LIMIT);
+
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
 
@@ -312,6 +316,8 @@ pub fn transfer(
 }
 
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
+    prune(now, APPROVE_PRUNE_LIMIT);
+
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
@@ -349,6 +355,8 @@ pub fn send(
     now: u64,
     created_at_time: Option<u64>,
 ) -> (BlockIndex, Hash) {
+    prune(now, APPROVE_PRUNE_LIMIT);
+
     let from_key = to_account_key(from);
 
     mutate_state(|s| {
@@ -404,6 +412,8 @@ pub fn approve(
     memo: Option<Memo>,
     created_at_time: Option<u64>,
 ) -> Result<u64, ApproveError> {
+    prune(now, APPROVE_PRUNE_LIMIT);
+
     let from_key = to_account_key(from);
     let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
     assert!(from_balance >= crate::config::FEE);
