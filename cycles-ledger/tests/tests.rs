@@ -1064,7 +1064,7 @@ fn test_transfer_from_smoke() {
     assert_eq!(allowance.allowance, Nat::from(150_000_000));
     assert_eq!(allowance.expires_at, None);
 
-    // Transfer from with insufficient funds
+    // Transfer_from with insufficient funds
     assert_eq!(
         transfer_from(env, ledger_id, from, to, spender, 30_000_000),
         Err(TransferFromError::InsufficientFunds {
