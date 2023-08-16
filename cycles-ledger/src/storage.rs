@@ -9,13 +9,13 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{BlockIndex, Memo},
     },
-    icrc2::approve::ApproveError,
+    icrc2::{approve::ApproveError, transfer_from::TransferFromError},
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{ciborium_to_generic_value, compact_account, GenericTransferError};
+use crate::{ciborium_to_generic_value, compact_account};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -273,7 +273,7 @@ pub fn transfer(
     memo: Option<Memo>,
     now: u64,
     created_at_time: Option<u64>,
-) -> Result<(u64, Hash), GenericTransferError> {
+) -> Result<(u64, Hash), TransferFromError> {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
 
@@ -533,20 +533,24 @@ fn use_allowance(
     spender: &Account,
     amount: u128,
     now: u64,
-) -> Result<(), GenericTransferError> {
+) -> Result<(), TransferFromError> {
     let key = (to_account_key(account), to_account_key(spender));
 
     match s.approvals.get(&key) {
-        None => Err(GenericTransferError::InsufficientAllowance { allowance: 0 }),
+        None => Err(TransferFromError::InsufficientAllowance {
+            allowance: Nat::from(0),
+        }),
         Some(allowance) => {
             if allowance.1 != 0 && allowance.1 <= now {
-                Err(GenericTransferError::InsufficientAllowance { allowance: 0 })
+                Err(TransferFromError::InsufficientAllowance {
+                    allowance: Nat::from(0),
+                })
             } else {
                 let new_amount = match allowance.0.checked_sub(amount) {
                     Some(amount) => amount,
                     None => {
-                        return Err(GenericTransferError::InsufficientAllowance {
-                            allowance: allowance.0,
+                        return Err(TransferFromError::InsufficientAllowance {
+                            allowance: allowance.0.into(),
                         })
                     }
                 };

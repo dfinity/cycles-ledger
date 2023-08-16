@@ -2,7 +2,7 @@ use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::mutate_state;
-use cycles_ledger::{config, endpoints, storage, GenericTransferError};
+use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
@@ -148,7 +148,7 @@ fn execute_transfer(
     fee: Option<Nat>,
     memo: Option<Memo>,
     created_at_time: Option<u64>,
-) -> Result<Nat, GenericTransferError> {
+) -> Result<Nat, TransferFromError> {
     let now = ic_cdk::api::time();
     let balance = storage::balance_of(from);
 
@@ -157,21 +157,23 @@ fn execute_transfer(
     let amount = match amount.0.to_u128() {
         Some(value) => value,
         None => {
-            return Err(GenericTransferError::InsufficientFunds { balance });
+            return Err(TransferFromError::InsufficientFunds {
+                balance: balance.into(),
+            });
         }
     };
     if let Some(fee) = fee {
         match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
-                    return Err(GenericTransferError::BadFee {
-                        expected_fee: config::FEE,
+                    return Err(TransferFromError::BadFee {
+                        expected_fee: config::FEE.into(),
                     });
                 }
             }
             None => {
-                return Err(GenericTransferError::BadFee {
-                    expected_fee: config::FEE,
+                return Err(TransferFromError::BadFee {
+                    expected_fee: config::FEE.into(),
                 });
             }
         }
@@ -179,13 +181,15 @@ fn execute_transfer(
     let memo = validate_memo(memo);
 
     if balance < amount.saturating_add(config::FEE) {
-        return Err(GenericTransferError::InsufficientFunds { balance });
+        return Err(TransferFromError::InsufficientFunds {
+            balance: balance.into(),
+        });
     }
 
     // Transaction cannot be created in the future
     if let Some(time) = created_at_time {
         if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
-            return Err(GenericTransferError::CreatedInFuture { ledger_time: now });
+            return Err(TransferFromError::CreatedInFuture { ledger_time: now });
         }
     }
 
@@ -212,7 +216,7 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         args.created_at_time,
     )
     .map_err(|err| {
-        let err: TransferError = match err.try_into() {
+        let err: TransferError = match try_convert_transfer_error(err) {
             Ok(err) => err,
             Err(err) => ic_cdk::trap(&err),
         };

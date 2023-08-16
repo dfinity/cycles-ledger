@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use candid::Nat;
 use ciborium::Value as CiboriumValue;
 use icrc_ledger_types::{
     icrc::generic_value::Value, icrc1::transfer::TransferError,
@@ -98,64 +97,30 @@ mod known_tags {
     pub const BIGNUM: u64 = 2;
 }
 
-pub enum GenericTransferError {
-    BadFee { expected_fee: u128 },
-    BadBurn { min_burn_amount: u128 },
-    InsufficientFunds { balance: u128 },
-    InsufficientAllowance { allowance: u128 },
-    CreatedInFuture { ledger_time: u64 },
-}
-
-impl TryFrom<GenericTransferError> for TransferError {
-    type Error = String;
-
-    fn try_from(value: GenericTransferError) -> Result<Self, Self::Error> {
-        Ok(match value {
-            GenericTransferError::BadFee { expected_fee } => TransferError::BadFee {
-                expected_fee: Nat::from(expected_fee),
-            },
-            GenericTransferError::BadBurn { min_burn_amount } => TransferError::BadBurn {
-                min_burn_amount: Nat::from(min_burn_amount),
-            },
-            GenericTransferError::InsufficientFunds { balance } => {
-                TransferError::InsufficientFunds {
-                    balance: Nat::from(balance),
-                }
-            }
-            GenericTransferError::InsufficientAllowance { .. } => {
-                return Err(
-                    "InsufficientAllowance error should not happen for transfer".to_string()
-                );
-            }
-            GenericTransferError::CreatedInFuture { ledger_time } => {
-                TransferError::CreatedInFuture { ledger_time }
-            }
-        })
-    }
-}
-
-impl From<GenericTransferError> for TransferFromError {
-    fn from(value: GenericTransferError) -> Self {
-        match value {
-            GenericTransferError::BadFee { expected_fee } => TransferFromError::BadFee {
-                expected_fee: Nat::from(expected_fee),
-            },
-            GenericTransferError::BadBurn { min_burn_amount } => TransferFromError::BadBurn {
-                min_burn_amount: Nat::from(min_burn_amount),
-            },
-            GenericTransferError::InsufficientFunds { balance } => {
-                TransferFromError::InsufficientFunds {
-                    balance: Nat::from(balance),
-                }
-            }
-            GenericTransferError::InsufficientAllowance { allowance } => {
-                TransferFromError::InsufficientAllowance {
-                    allowance: Nat::from(allowance),
-                }
-            }
-            GenericTransferError::CreatedInFuture { ledger_time } => {
-                TransferFromError::CreatedInFuture { ledger_time }
-            }
+pub fn try_convert_transfer_error(e: TransferFromError) -> Result<TransferError, String> {
+    Ok(match e {
+        TransferFromError::BadFee { expected_fee } => TransferError::BadFee { expected_fee },
+        TransferFromError::BadBurn { min_burn_amount } => {
+            TransferError::BadBurn { min_burn_amount }
         }
-    }
+        TransferFromError::InsufficientFunds { balance } => {
+            TransferError::InsufficientFunds { balance }
+        }
+        TransferFromError::InsufficientAllowance { .. } => {
+            return Err("InsufficientAllowance error should not happen for transfer".to_string())
+        }
+        TransferFromError::TooOld => TransferError::TooOld,
+        TransferFromError::CreatedInFuture { ledger_time } => {
+            TransferError::CreatedInFuture { ledger_time }
+        }
+        TransferFromError::Duplicate { duplicate_of } => TransferError::Duplicate { duplicate_of },
+        TransferFromError::TemporarilyUnavailable => TransferError::TemporarilyUnavailable,
+        TransferFromError::GenericError {
+            error_code,
+            message,
+        } => TransferError::GenericError {
+            error_code,
+            message,
+        },
+    })
 }
