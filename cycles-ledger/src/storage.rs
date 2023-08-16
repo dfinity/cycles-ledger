@@ -276,13 +276,12 @@ pub fn transfer(
 ) -> Result<(u64, Hash), TransferFromError> {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
+    let total_spent_amount = amount.saturating_add(crate::config::FEE);
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
+    check_transfer_preconditions(from_balance, total_spent_amount, now, created_at_time);
 
     mutate_state(|s| {
         prune(s, now, APPROVE_PRUNE_LIMIT);
-
-        let total_spent_amount = amount.saturating_add(crate::config::FEE);
-        let from_balance = s.balances.get(&from_key).unwrap_or_default();
-        assert!(from_balance >= total_spent_amount);
 
         if spender.is_some() && spender.unwrap() != *from {
             use_allowance(s, from, &spender.unwrap(), total_spent_amount, now)?;
@@ -313,6 +312,23 @@ pub fn transfer(
         });
         Ok((s.blocks.len() - 1, block_hash))
     })
+}
+
+fn check_transfer_preconditions(
+    from_balance: u128,
+    total_spent_amount: u128,
+    now: u64,
+    created_at_time: Option<u64>,
+) {
+    assert!(from_balance >= total_spent_amount);
+    if let Some(time) = created_at_time {
+        assert!(
+            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
+            "Transfer created in the future, created_at_time: {}, now: {}",
+            time,
+            now
+        );
+    }
 }
 
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
