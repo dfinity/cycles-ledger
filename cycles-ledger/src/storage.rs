@@ -526,15 +526,15 @@ fn use_allowance(
             if allowance.1 != 0 && allowance.1 <= now {
                 Err(GenericTransferError::InsufficientAllowance { allowance: 0 })
             } else {
-                if allowance.0 < amount {
-                    return Err(GenericTransferError::InsufficientAllowance {
-                        allowance: allowance.0,
-                    });
-                }
-                let new_amount = allowance
-                    .0
-                    .checked_sub(amount)
-                    .expect("Underflow when using allowance");
+                let new_amount = match allowance.0.checked_sub(amount) {
+                    Some(amount) => amount,
+                    None => {
+                        return Err(GenericTransferError::InsufficientAllowance {
+                            allowance: allowance.0,
+                        })
+                    }
+                };
+
                 if new_amount == 0 {
                     if allowance.1 > 0 {
                         s.expiration_queue.remove(&(allowance.1, key));
