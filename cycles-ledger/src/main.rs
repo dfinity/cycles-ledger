@@ -436,8 +436,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     }
 
     let txid = storage::approve(
-        &from_account,
-        &args.spender,
+        (&from_account, &args.spender),
         amount,
         args.expires_at,
         now,

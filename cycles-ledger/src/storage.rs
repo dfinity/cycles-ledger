@@ -419,8 +419,7 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) 
 }
 
 pub fn approve(
-    from: &Account,
-    spender: &Account,
+    from_spender: (&Account, &Account),
     amount: u128,
     expires_at: Option<u64>,
     now: u64,
@@ -428,6 +427,8 @@ pub fn approve(
     memo: Option<Memo>,
     created_at_time: Option<u64>,
 ) -> Result<u64, ApproveError> {
+    let from = from_spender.0;
+    let spender = from_spender.1;
     let from_key = to_account_key(from);
     let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
 
