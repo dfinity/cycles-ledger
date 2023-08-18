@@ -606,16 +606,12 @@ fn prune(s: &mut State, now: u64, limit: usize) -> usize {
                 if key.0 > now {
                     return pruned;
                 }
-            }
-            None => {
-                return pruned;
-            }
-        }
-        if let Some((key, _value)) = s.expiration_queue.first_key_value() {
-            if key.0 <= now {
                 s.approvals.remove(&key.1);
                 s.expiration_queue.remove(&key);
                 pruned += 1;
+            }
+            None => {
+                return pruned;
             }
         }
     }
