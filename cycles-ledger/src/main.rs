@@ -188,17 +188,13 @@ fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
         created_at_time: args.created_at_time,
     };
 
-    deduplicate(args.created_at_time, transaction.clone().hash(), now).map_err(
-        |err| match err {
-            DeduplicationError::TooOld => TransferError::TooOld,
-            DeduplicationError::CreatedInFuture { ledger_time } => {
-                TransferError::CreatedInFuture { ledger_time }
-            }
-            DeduplicationError::Duplicate { duplicate_of } => {
-                TransferError::Duplicate { duplicate_of }
-            }
-        },
-    )?;
+    deduplicate(args.created_at_time, transaction.hash(), now).map_err(|err| match err {
+        DeduplicationError::TooOld => TransferError::TooOld,
+        DeduplicationError::CreatedInFuture { ledger_time } => {
+            TransferError::CreatedInFuture { ledger_time }
+        }
+        DeduplicationError::Duplicate { duplicate_of } => TransferError::Duplicate { duplicate_of },
+    })?;
     let (txid, _hash) = storage::transfer(
         from,
         args.to,
@@ -306,7 +302,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     };
 
     let now = ic_cdk::api::time();
-    deduplicate(args.created_at_time, transaction.clone().hash(), now)
+    deduplicate(args.created_at_time, transaction.hash(), now)
         .map_err(|err| send_error(&from, err.into()))?;
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
