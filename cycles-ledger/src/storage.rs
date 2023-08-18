@@ -488,9 +488,7 @@ fn check_approve_preconditions(
     if let Some(time) = created_at_time {
         assert!(
             time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
-            "Approval created in the future, created_at_time: {}, now: {}",
-            time,
-            now
+            "Approval created in the future, created_at_time: {time}, now: {now}"
         );
     }
 }
