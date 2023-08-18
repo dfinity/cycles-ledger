@@ -568,7 +568,7 @@ fn use_allowance(
         None => Err(TransferFromError::InsufficientAllowance {
             allowance: Nat::from(0),
         }),
-        Some(allowance) => {
+        Some((current_allowance, current_expiration)) => {
             if allowance.1 != 0 && allowance.1 <= now {
                 Err(TransferFromError::InsufficientAllowance {
                     allowance: Nat::from(0),
