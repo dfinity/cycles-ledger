@@ -271,25 +271,9 @@ pub fn deduplicate(
         }
 
         if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
-            if let Some(block) = read_state(|state| state.blocks.get(block_height)) {
-                if block
-                    .0
-                    .timestamp
-                    .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
-                    .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
-                    < now
-                {
-                    if mutate_state(|state| state.transactions.remove(&tx_hash)).is_none() {
-                        ic_cdk::trap(&format!("Could not remove tx hash {:?}", tx_hash))
-                    }
-                } else {
-                    return Err(DeduplicationError::Duplicate {
-                        duplicate_of: Nat::from(block_height),
-                    });
-                }
-            } else {
-                ic_cdk::trap(&format!("Could not find block index {}", block_height))
-            }
+            return Err(DeduplicationError::Duplicate {
+                duplicate_of: Nat::from(block_height),
+            });
         }
     }
     Ok(())
