@@ -408,12 +408,8 @@ pub fn send(
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
     let key = (to_account_key(account), to_account_key(spender));
     let allowance = read_state(|s| s.approvals.get(&key).unwrap_or_default());
-    if allowance.1 > 0 {
-        if allowance.1 > now {
-            return allowance;
-        } else {
+    if allowance.1 > 0 && allowance.1 < now {
             return (0, 0);
-        }
     }
     allowance
 }
