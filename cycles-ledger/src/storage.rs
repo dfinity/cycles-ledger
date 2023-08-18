@@ -526,7 +526,7 @@ fn record_approval(
             s.approvals.insert(key, (amount, expires_at));
             Ok(())
         }
-        Some(allowance) => {
+        Some((current_allowance, current_expiration)) => {
             if let Some(expected_allowance) = expected_allowance {
                 if expected_allowance != allowance.0 {
                     return Err(ApproveError::AllowanceChanged {
