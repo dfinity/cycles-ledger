@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::SystemTime};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 
 use candid::{Encode, Nat, Principal};
 use client::{deposit, transfer};
@@ -625,7 +628,7 @@ fn test_transfer() {
     .unwrap();
 
     // Advance time so that the deduplication window is over
-    env.advance_time(config::TRANSACTION_WINDOW * 2);
+    env.advance_time(Duration::from_secs(1));
     now = env
         .time()
         .duration_since(SystemTime::UNIX_EPOCH)
