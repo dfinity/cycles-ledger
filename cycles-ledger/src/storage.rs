@@ -482,9 +482,8 @@ fn check_approve_preconditions(
     );
     assert!(
         expires_at.unwrap_or(REMOTE_FUTURE) > now,
-        "Approval expiration time ({}) should be later than now ({})",
+        "Approval expiration time ({}) should be later than now ({now})",
         expires_at.unwrap_or(REMOTE_FUTURE),
-        now
     );
     if let Some(time) = created_at_time {
         assert!(
