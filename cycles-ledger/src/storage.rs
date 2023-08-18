@@ -184,8 +184,14 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|cell| f(&cell.borrow()))
 }
 
-pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    STATE.with(|cell| f(&mut cell.borrow_mut()))
+const APPROVE_PRUNE_LIMIT: usize = 100;
+
+pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
+    STATE.with(|cell| {
+        let result = f(&mut cell.borrow_mut());
+        prune(&mut cell.borrow_mut(), now, APPROVE_PRUNE_LIMIT);
+        result
+    })
 }
 
 #[derive(Default)]
@@ -241,9 +247,7 @@ pub fn record_deposit(
     assert!(amount >= crate::config::FEE);
 
     let key = to_account_key(account);
-    mutate_state(|s| {
-        prune(s, now, APPROVE_PRUNE_LIMIT);
-
+    mutate_state(now, |s| {
         let balance = s.balances.get(&key).unwrap_or_default();
         let new_balance = balance + amount;
         s.balances.insert(key, new_balance);
@@ -280,9 +284,7 @@ pub fn transfer(
     let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
     check_transfer_preconditions(from_balance, total_spent_amount, now, created_at_time);
 
-    mutate_state(|s| {
-        prune(s, now, APPROVE_PRUNE_LIMIT);
-
+    mutate_state(now, |s| {
         if spender.is_some() && spender.unwrap() != *from {
             use_allowance(s, from, &spender.unwrap(), total_spent_amount, now)?;
         }
@@ -334,9 +336,7 @@ fn check_transfer_preconditions(
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
-    mutate_state(|s| {
-        prune(s, now, APPROVE_PRUNE_LIMIT);
-
+    mutate_state(now, |s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
 
         if crate::config::FEE >= balance {
@@ -373,9 +373,7 @@ pub fn send(
 ) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
-    mutate_state(|s| {
-        prune(s, now, APPROVE_PRUNE_LIMIT);
-
+    mutate_state(now, |s| {
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
@@ -437,9 +435,7 @@ pub fn approve(
         created_at_time,
     );
 
-    mutate_state(|s| {
-        prune(s, now, APPROVE_PRUNE_LIMIT);
-
+    mutate_state(now, |s| {
         record_approval(s, from, spender, amount, expires_at, expected_allowance)?;
 
         s.balances
@@ -493,7 +489,6 @@ fn check_approve_preconditions(
     }
 }
 
-const APPROVE_PRUNE_LIMIT: usize = 100;
 const REMOTE_FUTURE: u64 = u64::MAX;
 
 fn record_approval(

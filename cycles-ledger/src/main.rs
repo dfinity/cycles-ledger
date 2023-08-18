@@ -329,8 +329,10 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     let encoded_memo = encoder.into_writer().into();
     let memo = validate_memo(Some(encoded_memo));
 
+    let now = ic_cdk::api::time();
+
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(|s| {
+    mutate_state(now, |s| {
         let new_balance = balance.saturating_sub(total_send_cost);
         s.balances.insert(from_key, new_balance);
     });
@@ -338,7 +340,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
     let balance = storage::balance_of(&from);
-    mutate_state(|s| {
+    mutate_state(now, |s| {
         let new_balance = balance.saturating_add(total_send_cost);
         s.balances.insert(from_key, new_balance);
     });
@@ -352,7 +354,6 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             },
         )
     } else {
-        let now = ic_cdk::api::time();
         let (send, _send_hash) = storage::send(&from, amount, memo, now, args.created_at_time);
         Ok(send)
     }
