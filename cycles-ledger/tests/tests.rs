@@ -472,7 +472,7 @@ fn test_send_fails() {
 }
 
 #[test]
-fn test_transfer() {
+fn test_basic_transfer() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
@@ -551,6 +551,55 @@ fn test_transfer() {
         )
         .unwrap_err()
     );
+}
+
+#[test]
+fn test_deduplication() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+    let transfer_amount = Nat::from(100_000);
+
+    // If created_at_time is not set, the same transaction should be able to be sent multiple times
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
 
     // Should not be able commit a transaction that was created in the future
     let mut now = env

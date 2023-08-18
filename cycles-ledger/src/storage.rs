@@ -17,7 +17,7 @@ use crate::{ciborium_to_generic_value, compact_account, config, endpoints::Dedup
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
-const TRANSACTIONS_MEMORY_ID: MemoryId = MemoryId::new(4);
+const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(4);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
@@ -166,7 +166,7 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
-            transactions: TransactionsLog::init(mm.get(TRANSACTIONS_MEMORY_ID)),
+            transactions: TransactionsLog::init(mm.get(TRANSACTION_MEMORY_ID)),
         })
     });
 }
