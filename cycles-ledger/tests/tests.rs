@@ -627,7 +627,7 @@ fn test_transfer() {
     )
     .unwrap();
 
-    // Advance time so that the deduplication window is over
+    // Advance time so that the deduplication window is shifted
     env.advance_time(Duration::from_secs(1));
     now = env
         .time()

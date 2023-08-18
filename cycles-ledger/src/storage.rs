@@ -262,7 +262,11 @@ pub fn deduplicate(
     // TODO: purge old transactions
     if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
         // If the created timestamp is outside of the permitted Transaction window
-        if created_at_time + (config::TRANSACTION_WINDOW.as_nanos() as u64) < now {
+        if created_at_time
+            + (config::TRANSACTION_WINDOW.as_nanos() as u64)
+            + (config::PERMITTED_DRIFT.as_nanos() as u64)
+            < now
+        {
             return Err(DeduplicationError::TooOld);
         }
 
