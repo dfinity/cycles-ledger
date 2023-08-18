@@ -409,7 +409,7 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) 
     let key = (to_account_key(account), to_account_key(spender));
     let allowance = read_state(|s| s.approvals.get(&key).unwrap_or_default());
     if allowance.1 > 0 && allowance.1 < now {
-            return (0, 0);
+        return (0, 0);
     }
     allowance
 }
@@ -528,23 +528,23 @@ fn record_approval(
         }
         Some((current_allowance, current_expiration)) => {
             if let Some(expected_allowance) = expected_allowance {
-                if expected_allowance != allowance.0 {
+                if expected_allowance != current_allowance {
                     return Err(ApproveError::AllowanceChanged {
-                        current_allowance: Nat::from(allowance.0),
+                        current_allowance: Nat::from(current_allowance),
                     });
                 }
             }
             if amount == 0 {
-                if allowance.1 > 0 {
-                    s.expiration_queue.remove(&(allowance.1, key));
+                if current_expiration > 0 {
+                    s.expiration_queue.remove(&(current_expiration, key));
                 }
                 s.approvals.remove(&key);
                 return Ok(());
             }
             s.approvals.insert(key, (amount, expires_at));
-            if expires_at != allowance.1 {
-                if allowance.1 > 0 {
-                    s.expiration_queue.remove(&(allowance.1, key));
+            if expires_at != current_expiration {
+                if current_expiration > 0 {
+                    s.expiration_queue.remove(&(current_expiration, key));
                 }
                 if expires_at > 0 {
                     s.expiration_queue.insert((expires_at, key), ());
@@ -569,27 +569,27 @@ fn use_allowance(
             allowance: Nat::from(0),
         }),
         Some((current_allowance, current_expiration)) => {
-            if allowance.1 != 0 && allowance.1 <= now {
+            if current_expiration != 0 && current_expiration <= now {
                 Err(TransferFromError::InsufficientAllowance {
                     allowance: Nat::from(0),
                 })
             } else {
-                let new_amount = match allowance.0.checked_sub(amount) {
+                let new_amount = match current_allowance.checked_sub(amount) {
                     Some(amount) => amount,
                     None => {
                         return Err(TransferFromError::InsufficientAllowance {
-                            allowance: allowance.0.into(),
+                            allowance: current_allowance.into(),
                         })
                     }
                 };
 
                 if new_amount == 0 {
-                    if allowance.1 > 0 {
-                        s.expiration_queue.remove(&(allowance.1, key));
+                    if current_expiration > 0 {
+                        s.expiration_queue.remove(&(current_expiration, key));
                     }
                     s.approvals.remove(&key);
                 } else {
-                    s.approvals.insert(key, (new_amount, allowance.1));
+                    s.approvals.insert(key, (new_amount, current_expiration));
                 }
                 Ok(())
             }
