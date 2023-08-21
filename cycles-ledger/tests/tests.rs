@@ -1289,3 +1289,51 @@ fn test_transfer() {
     expected_total_supply -= fee.0.to_u128().unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
+
+#[test]
+fn test_total_supply_after_upgrade() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account::from(Principal::from_slice(&[1]));
+    let user2 = Account::from(Principal::from_slice(&[2]));
+
+    deposit(env, depositor_id, user1, 2_000_000_000);
+    deposit(env, depositor_id, user2, 3_000_000_000);
+    let fee = fee(env, ledger_id);
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(1_000_000_000),
+        },
+    )
+    .unwrap();
+    send(
+        env,
+        ledger_id,
+        user2,
+        SendArg {
+            from_subaccount: None,
+            to: depositor_id,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(1_000_000_000),
+        },
+    )
+    .unwrap();
+
+    // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and send
+    let expected_total_supply = 5_000_000_000 - 1_000_000_000 - 2 * fee.0.to_u128().unwrap();
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), vec![], None)
+        .unwrap();
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+}
