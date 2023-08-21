@@ -1,7 +1,7 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
-use cycles_ledger::storage::mutate_state;
+use cycles_ledger::storage::{mutate_state, read_state};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
@@ -72,8 +72,7 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
 #[query]
 #[candid_method(query)]
 fn icrc1_total_supply() -> Nat {
-    // TODO(FI-765): Implement the total supply function.
-    todo!()
+    Nat::from(read_state(|state| state.cache.total_supply))
 }
 
 #[query]

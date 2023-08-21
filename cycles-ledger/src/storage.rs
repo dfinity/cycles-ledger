@@ -34,6 +34,8 @@ pub type Hash = [u8; 32];
 pub struct Cache {
     // The hash of the last block.
     pub phash: Option<Hash>,
+    // The total supply of cycles.
+    pub total_supply: u128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -133,6 +135,43 @@ impl State {
         self.cache.phash
     }
 
+    pub fn total_supply(&self) -> u128 {
+        self.cache.total_supply
+    }
+
+    /// Increases the balance of an account of the given amount.
+    /// Panics in case of overflow and in case it cannot insert the new balance
+    fn credit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+        let old_balance = self.balances.get(&account_key).unwrap_or_default();
+        let new_balance = old_balance
+            .checked_add(amount)
+            .expect("Overflow while changing the account balance");
+        self.balances.insert(account_key, new_balance);
+        self.cache.total_supply = self
+            .total_supply()
+            .checked_add(amount)
+            .expect("Overflow while changing the total supply");
+        new_balance
+    }
+
+    /// Decreases the balance of an account of the given amount.
+    /// Panics in case of overflow and in case it cannot insert the new balance
+    fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+        let old_balance = self.balances.get(&account_key).unwrap_or_default();
+        let to_subtract = old_balance.min(amount);
+        let new_balance = old_balance - to_subtract;
+        if new_balance == 0 {
+            self.balances.remove(&account_key);
+        } else {
+            self.balances.insert(account_key, new_balance);
+        }
+        self.cache.total_supply = self
+            .total_supply()
+            .checked_sub(to_subtract)
+            .expect("Underflow while changing the total supply");
+        new_balance
+    }
+
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
@@ -150,6 +189,14 @@ impl State {
         let last_block = blocks.get(n - 1).unwrap();
         Some(last_block.hash())
     }
+
+    fn compute_total_supply(balances: &Balances) -> u128 {
+        let mut total_supply = 0;
+        for (_, balance) in balances.iter() {
+            total_supply += balance;
+        }
+        total_supply
+    }
 }
 
 thread_local! {
@@ -163,13 +210,15 @@ thread_local! {
                 mm.get(BLOCK_LOG_INDEX_MEMORY_ID),
                 mm.get(BLOCK_LOG_DATA_MEMORY_ID)
             ).expect("failed to initialize the block log");
+        let balances = Balances::init(mm.get(BALANCES_MEMORY_ID));
 
         RefCell::new(State {
             cache: Cache {
                 phash: State::compute_last_block_hash(&blocks),
+                total_supply: State::compute_total_supply(&balances),
             },
             blocks,
-            balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
+            balances,
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
@@ -254,9 +303,7 @@ pub fn record_deposit(
 
     let key = to_account_key(account);
     mutate_state(now, |s| {
-        let balance = s.balances.get(&key).unwrap_or_default();
-        let new_balance = balance + amount;
-        s.balances.insert(key, new_balance);
+        let new_balance = s.credit(key, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -297,12 +344,8 @@ pub fn transfer(
             }
         }
 
-        s.balances
-            .insert(from_key, from_balance - total_spent_amount)
-            .expect("failed to update 'from' balance");
-
-        let to_balance = s.balances.get(&to_key).unwrap_or_default();
-        s.balances.insert(to_key, to_balance + amount);
+        s.debit(from_key, total_spent_amount);
+        s.credit(to_key, amount);
 
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -345,15 +388,7 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        let balance = s.balances.get(&from_key).unwrap_or_default();
-
-        if crate::config::FEE >= balance {
-            s.balances.remove(&from_key);
-        } else {
-            s.balances
-                .insert(from_key, balance.saturating_sub(crate::config::FEE))
-                .expect("failed to update balance");
-        }
+        s.debit(from_key, crate::config::FEE);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -387,12 +422,7 @@ pub fn send(
 
         assert!(from_balance >= total_balance_deduction);
 
-        s.balances
-            .insert(
-                from_key,
-                from_balance.saturating_sub(total_balance_deduction),
-            )
-            .expect("failed to update balance");
+        s.debit(from_key, total_balance_deduction);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -449,6 +479,11 @@ pub fn approve(
         s.balances
             .insert(from_key, from_balance - crate::config::FEE)
             .expect("failed to update 'from' balance");
+
+        s.cache.total_supply = s
+            .total_supply()
+            .checked_sub(crate::config::FEE)
+            .expect("Underflow while changing the total supply");
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
