@@ -3,12 +3,9 @@ use ic_stable_structures::{
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
-use icrc_ledger_types::{
-    icrc1::{
-        account::Account,
-        transfer::{BlockIndex, Memo},
-    },
-    icrc2::{approve::ApproveError, transfer_from::TransferFromError},
+use icrc_ledger_types::icrc1::{
+    account::Account,
+    transfer::{BlockIndex, Memo},
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -286,7 +283,7 @@ pub fn transfer(
     memo: Option<Memo>,
     now: u64,
     created_at_time: Option<u64>,
-) -> Result<(u64, Hash), TransferFromError> {
+) -> (u64, Hash) {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
@@ -323,7 +320,7 @@ pub fn transfer(
             timestamp: now,
             phash,
         });
-        Ok((s.blocks.len() - 1, block_hash))
+        (s.blocks.len() - 1, block_hash)
     })
 }
 
@@ -431,7 +428,7 @@ pub fn approve(
     expected_allowance: Option<u128>,
     memo: Option<Memo>,
     created_at_time: Option<u64>,
-) -> Result<u64, ApproveError> {
+) -> u64 {
     let from = from_spender.0;
     let spender = from_spender.1;
     let from_key = to_account_key(from);
@@ -470,7 +467,7 @@ pub fn approve(
             timestamp: now,
             phash,
         });
-        Ok(s.blocks.len() - 1)
+        s.blocks.len() - 1
     })
 }
 

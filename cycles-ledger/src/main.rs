@@ -206,7 +206,7 @@ fn execute_transfer(
         }
     }
 
-    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now, created_at_time)?;
+    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now, created_at_time);
 
     Ok(Nat::from(txid))
 }
@@ -462,7 +462,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         expected_allowance,
         memo,
         args.created_at_time,
-    )?;
+    );
 
     Ok(Nat::from(txid))
 }
