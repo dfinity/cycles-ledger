@@ -294,8 +294,10 @@ pub fn transfer(
     check_transfer_preconditions(from_balance, total_spent_amount, now, created_at_time);
 
     mutate_state(now, |s| {
-        if spender.is_some() && spender.unwrap() != *from {
-            use_allowance(s, from, &spender.unwrap(), total_spent_amount, now);
+        if let Some(spender) = spender {
+            if spender != *from {
+                use_allowance(s, from, &spender, total_spent_amount, now);
+            }
         }
 
         s.balances
