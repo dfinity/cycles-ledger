@@ -74,3 +74,27 @@ where
     let compact_account = CompactAccount::deserialize(d)?;
     Account::try_from(compact_account).map_err(D::Error::custom)
 }
+
+pub mod opt {
+    use super::*;
+
+    pub fn serialize<S>(acc: &Option<Account>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        acc.map(CompactAccount::from).serialize(s)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Option<Account>, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        type OptionalCompactAccount = Option<CompactAccount>;
+        match OptionalCompactAccount::deserialize(d)? {
+            Some(compact_account) => Account::try_from(compact_account)
+                .map(Some)
+                .map_err(D::Error::custom),
+            None => Ok(None),
+        }
+    }
+}

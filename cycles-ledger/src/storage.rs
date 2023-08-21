@@ -16,12 +16,18 @@ use crate::{ciborium_to_generic_value, compact_account};
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
+const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
+const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
+
+pub type ApprovalKey = (AccountKey, AccountKey);
+pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
+pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
 pub type Hash = [u8; 32];
 
@@ -56,6 +62,12 @@ pub enum Operation {
         from: Account,
         #[serde(with = "compact_account")]
         to: Account,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "compact_account::opt"
+        )]
+        spender: Option<Account>,
         #[serde(rename = "amt")]
         amount: u128,
         fee: u128,
@@ -65,6 +77,19 @@ pub enum Operation {
         from: Account,
         #[serde(rename = "amt")]
         amount: u128,
+        fee: u128,
+    },
+    Approve {
+        #[serde(with = "compact_account")]
+        from: Account,
+        #[serde(with = "compact_account")]
+        spender: Account,
+        #[serde(rename = "amt")]
+        amount: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_allowance: Option<u128>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expires_at: Option<u64>,
         fee: u128,
     },
 }
@@ -97,6 +122,8 @@ impl Block {
 pub struct State {
     pub blocks: BlockLog,
     pub balances: Balances,
+    pub approvals: Approvals,
+    pub expiration_queue: ExpirationQueue,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -143,6 +170,8 @@ thread_local! {
             },
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
+            approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
+            expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
 }
@@ -151,8 +180,24 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|cell| f(&cell.borrow()))
 }
 
-pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    STATE.with(|cell| f(&mut cell.borrow_mut()))
+const APPROVE_PRUNE_LIMIT: usize = 100;
+
+pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
+    STATE.with(|cell| {
+        let result = f(&mut cell.borrow_mut());
+        prune(&mut cell.borrow_mut(), now, APPROVE_PRUNE_LIMIT);
+        check_invariants(&cell.borrow());
+        result
+    })
+}
+
+fn check_invariants(s: &State) {
+    debug_assert!(
+        s.expiration_queue.len() <= s.approvals.len(),
+        "expiration_queue len ({}) larger than approvals len ({})",
+        s.expiration_queue.len(),
+        s.approvals.len()
+    );
 }
 
 #[derive(Default)]
@@ -208,7 +253,7 @@ pub fn record_deposit(
     assert!(amount >= crate::config::FEE);
 
     let key = to_account_key(account);
-    mutate_state(|s| {
+    mutate_state(now, |s| {
         let balance = s.balances.get(&key).unwrap_or_default();
         let new_balance = balance + amount;
         s.balances.insert(key, new_balance);
@@ -233,6 +278,7 @@ pub fn record_deposit(
 pub fn transfer(
     from: &Account,
     to: &Account,
+    spender: Option<Account>,
     amount: u128,
     memo: Option<Memo>,
     now: u64,
@@ -240,17 +286,19 @@ pub fn transfer(
 ) -> (u64, Hash) {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
+    let total_spent_amount = amount.saturating_add(crate::config::FEE);
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
+    check_transfer_preconditions(from_balance, total_spent_amount, now, created_at_time);
 
-    mutate_state(|s| {
-        let from_balance = s.balances.get(&from_key).unwrap_or_default();
-
-        assert!(from_balance >= amount.saturating_add(crate::config::FEE));
+    mutate_state(now, |s| {
+        if let Some(spender) = spender {
+            if spender != *from {
+                use_allowance(s, from, &spender, total_spent_amount, now);
+            }
+        }
 
         s.balances
-            .insert(
-                from_key,
-                from_balance - amount.saturating_add(crate::config::FEE),
-            )
+            .insert(from_key, from_balance - total_spent_amount)
             .expect("failed to update 'from' balance");
 
         let to_balance = s.balances.get(&to_key).unwrap_or_default();
@@ -262,6 +310,7 @@ pub fn transfer(
                 operation: Operation::Transfer {
                     from: *from,
                     to: *to,
+                    spender,
                     amount,
                     fee: crate::config::FEE,
                 },
@@ -275,10 +324,27 @@ pub fn transfer(
     })
 }
 
+fn check_transfer_preconditions(
+    from_balance: u128,
+    total_spent_amount: u128,
+    now: u64,
+    created_at_time: Option<u64>,
+) {
+    assert!(from_balance >= total_spent_amount);
+    if let Some(time) = created_at_time {
+        assert!(
+            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
+            "Transfer created in the future, created_at_time: {}, now: {}",
+            time,
+            now
+        );
+    }
+}
+
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
-    mutate_state(|s| {
+    mutate_state(now, |s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
 
         if crate::config::FEE >= balance {
@@ -315,7 +381,7 @@ pub fn send(
 ) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
-    mutate_state(|s| {
+    mutate_state(now, |s| {
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
@@ -345,6 +411,198 @@ pub fn send(
     })
 }
 
+pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
+    let key = (to_account_key(account), to_account_key(spender));
+    let allowance = read_state(|s| s.approvals.get(&key).unwrap_or_default());
+    if allowance.1 > 0 && allowance.1 < now {
+        return (0, 0);
+    }
+    allowance
+}
+
+pub fn approve(
+    from_spender: (&Account, &Account),
+    amount: u128,
+    expires_at: Option<u64>,
+    now: u64,
+    expected_allowance: Option<u128>,
+    memo: Option<Memo>,
+    created_at_time: Option<u64>,
+) -> u64 {
+    let from = from_spender.0;
+    let spender = from_spender.1;
+    let from_key = to_account_key(from);
+    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
+
+    check_approve_preconditions(
+        from,
+        from_balance,
+        spender,
+        expires_at,
+        now,
+        created_at_time,
+    );
+
+    mutate_state(now, |s| {
+        record_approval(s, from, spender, amount, expires_at, expected_allowance);
+
+        s.balances
+            .insert(from_key, from_balance - crate::config::FEE)
+            .expect("failed to update 'from' balance");
+
+        let phash = s.last_block_hash();
+        s.emit_block(Block {
+            transaction: Transaction {
+                operation: Operation::Approve {
+                    from: *from,
+                    spender: *spender,
+                    amount,
+                    expected_allowance,
+                    expires_at,
+                    fee: crate::config::FEE,
+                },
+                memo,
+                created_at_time,
+            },
+            timestamp: now,
+            phash,
+        });
+        s.blocks.len() - 1
+    })
+}
+
+fn check_approve_preconditions(
+    from: &Account,
+    from_balance: u128,
+    spender: &Account,
+    expires_at: Option<u64>,
+    now: u64,
+    created_at_time: Option<u64>,
+) {
+    assert!(from_balance >= crate::config::FEE);
+    assert!(
+        from != spender,
+        "self approvals are not allowed, should be checked in the endpoint"
+    );
+    assert!(
+        expires_at.unwrap_or(REMOTE_FUTURE) > now,
+        "Approval expiration time ({}) should be later than now ({now})",
+        expires_at.unwrap_or(REMOTE_FUTURE),
+    );
+    if let Some(time) = created_at_time {
+        assert!(
+            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
+            "Approval created in the future, created_at_time: {time}, now: {now}"
+        );
+    }
+}
+
+const REMOTE_FUTURE: u64 = u64::MAX;
+
+fn record_approval(
+    s: &mut State,
+    from: &Account,
+    spender: &Account,
+    amount: u128,
+    expires_at: Option<u64>,
+    expected_allowance: Option<u128>,
+) {
+    let key = (to_account_key(from), to_account_key(spender));
+
+    let expires_at = expires_at.unwrap_or(0);
+
+    match s.approvals.get(&key) {
+        None => {
+            if let Some(expected_allowance) = expected_allowance {
+                assert_eq!(expected_allowance, 0);
+            }
+            if amount == 0 {
+                return;
+            }
+            if expires_at > 0 {
+                s.expiration_queue.insert((expires_at, key), ());
+            }
+            s.approvals.insert(key, (amount, expires_at));
+        }
+        Some((current_allowance, current_expiration)) => {
+            if let Some(expected_allowance) = expected_allowance {
+                assert_eq!(expected_allowance, current_allowance);
+            }
+            if amount == 0 {
+                if current_expiration > 0 {
+                    s.expiration_queue.remove(&(current_expiration, key));
+                }
+                s.approvals.remove(&key);
+                return;
+            }
+            s.approvals.insert(key, (amount, expires_at));
+            if expires_at != current_expiration {
+                if current_expiration > 0 {
+                    s.expiration_queue.remove(&(current_expiration, key));
+                }
+                if expires_at > 0 {
+                    s.expiration_queue.insert((expires_at, key), ());
+                }
+            }
+        }
+    }
+}
+
+fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u128, now: u64) {
+    let key = (to_account_key(account), to_account_key(spender));
+
+    assert!(amount > 0, "Cannot use amount 0 from allowance");
+    let (current_allowance, current_expiration) = s.approvals.get(&key).unwrap_or_else(|| {
+        panic!(
+            "Allowance does not exist, account {}, spender {}",
+            account, spender
+        )
+    });
+    assert!(
+        current_expiration == 0 || current_expiration > now,
+        "Expired allowance, expiration {} is earlier than now {}",
+        current_expiration,
+        now
+    );
+    assert!(
+        current_allowance >= amount,
+        "Insufficient allowance, current_allowance {}, total spent amount {}",
+        current_allowance,
+        amount
+    );
+
+    let new_amount = current_allowance - amount;
+    if new_amount == 0 {
+        if current_expiration > 0 {
+            s.expiration_queue.remove(&(current_expiration, key));
+        }
+        s.approvals.remove(&key);
+    } else {
+        s.approvals.insert(key, (new_amount, current_expiration));
+    }
+}
+
+fn prune(s: &mut State, now: u64, limit: usize) -> usize {
+    let mut pruned = 0;
+
+    for _ in 0..limit {
+        match s.expiration_queue.first_key_value() {
+            Some((key, _value)) => {
+                if key.0 > now {
+                    return pruned;
+                }
+                s.approvals.remove(&key.1);
+                s.expiration_queue.remove(&key);
+                pruned += 1;
+            }
+            None => {
+                return pruned;
+            }
+        }
+    }
+    pruned
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -370,6 +628,7 @@ mod tests {
                 operation: Operation::Transfer {
                     from: Account::from(Principal::anonymous()),
                     to: Account::from(Principal::anonymous()),
+                    spender: None,
                     amount: u128::MAX,
                     fee: 10_000,
                 },

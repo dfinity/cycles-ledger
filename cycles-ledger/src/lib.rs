@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use ciborium::Value as CiboriumValue;
-use icrc_ledger_types::icrc::generic_value::Value;
+use icrc_ledger_types::{
+    icrc::generic_value::Value, icrc1::transfer::TransferError,
+    icrc2::transfer_from::TransferFromError,
+};
 use serde_bytes::ByteBuf;
 use thiserror::Error;
 
@@ -92,4 +95,32 @@ mod known_tags {
 
     /// Tag for CBOR bignums; see https://www.rfc-editor.org/rfc/rfc8949.html#name-bignums.
     pub const BIGNUM: u64 = 2;
+}
+
+pub fn try_convert_transfer_error(e: TransferFromError) -> Result<TransferError, String> {
+    Ok(match e {
+        TransferFromError::BadFee { expected_fee } => TransferError::BadFee { expected_fee },
+        TransferFromError::BadBurn { min_burn_amount } => {
+            TransferError::BadBurn { min_burn_amount }
+        }
+        TransferFromError::InsufficientFunds { balance } => {
+            TransferError::InsufficientFunds { balance }
+        }
+        TransferFromError::InsufficientAllowance { .. } => {
+            return Err("InsufficientAllowance error should not happen for transfer".to_string())
+        }
+        TransferFromError::TooOld => TransferError::TooOld,
+        TransferFromError::CreatedInFuture { ledger_time } => {
+            TransferError::CreatedInFuture { ledger_time }
+        }
+        TransferFromError::Duplicate { duplicate_of } => TransferError::Duplicate { duplicate_of },
+        TransferFromError::TemporarilyUnavailable => TransferError::TemporarilyUnavailable,
+        TransferFromError::GenericError {
+            error_code,
+            message,
+        } => TransferError::GenericError {
+            error_code,
+            message,
+        },
+    })
 }
