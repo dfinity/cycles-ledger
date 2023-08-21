@@ -190,8 +190,18 @@ pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| {
         let result = f(&mut cell.borrow_mut());
         prune(&mut cell.borrow_mut(), now, APPROVE_PRUNE_LIMIT);
+        check_invariants(&cell.borrow());
         result
     })
+}
+
+fn check_invariants(s: &State) {
+    debug_assert!(
+        s.expiration_queue.len() <= s.approvals.len(),
+        "expiration_queue len ({}) larger than approvals len ({})",
+        s.expiration_queue.len(),
+        s.approvals.len()
+    );
 }
 
 #[derive(Default)]
@@ -557,6 +567,8 @@ fn use_allowance(
     amount: u128,
     now: u64,
 ) -> Result<(), TransferFromError> {
+    assert!(amount > 0);
+
     let key = (to_account_key(account), to_account_key(spender));
 
     match s.approvals.get(&key) {
@@ -610,12 +622,6 @@ fn prune(s: &mut State, now: u64, limit: usize) -> usize {
             }
         }
     }
-    debug_assert!(
-        s.expiration_queue.len() <= s.approvals.len(),
-        "expiration_queue len ({}) larger than approvals len ({})",
-        s.expiration_queue.len(),
-        s.approvals.len()
-    );
     pruned
 }
 
