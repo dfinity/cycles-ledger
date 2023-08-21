@@ -515,11 +515,11 @@ fn record_approval(
 
     match s.approvals.get(&key) {
         None => {
-            if amount == 0 {
-                return;
-            }
             if let Some(expected_allowance) = expected_allowance {
                 assert_eq!(expected_allowance, 0);
+            }
+            if amount == 0 {
+                return;
             }
             if expires_at > 0 {
                 s.expiration_queue.insert((expires_at, key), ());
