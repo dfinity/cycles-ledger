@@ -555,10 +555,12 @@ fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u1
     let key = (to_account_key(account), to_account_key(spender));
 
     assert!(amount > 0, "Cannot use amount 0 from allowance");
-    let (current_allowance, current_expiration) = s.approvals.get(&key).expect(&format!(
-        "Allowance does not exist, account {}, spender {}",
-        account, spender
-    ));
+    let (current_allowance, current_expiration) = s.approvals.get(&key).unwrap_or_else(|| {
+        panic!(
+            "Allowance does not exist, account {}, spender {}",
+            account, spender
+        )
+    });
     assert!(
         current_expiration == 0 || current_expiration > now,
         "Expired allowance, expiration {} is earlier than now {}",
