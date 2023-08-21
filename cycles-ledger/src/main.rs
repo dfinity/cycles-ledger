@@ -188,12 +188,14 @@ fn execute_transfer(
         });
     }
 
-    if spender.is_some() && spender.unwrap() != *from {
-        let current_allowance = storage::allowance(from, &spender.unwrap(), now).0;
-        if current_allowance < amount.saturating_add(config::FEE) {
-            return Err(TransferFromError::InsufficientAllowance {
-                allowance: current_allowance.into(),
-            });
+    if let Some(spender) = spender {
+        if spender != *from {
+            let current_allowance = storage::allowance(from, &spender, now).0;
+            if current_allowance < amount.saturating_add(config::FEE) {
+                return Err(TransferFromError::InsufficientAllowance {
+                    allowance: current_allowance.into(),
+                });
+            }
         }
     }
 
