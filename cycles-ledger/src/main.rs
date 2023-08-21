@@ -390,11 +390,18 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         Some(value) => value,
         None => u128::MAX,
     };
+    let current_allowance = storage::allowance(&from_account, &args.spender, now).0;
     let expected_allowance = match args.expected_allowance {
         Some(n) => match n.0.to_u128() {
-            Some(n) => Some(n),
+            Some(n) => {
+                if n != current_allowance {
+                    return Err(ApproveError::AllowanceChanged {
+                        current_allowance: current_allowance.into(),
+                    });
+                }
+                Some(n)
+            }
             None => {
-                let current_allowance = storage::allowance(&from_account, &args.spender, now).0;
                 return Err(ApproveError::AllowanceChanged {
                     current_allowance: current_allowance.into(),
                 });

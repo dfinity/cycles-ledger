@@ -446,7 +446,7 @@ pub fn approve(
     );
 
     mutate_state(now, |s| {
-        record_approval(s, from, spender, amount, expires_at, expected_allowance)?;
+        record_approval(s, from, spender, amount, expires_at, expected_allowance);
 
         s.balances
             .insert(from_key, from_balance - crate::config::FEE)
@@ -508,7 +508,7 @@ fn record_approval(
     amount: u128,
     expires_at: Option<u64>,
     expected_allowance: Option<u128>,
-) -> Result<(), ApproveError> {
+) {
     let key = (to_account_key(from), to_account_key(spender));
 
     let expires_at = expires_at.unwrap_or(0);
@@ -516,35 +516,26 @@ fn record_approval(
     match s.approvals.get(&key) {
         None => {
             if amount == 0 {
-                return Ok(());
+                return;
             }
             if let Some(expected_allowance) = expected_allowance {
-                if expected_allowance != 0 {
-                    return Err(ApproveError::AllowanceChanged {
-                        current_allowance: Nat::from(0),
-                    });
-                }
+                assert_eq!(expected_allowance, 0);
             }
             if expires_at > 0 {
                 s.expiration_queue.insert((expires_at, key), ());
             }
             s.approvals.insert(key, (amount, expires_at));
-            Ok(())
         }
         Some((current_allowance, current_expiration)) => {
             if let Some(expected_allowance) = expected_allowance {
-                if expected_allowance != current_allowance {
-                    return Err(ApproveError::AllowanceChanged {
-                        current_allowance: Nat::from(current_allowance),
-                    });
-                }
+                assert_eq!(expected_allowance, current_allowance);
             }
             if amount == 0 {
                 if current_expiration > 0 {
                     s.expiration_queue.remove(&(current_expiration, key));
                 }
                 s.approvals.remove(&key);
-                return Ok(());
+                return;
             }
             s.approvals.insert(key, (amount, expires_at));
             if expires_at != current_expiration {
@@ -555,7 +546,6 @@ fn record_approval(
                     s.expiration_queue.insert((expires_at, key), ());
                 }
             }
-            Ok(())
         }
     }
 }
