@@ -1,4 +1,3 @@
-use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -296,7 +295,7 @@ pub fn transfer(
 
     mutate_state(now, |s| {
         if spender.is_some() && spender.unwrap() != *from {
-            use_allowance(s, from, &spender.unwrap(), total_spent_amount, now)?;
+            use_allowance(s, from, &spender.unwrap(), total_spent_amount, now);
         }
 
         s.balances
@@ -550,47 +549,26 @@ fn record_approval(
     }
 }
 
-fn use_allowance(
-    s: &mut State,
-    account: &Account,
-    spender: &Account,
-    amount: u128,
-    now: u64,
-) -> Result<(), TransferFromError> {
-    assert!(amount > 0);
-
+fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u128, now: u64) {
     let key = (to_account_key(account), to_account_key(spender));
+    
+    assert!(amount > 0);
+    let (current_allowance, current_expiration) =
+        s.approvals.get(&key).expect("Allowance does not exist");
+    assert!(
+        current_expiration == 0 || current_expiration > now,
+        "Expired allowance"
+    );
+    assert!(current_allowance >= amount, "Insufficient allowance");
 
-    match s.approvals.get(&key) {
-        None => Err(TransferFromError::InsufficientAllowance {
-            allowance: Nat::from(0),
-        }),
-        Some((current_allowance, current_expiration)) => {
-            if current_expiration != 0 && current_expiration <= now {
-                Err(TransferFromError::InsufficientAllowance {
-                    allowance: Nat::from(0),
-                })
-            } else {
-                let new_amount = match current_allowance.checked_sub(amount) {
-                    Some(amount) => amount,
-                    None => {
-                        return Err(TransferFromError::InsufficientAllowance {
-                            allowance: current_allowance.into(),
-                        })
-                    }
-                };
-
-                if new_amount == 0 {
-                    if current_expiration > 0 {
-                        s.expiration_queue.remove(&(current_expiration, key));
-                    }
-                    s.approvals.remove(&key);
-                } else {
-                    s.approvals.insert(key, (new_amount, current_expiration));
-                }
-                Ok(())
-            }
+    let new_amount = current_allowance - amount;
+    if new_amount == 0 {
+        if current_expiration > 0 {
+            s.expiration_queue.remove(&(current_expiration, key));
         }
+        s.approvals.remove(&key);
+    } else {
+        s.approvals.insert(key, (new_amount, current_expiration));
     }
 }
 

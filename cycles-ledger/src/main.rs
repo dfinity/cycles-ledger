@@ -188,6 +188,15 @@ fn execute_transfer(
         });
     }
 
+    if spender.is_some() && spender.unwrap() != *from {
+        let current_allowance = storage::allowance(from, &spender.unwrap(), now).0;
+        if current_allowance < amount.saturating_add(config::FEE) {
+            return Err(TransferFromError::InsufficientAllowance {
+                allowance: current_allowance.into(),
+            });
+        }
+    }
+
     // Transaction cannot be created in the future
     if let Some(time) = created_at_time {
         if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
