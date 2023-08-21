@@ -551,15 +551,24 @@ fn record_approval(
 
 fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u128, now: u64) {
     let key = (to_account_key(account), to_account_key(spender));
-    
-    assert!(amount > 0);
-    let (current_allowance, current_expiration) =
-        s.approvals.get(&key).expect("Allowance does not exist");
+
+    assert!(amount > 0, "Cannot use amount 0 from allowance");
+    let (current_allowance, current_expiration) = s.approvals.get(&key).expect(&format!(
+        "Allowance does not exist, account {}, spender {}",
+        account, spender
+    ));
     assert!(
         current_expiration == 0 || current_expiration > now,
-        "Expired allowance"
+        "Expired allowance, expiration {} is earlier than now {}",
+        current_expiration,
+        now
     );
-    assert!(current_allowance >= amount, "Insufficient allowance");
+    assert!(
+        current_allowance >= amount,
+        "Insufficient allowance, current_allowance {}, total spent amount {}",
+        current_allowance,
+        amount
+    );
 
     let new_amount = current_allowance - amount;
     if new_amount == 0 {
