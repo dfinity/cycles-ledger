@@ -158,8 +158,9 @@ impl State {
     /// Panics in case of overflow and in case it cannot insert the new balance
     fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
-        let to_subtract = old_balance.min(amount);
-        let new_balance = old_balance - to_subtract;
+        let new_balance = old_balance
+            .checked_sub(amount)
+            .expect("Underflow while changing the account balance");
         if new_balance == 0 {
             self.balances.remove(&account_key);
         } else {
@@ -167,7 +168,7 @@ impl State {
         }
         self.cache.total_supply = self
             .total_supply()
-            .checked_sub(to_subtract)
+            .checked_sub(amount)
             .expect("Underflow while changing the total supply");
         new_balance
     }
@@ -388,7 +389,12 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        s.debit(from_key, crate::config::FEE);
+        let cost = s
+            .balances
+            .get(&from_key)
+            .unwrap_or_default()
+            .min(crate::config::FEE);
+        s.debit(from_key, cost);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
