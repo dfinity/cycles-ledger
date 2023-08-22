@@ -1,13 +1,13 @@
 use candid::{candid_method, Nat};
+use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
 use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::mutate_state;
+use cycles_ledger::storage::{deduplicate, mutate_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
-use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
-use cycles_ledger::storage::{deduplicate, mutate_state, Operation, Transaction};
 use ic_cdk_macros::{query, update};
 use icrc_ledger_types::icrc::generic_value::Value;
 use icrc_ledger_types::icrc1::account::Account;
@@ -370,7 +370,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     let now = ic_cdk::api::time();
     deduplicate(args.created_at_time, transaction.hash(), now)
         .map_err(|err| send_error(&from, err.into()))?;
-    
+
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
     mutate_state(now, |s| {
         let new_balance = balance.saturating_sub(total_send_cost);

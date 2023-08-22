@@ -76,7 +76,6 @@ pub enum SendErrorReason {
     },
 }
 
-
 pub enum DeduplicationError {
     TooOld,
     CreatedInFuture { ledger_time: u64 },

@@ -1,3 +1,6 @@
+use crate::{ciborium_to_generic_value, compact_account};
+use crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
+use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -7,12 +10,9 @@ use icrc_ledger_types::icrc1::{
     account::Account,
     transfer::{BlockIndex, Memo},
 };
-use candid::Nat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
-use crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
-use crate::{ciborium_to_generic_value, compact_account};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -50,7 +50,6 @@ pub struct Transaction {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<Memo>,
 }
-
 
 impl Transaction {
     pub fn hash(&self) -> Hash {
@@ -299,7 +298,6 @@ pub fn record_deposit(
         (s.blocks.len() - 1, new_balance, block_hash)
     })
 }
-
 
 pub fn deduplicate(
     created_at_timestamp: Option<u64>,
