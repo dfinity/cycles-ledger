@@ -11,7 +11,7 @@ use candid::Nat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
-se crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
+use crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
 use crate::{ciborium_to_generic_value, compact_account};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -49,6 +49,23 @@ pub struct Transaction {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<Memo>,
+}
+
+
+impl Transaction {
+    pub fn hash(&self) -> Hash {
+        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
+            panic!(
+                "Bug: unable to convert Operation to Ciborium Value. Error: {}, Block: {:?}",
+                e, self
+            )
+        });
+        match ciborium_to_generic_value(value.clone(), 0) {
+            Ok(value) => value.hash(),
+            Err(err) =>
+                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -127,6 +144,7 @@ pub struct State {
     pub balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
+    pub transactions: TransactionLog,
     // In-memory cache dropped on each upgrade.
     pub cache: Cache,
 }
@@ -139,9 +157,12 @@ impl State {
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
+        let tx_hash = b.transaction.hash();
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
+        // Add block index to the list of transactions and set the hash as its key
+        self.transactions.insert(tx_hash, self.blocks.len() - 1);
         hash
     }
 
@@ -174,6 +195,7 @@ thread_local! {
             blocks,
             balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
+            transactions: TransactionLog::init(mm.get(TRANSACTION_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
@@ -276,6 +298,36 @@ pub fn record_deposit(
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
+}
+
+
+pub fn deduplicate(
+    created_at_timestamp: Option<u64>,
+    tx_hash: [u8; 32],
+    now: u64,
+) -> Result<(), DeduplicationError> {
+    // TODO: purge old transactions
+    if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
+        // If the created timestamp is outside of the permitted Transaction window
+        if created_at_time
+            + (config::TRANSACTION_WINDOW.as_nanos() as u64)
+            + (config::PERMITTED_DRIFT.as_nanos() as u64)
+            < now
+        {
+            return Err(DeduplicationError::TooOld);
+        }
+
+        if created_at_time > now + (config::PERMITTED_DRIFT.as_nanos() as u64) {
+            return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
+        }
+
+        if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
+            return Err(DeduplicationError::Duplicate {
+                duplicate_of: Nat::from(block_height),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn transfer(
