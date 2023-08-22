@@ -7,10 +7,11 @@ use icrc_ledger_types::icrc1::{
     account::Account,
     transfer::{BlockIndex, Memo},
 };
+use candid::Nat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::cell::RefCell;
-
+se crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
 use crate::{ciborium_to_generic_value, compact_account};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -18,12 +19,14 @@ const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
 const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
+const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(4);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
+pub type TransactionLog = StableBTreeMap<Hash, u64, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;

@@ -75,3 +75,24 @@ pub enum SendErrorReason {
         receiver: Principal,
     },
 }
+
+
+pub enum DeduplicationError {
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: BlockIndex },
+}
+
+impl From<DeduplicationError> for SendErrorReason {
+    fn from(value: DeduplicationError) -> Self {
+        match value {
+            DeduplicationError::TooOld => SendErrorReason::TooOld,
+            DeduplicationError::CreatedInFuture { ledger_time } => {
+                SendErrorReason::CreatedInFuture { ledger_time }
+            }
+            DeduplicationError::Duplicate { duplicate_of } => {
+                SendErrorReason::Duplicate { duplicate_of }
+            }
+        }
+    }
+}
