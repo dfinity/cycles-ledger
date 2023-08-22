@@ -243,10 +243,10 @@ fn test_send_flow() {
 
     // send cycles from subaccount with created_at_time set
     let now = env
-    .time()
-    .duration_since(SystemTime::UNIX_EPOCH)
-    .unwrap()
-    .as_nanos() as u64;
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
     let send_receiver_balance = env.cycle_balance(send_receiver);
     let send_amount = 300_000_000_u128;
     let _send_idx = send(
