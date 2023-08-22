@@ -123,11 +123,11 @@ impl Block {
 
 pub struct State {
     pub blocks: BlockLog,
-    pub balances: Balances,
+    balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
     // In-memory cache dropped on each upgrade.
-    pub cache: Cache,
+    cache: Cache,
 }
 
 impl State {
@@ -141,7 +141,7 @@ impl State {
 
     /// Increases the balance of an account of the given amount.
     /// Panics if there is an overflow or the new balance cannot be inserted.
-    fn credit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+    pub fn credit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_add(amount)
@@ -156,7 +156,7 @@ impl State {
 
     /// Decreases the balance of an account of the given amount.
     /// Panics in case of overflow and in case it cannot insert the new balance
-    fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+    pub fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_sub(amount)

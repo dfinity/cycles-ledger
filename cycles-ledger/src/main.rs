@@ -72,7 +72,7 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
 #[query]
 #[candid_method(query)]
 fn icrc1_total_supply() -> Nat {
-    Nat::from(read_state(|state| state.cache.total_supply))
+    Nat::from(read_state(|state| state.total_supply()))
 }
 
 #[query]
@@ -342,18 +342,11 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     let now = ic_cdk::api::time();
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(now, |s| {
-        let new_balance = balance.saturating_sub(total_send_cost);
-        s.balances.insert(from_key, new_balance);
-    });
+    mutate_state(now, |s| s.debit(from_key, total_send_cost));
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    let balance = storage::balance_of(&from);
-    mutate_state(now, |s| {
-        let new_balance = balance.saturating_add(total_send_cost);
-        s.balances.insert(from_key, new_balance);
-    });
+    mutate_state(now, |s| s.credit(from_key, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         send_emit_error(
