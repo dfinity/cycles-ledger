@@ -482,14 +482,7 @@ pub fn approve(
     mutate_state(now, |s| {
         record_approval(s, from, spender, amount, expires_at, expected_allowance);
 
-        s.balances
-            .insert(from_key, from_balance - crate::config::FEE)
-            .expect("failed to update 'from' balance");
-
-        s.cache.total_supply = s
-            .total_supply()
-            .checked_sub(crate::config::FEE)
-            .expect("Underflow while changing the total supply");
+        s.debit(from_key, crate::config::FEE);
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
