@@ -1,4 +1,3 @@
-use crate::{ciborium_to_generic_value, compact_account};
 use crate::{ciborium_to_generic_value, compact_account, config, endpoints::DeduplicationError};
 use candid::Nat;
 use ic_stable_structures::{
@@ -19,7 +18,7 @@ const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
 const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
-const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(4);
+const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(6);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 

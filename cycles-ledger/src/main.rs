@@ -1,8 +1,6 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
-use cycles_ledger::endpoints::{SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
-use cycles_ledger::storage::mutate_state;
 use cycles_ledger::storage::{deduplicate, mutate_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
@@ -208,21 +206,24 @@ fn execute_transfer(
 
     let transaction = Transaction {
         operation: Operation::Transfer {
-            from,
-            to: args.to,
+            from: *from,
+            to: *to,
             amount,
+            spender,
             fee: config::FEE,
         },
         memo: memo.clone(),
-        created_at_time: args.created_at_time,
+        created_at_time: created_at_time,
     };
 
-    deduplicate(args.created_at_time, transaction.hash(), now).map_err(|err| match err {
-        DeduplicationError::TooOld => TransferError::TooOld,
+    deduplicate(created_at_time, transaction.hash(), now).map_err(|err| match err {
+        DeduplicationError::TooOld => TransferFromError::TooOld,
         DeduplicationError::CreatedInFuture { ledger_time } => {
-            TransferError::CreatedInFuture { ledger_time }
+            TransferFromError::CreatedInFuture { ledger_time }
         }
-        DeduplicationError::Duplicate { duplicate_of } => TransferError::Duplicate { duplicate_of },
+        DeduplicationError::Duplicate { duplicate_of } => {
+            TransferFromError::Duplicate { duplicate_of }
+        }
     })?;
 
     let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now, created_at_time);

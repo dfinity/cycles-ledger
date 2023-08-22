@@ -25,10 +25,6 @@ use icrc_ledger_types::{
 };
 use num_bigint::BigUint;
 use serde_bytes::ByteBuf;
-use std::{
-    path::PathBuf,
-    time::{Duration, SystemTime},
-};
 
 use crate::client::{approve, balance_of, fee, get_allowance, send, transfer_from};
 
