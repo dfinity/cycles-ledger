@@ -217,7 +217,7 @@ fn execute_transfer(
         memo,
         now,
         created_at_time,
-        suggested_feed,
+        suggested_fee,
     );
 
     Ok(Nat::from(txid))
