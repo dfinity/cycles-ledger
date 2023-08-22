@@ -155,7 +155,7 @@ impl State {
     }
 
     /// Decreases the balance of an account of the given amount.
-    /// Panics in case of overflow and in case it cannot insert the new balance
+    /// Panics if there is an overflow or the new balance cannot be inserted.
     pub fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
