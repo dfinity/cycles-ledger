@@ -213,7 +213,7 @@ fn execute_transfer(
             fee: config::FEE,
         },
         memo: memo.clone(),
-        created_at_time: created_at_time,
+        created_at_time,
     };
 
     deduplicate(created_at_time, transaction.hash(), now).map_err(|err| match err {
