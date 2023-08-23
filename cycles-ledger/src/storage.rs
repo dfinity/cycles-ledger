@@ -10,9 +10,18 @@ use icrc_ledger_types::icrc1::{
     transfer::{BlockIndex, Memo},
 };
 use serde::{Deserialize, Serialize};
+use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
+<<<<<<< HEAD
+=======
+use crate::{
+    ciborium_to_generic_value, compact_account,
+    config::{self, MAX_MEMO_LENGTH},
+};
+
+>>>>>>> main
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
@@ -36,6 +45,8 @@ pub type Hash = [u8; 32];
 pub struct Cache {
     // The hash of the last block.
     pub phash: Option<Hash>,
+    // The total supply of cycles.
+    pub total_supply: u128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -73,7 +84,6 @@ pub enum Operation {
         to: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        fee: u128,
     },
     Transfer {
         #[serde(with = "compact_account")]
@@ -88,14 +98,14 @@ pub enum Operation {
         spender: Option<Account>,
         #[serde(rename = "amt")]
         amount: u128,
-        fee: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fee: Option<u128>,
     },
     Burn {
         #[serde(with = "compact_account")]
         from: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        fee: u128,
     },
     Approve {
         #[serde(with = "compact_account")]
@@ -108,7 +118,8 @@ pub enum Operation {
         expected_allowance: Option<u128>,
         #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<u64>,
-        fee: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fee: Option<u128>,
     },
 }
 
@@ -119,6 +130,9 @@ pub struct Block {
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phash: Option<[u8; 32]>,
+    #[serde(rename = "fee")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_fee: Option<u128>,
 }
 
 impl Block {
@@ -139,17 +153,55 @@ impl Block {
 
 pub struct State {
     pub blocks: BlockLog,
-    pub balances: Balances,
+    balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
     pub transactions: TransactionLog,
     // In-memory cache dropped on each upgrade.
-    pub cache: Cache,
+    cache: Cache,
 }
 
 impl State {
     pub fn last_block_hash(&self) -> Option<Hash> {
         self.cache.phash
+    }
+
+    pub fn total_supply(&self) -> u128 {
+        self.cache.total_supply
+    }
+
+    /// Increases the balance of an account of the given amount.
+    /// Panics if there is an overflow or the new balance cannot be inserted.
+    pub fn credit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+        let old_balance = self.balances.get(&account_key).unwrap_or_default();
+        let new_balance = old_balance
+            .checked_add(amount)
+            .expect("Overflow while changing the account balance");
+        self.balances.insert(account_key, new_balance);
+        self.cache.total_supply = self
+            .total_supply()
+            .checked_add(amount)
+            .expect("Overflow while changing the total supply");
+        new_balance
+    }
+
+    /// Decreases the balance of an account of the given amount.
+    /// Panics if there is an overflow or the new balance cannot be inserted.
+    pub fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+        let old_balance = self.balances.get(&account_key).unwrap_or_default();
+        let new_balance = old_balance
+            .checked_sub(amount)
+            .expect("Underflow while changing the account balance");
+        if new_balance == 0 {
+            self.balances.remove(&account_key);
+        } else {
+            self.balances.insert(account_key, new_balance);
+        }
+        self.cache.total_supply = self
+            .total_supply()
+            .checked_sub(amount)
+            .expect("Underflow while changing the total supply");
+        new_balance
     }
 
     pub fn emit_block(&mut self, b: Block) -> Hash {
@@ -172,6 +224,14 @@ impl State {
         let last_block = blocks.get(n - 1).unwrap();
         Some(last_block.hash())
     }
+
+    fn compute_total_supply(balances: &Balances) -> u128 {
+        let mut total_supply = 0;
+        for (_, balance) in balances.iter() {
+            total_supply += balance;
+        }
+        total_supply
+    }
 }
 
 thread_local! {
@@ -185,13 +245,15 @@ thread_local! {
                 mm.get(BLOCK_LOG_INDEX_MEMORY_ID),
                 mm.get(BLOCK_LOG_DATA_MEMORY_ID)
             ).expect("failed to initialize the block log");
+        let balances = Balances::init(mm.get(BALANCES_MEMORY_ID));
 
         RefCell::new(State {
             cache: Cache {
                 phash: State::compute_last_block_hash(&blocks),
+                total_supply: State::compute_total_supply(&balances),
             },
             blocks,
-            balances: Balances::init(mm.get(BALANCES_MEMORY_ID)),
+            balances,
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
             transactions: TransactionLog::init(mm.get(TRANSACTION_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
@@ -277,27 +339,26 @@ pub fn record_deposit(
 
     let key = to_account_key(account);
     mutate_state(now, |s| {
-        let balance = s.balances.get(&key).unwrap_or_default();
-        let new_balance = balance + amount;
-        s.balances.insert(key, new_balance);
+        let new_balance = s.credit(key, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
                 operation: Operation::Mint {
                     to: *account,
                     amount,
-                    fee: crate::config::FEE,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
+            effective_fee: Some(crate::config::FEE),
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
 }
 
+<<<<<<< HEAD
 pub fn deduplicate(
     created_at_timestamp: Option<u64>,
     tx_hash: [u8; 32],
@@ -327,6 +388,9 @@ pub fn deduplicate(
     Ok(())
 }
 
+=======
+#[allow(clippy::too_many_arguments)]
+>>>>>>> main
 pub fn transfer(
     from: &Account,
     to: &Account,
@@ -335,6 +399,7 @@ pub fn transfer(
     memo: Option<Memo>,
     now: u64,
     created_at_time: Option<u64>,
+    suggested_fee: Option<u128>,
 ) -> (u64, Hash) {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
@@ -349,12 +414,8 @@ pub fn transfer(
             }
         }
 
-        s.balances
-            .insert(from_key, from_balance - total_spent_amount)
-            .expect("failed to update 'from' balance");
-
-        let to_balance = s.balances.get(&to_key).unwrap_or_default();
-        s.balances.insert(to_key, to_balance + amount);
+        s.debit(from_key, total_spent_amount);
+        s.credit(to_key, amount);
 
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -364,13 +425,14 @@ pub fn transfer(
                     to: *to,
                     spender,
                     amount,
-                    fee: crate::config::FEE,
+                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         });
         (s.blocks.len() - 1, block_hash)
     })
@@ -393,32 +455,31 @@ fn check_transfer_preconditions(
     }
 }
 
+const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
+
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        let balance = s.balances.get(&from_key).unwrap_or_default();
-
-        if crate::config::FEE >= balance {
-            s.balances.remove(&from_key);
-        } else {
-            s.balances
-                .insert(from_key, balance.saturating_sub(crate::config::FEE))
-                .expect("failed to update balance");
-        }
+        let amount = s
+            .balances
+            .get(&from_key)
+            .unwrap_or_default()
+            .min(crate::config::FEE);
+        s.debit(from_key, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount: 0,
-                    fee: crate::config::FEE,
+                    amount,
                 },
-                memo: None,
+                memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 created_at_time: None,
             },
             timestamp: now,
             phash,
+            effective_fee: Some(0),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -439,25 +500,20 @@ pub fn send(
 
         assert!(from_balance >= total_balance_deduction);
 
-        s.balances
-            .insert(
-                from_key,
-                from_balance.saturating_sub(total_balance_deduction),
-            )
-            .expect("failed to update balance");
+        s.debit(from_key, total_balance_deduction);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
                     amount,
-                    fee: crate::config::FEE,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
+            effective_fee: Some(0),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -472,6 +528,7 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) 
     allowance
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn approve(
     from_spender: (&Account, &Account),
     amount: u128,
@@ -480,6 +537,7 @@ pub fn approve(
     expected_allowance: Option<u128>,
     memo: Option<Memo>,
     created_at_time: Option<u64>,
+    suggested_fee: Option<u128>,
 ) -> u64 {
     let from = from_spender.0;
     let spender = from_spender.1;
@@ -498,9 +556,7 @@ pub fn approve(
     mutate_state(now, |s| {
         record_approval(s, from, spender, amount, expires_at, expected_allowance);
 
-        s.balances
-            .insert(from_key, from_balance - crate::config::FEE)
-            .expect("failed to update 'from' balance");
+        s.debit(from_key, crate::config::FEE);
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
@@ -511,13 +567,14 @@ pub fn approve(
                     amount,
                     expected_allowance,
                     expires_at,
-                    fee: crate::config::FEE,
+                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         });
         s.blocks.len() - 1
     })
@@ -682,13 +739,14 @@ mod tests {
                     to: Account::from(Principal::anonymous()),
                     spender: None,
                     amount: u128::MAX,
-                    fee: 10_000,
+                    fee: Some(10_000),
                 },
                 memo: Some(Memo::default()),
                 created_at_time: None,
             },
             timestamp: 1691065957,
             phash: None,
+            effective_fee: None,
         };
         // check that it doesn't panic and that it doesn't return a fake hash
         assert_ne!(block.hash(), [0u8; 32]);

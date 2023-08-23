@@ -72,8 +72,7 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
 #[query]
 #[candid_method(query)]
 fn icrc1_total_supply() -> Nat {
-    // TODO(FI-765): Implement the total supply function.
-    todo!()
+    Nat::from(read_state(|state| state.total_supply()))
 }
 
 #[query]
@@ -162,22 +161,25 @@ fn execute_transfer(
             });
         }
     };
-    if let Some(fee) = fee {
-        match fee.0.to_u128() {
+    let suggested_fee = match fee {
+        Some(fee) => match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
                     return Err(TransferFromError::BadFee {
                         expected_fee: config::FEE.into(),
                     });
                 }
+                Some(fee)
             }
             None => {
                 return Err(TransferFromError::BadFee {
                     expected_fee: config::FEE.into(),
                 });
             }
-        }
-    }
+        },
+        None => None,
+    };
+
     let memo = validate_memo(memo);
 
     if balance < amount.saturating_add(config::FEE) {
@@ -204,19 +206,17 @@ fn execute_transfer(
         }
     }
 
-    let transaction = Transaction {
+    deduplicate(created_at_time, Transaction {
         operation: Operation::Transfer {
             from: *from,
             to: *to,
             amount,
             spender,
-            fee: config::FEE,
+            fee: suggested_fee,
         },
         memo: memo.clone(),
         created_at_time,
-    };
-
-    deduplicate(created_at_time, transaction.hash(), now).map_err(|err| match err {
+    }.hash(), now).map_err(|err| match err {
         DeduplicationError::TooOld => TransferFromError::TooOld,
         DeduplicationError::CreatedInFuture { ledger_time } => {
             TransferFromError::CreatedInFuture { ledger_time }
@@ -226,7 +226,16 @@ fn execute_transfer(
         }
     })?;
 
-    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now, created_at_time);
+    let (txid, _hash) = storage::transfer(
+        from,
+        to,
+        spender,
+        amount,
+        memo,
+        now,
+        created_at_time,
+        suggested_fee,
+    );
 
     Ok(Nat::from(txid))
 }
@@ -341,6 +350,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             }
         }
     }
+
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
         return Err(send_error(
@@ -373,18 +383,11 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         .map_err(|err| send_error(&from, err.into()))?;
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(now, |s| {
-        let new_balance = balance.saturating_sub(total_send_cost);
-        s.balances.insert(from_key, new_balance);
-    });
+    mutate_state(now, |s| s.debit(from_key, total_send_cost));
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    let balance = storage::balance_of(&from);
-    mutate_state(now, |s| {
-        let new_balance = balance.saturating_add(total_send_cost);
-        s.balances.insert(from_key, new_balance);
-    });
+    mutate_state(now, |s| s.credit(from_key, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         Err(send_error(
@@ -450,22 +453,25 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         },
         None => None,
     };
-    if let Some(fee) = args.fee {
-        match fee.0.to_u128() {
+    let suggested_fee = match args.fee {
+        Some(fee) => match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
                     return Err(ApproveError::BadFee {
                         expected_fee: Nat::from(config::FEE),
                     });
                 }
+                Some(fee)
             }
             None => {
                 return Err(ApproveError::BadFee {
                     expected_fee: Nat::from(config::FEE),
                 });
             }
-        }
-    }
+        },
+        None => None,
+    };
+
     let balance = storage::balance_of(&from_account);
     if balance < config::FEE {
         return Err(ApproveError::InsufficientFunds {
@@ -492,6 +498,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         expected_allowance,
         memo,
         args.created_at_time,
+        suggested_fee,
     );
 
     Ok(Nat::from(txid))

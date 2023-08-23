@@ -24,9 +24,10 @@ use icrc_ledger_types::{
     },
 };
 use num_bigint::BigUint;
+use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
-use crate::client::{approve, balance_of, fee, get_allowance, send, transfer_from};
+use crate::client::{approve, balance_of, fee, get_allowance, send, total_supply, transfer_from};
 
 mod client;
 
@@ -86,6 +87,9 @@ fn test_deposit_flow() {
         subaccount: None,
     };
 
+    // Check that the total supply is 0
+    assert_eq!(total_supply(env, ledger_id), 0u128);
+
     // Check that the user doesn't have any tokens before the first deposit.
     assert_eq!(balance_of(env, ledger_id, user), 0u128);
 
@@ -94,16 +98,22 @@ fn test_deposit_flow() {
     assert_eq!(deposit_res.txid, Nat::from(0));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
+    // Check that the right amount of tokens have been minted
+    assert_eq!(total_supply(env, ledger_id), 1_000_000_000);
+
     // Check that the user has the right balance.
-    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_000_000_000));
+    assert_eq!(balance_of(env, ledger_id, user), 1_000_000_000);
 
     // Make another deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 500_000_000);
     assert_eq!(deposit_res.txid, Nat::from(1));
     assert_eq!(deposit_res.balance, Nat::from(1_500_000_000));
 
+    // Check that the right amount of tokens have been minted
+    assert_eq!(total_supply(env, ledger_id), 1_500_000_000);
+
     // Check that the user has the right balance after both deposits.
-    assert_eq!(balance_of(env, ledger_id, user), Nat::from(1_500_000_000));
+    assert_eq!(balance_of(env, ledger_id, user), 1_500_000_000);
 }
 
 #[test]
@@ -152,16 +162,18 @@ fn test_send_flow() {
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    assert_eq!(deposit_res.txid, 0);
+    assert_eq!(deposit_res.balance, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_1, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_2, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_3, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_4, 1_000_000_000);
+    let mut expected_total_supply = 5_000_000_000;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // send cycles from main account
     let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 500000000_u128;
+    let send_amount = 500_000_000_u128;
     let _send_idx = send(
         env,
         ledger_id,
@@ -182,8 +194,10 @@ fn test_send_flow() {
     );
     assert_eq!(
         balance_of(env, ledger_id, user_main_account),
-        Nat::from(1_000_000_000 - send_amount - FEE)
+        1_000_000_000 - send_amount - FEE
     );
+    expected_total_supply -= send_amount + FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // send cycles from subaccount
     let send_receiver_balance = env.cycle_balance(send_receiver);
@@ -210,6 +224,8 @@ fn test_send_flow() {
         balance_of(env, ledger_id, user_subaccount_1),
         1_000_000_000 - send_amount - FEE
     );
+    expected_total_supply -= send_amount + FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // send cycles from subaccount with the correct fee set
     let send_receiver_balance = env.cycle_balance(send_receiver);
@@ -236,6 +252,8 @@ fn test_send_flow() {
         balance_of(env, ledger_id, user_subaccount_2),
         1_000_000_000 - send_amount - FEE
     );
+    expected_total_supply -= send_amount + FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // send cycles from subaccount with created_at_time set
     let now = env
@@ -267,6 +285,8 @@ fn test_send_flow() {
         balance_of(env, ledger_id, user_subaccount_3),
         1_000_000_000 - send_amount - FEE
     );
+    expected_total_supply -= send_amount + FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // send cycles from subaccount with Memo set
     let send_receiver_balance = env.cycle_balance(send_receiver);
@@ -293,6 +313,8 @@ fn test_send_flow() {
         balance_of(env, ledger_id, user_subaccount_4),
         1_000_000_000 - send_amount - FEE
     );
+    expected_total_supply -= send_amount + FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
 #[test]
@@ -334,6 +356,8 @@ fn test_send_fails() {
         balance_before_attempt - FEE,
         balance_of(env, ledger_id, user)
     );
+    let mut expected_total_supply = 1_000_000_000_000 - FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // send from empty subaccount
     let send_result = send(
@@ -354,6 +378,7 @@ fn test_send_fails() {
         send_result.reason,
         SendErrorReason::InsufficientFunds { balance } if balance == 0
     ));
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // bad fee
     let balance_before_attempt = balance_of(env, ledger_id, user);
@@ -379,6 +404,8 @@ fn test_send_fails() {
         balance_before_attempt - FEE,
         balance_of(env, ledger_id, user)
     );
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // send cycles to user instead of canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
@@ -408,6 +435,8 @@ fn test_send_fails() {
         balance_before_attempt - FEE,
         balance_of(env, ledger_id, user)
     );
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // send cycles to deleted canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
@@ -439,6 +468,8 @@ fn test_send_fails() {
         balance_before_attempt - FEE,
         balance_of(env, ledger_id, user)
     );
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // user loses all cycles if they don't have enough balance to pay the fee
     let user_2 = Account {
@@ -510,10 +541,9 @@ fn test_approve_smoke() {
     let block_index = approve(env, ledger_id, from, spender, 200_000_000_u128, None, None)
         .expect("approve failed");
     assert_eq!(block_index, 1);
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - FEE);
+    let mut expected_total_supply = 1_000_000_000 - FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Check that the allowance is 200M
     let allowance = get_allowance(env, ledger_id, from, spender);
@@ -536,10 +566,9 @@ fn test_approve_smoke() {
     )
     .expect("approve failed");
     assert_eq!(block_index, 2);
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - 2 * FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - 2 * FEE);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Check that the spender allowance is still 200M
     let allowance = get_allowance(env, ledger_id, from, spender);
@@ -552,8 +581,8 @@ fn test_approve_smoke() {
     assert_eq!(allowance.expires_at, None);
 
     // The spenders should have no tokens
-    assert_eq!(balance_of(env, ledger_id, spender), Nat::from(0));
-    assert_eq!(balance_of(env, ledger_id, spender_sub_1), Nat::from(0));
+    assert_eq!(balance_of(env, ledger_id, spender), 0);
+    assert_eq!(balance_of(env, ledger_id, spender_sub_1), 0);
 }
 
 fn system_time_to_nanos(t: SystemTime) -> u64 {
@@ -600,7 +629,9 @@ fn test_approve_expiration() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(0));
     assert_eq!(allowance.expires_at, None);
-    assert_eq!(balance_of(env, ledger_id, from), Nat::from(1_000_000_000));
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000);
+    let mut expected_total_supply = 1_000_000_000;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Correct expiration
     let expiration =
@@ -619,10 +650,9 @@ fn test_approve_expiration() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration));
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - FEE);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Decrease expiration
     let new_expiration = expiration - Duration::from_secs(3600).as_nanos() as u64;
@@ -640,10 +670,9 @@ fn test_approve_expiration() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(new_expiration));
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - 2 * FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - 2 * FEE);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Increase expiration
     let new_expiration = expiration + Duration::from_secs(3600).as_nanos() as u64;
@@ -661,10 +690,9 @@ fn test_approve_expiration() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(300_000_000_u128));
     assert_eq!(allowance.expires_at, Some(new_expiration));
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - 3 * FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - 3 * FEE);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
 #[test]
@@ -744,7 +772,8 @@ fn test_approve_self() {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::CanisterCalledTrap);
     assert!(err.description.ends_with("self approval is not allowed"));
-    assert_eq!(balance_of(env, ledger_id, from), Nat::from(1_000_000_000));
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000);
+    assert_eq!(total_supply(env, ledger_id), 1_000_000_000);
 }
 
 #[test]
@@ -774,10 +803,9 @@ fn test_approve_expected_allowance() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, None);
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - FEE);
+    let mut expected_total_supply = 1_000_000_000 - FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Wrong expected allowance
     assert_eq!(
@@ -797,10 +825,8 @@ fn test_approve_expected_allowance() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, None);
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - FEE);
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Correct expected allowance
     let block_index = approve(
@@ -817,10 +843,9 @@ fn test_approve_expected_allowance() {
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, None);
-    assert_eq!(
-        balance_of(env, ledger_id, from),
-        Nat::from(1_000_000_000 - 2 * FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from), 1_000_000_000 - 2 * FEE);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
 #[test]
@@ -1030,6 +1055,7 @@ fn test_transfer_from_smoke() {
     // Make the first deposits.
     deposit(env, depositor_id, from, 350_000_000);
     deposit(env, depositor_id, from_sub_1, 1_000_000_000);
+    let mut expected_total_supply = 1_350_000_000;
 
     // Transfer from without allowance
     assert_eq!(
@@ -1045,6 +1071,8 @@ fn test_transfer_from_smoke() {
     let block_index = approve(env, ledger_id, from_sub_1, spender, 150_000_000, None, None)
         .expect("approve failed");
     assert_eq!(block_index, 3);
+    expected_total_supply -= 2 * FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Transfer_from `from`
     let block_index =
@@ -1052,12 +1080,9 @@ fn test_transfer_from_smoke() {
     assert_eq!(block_index, 4);
     assert_eq!(
         balance_of(env, ledger_id, from),
-        Nat::from(350_000_000 - 30_000_000 - 2 * FEE)
+        350_000_000 - 30_000_000 - 2 * FEE
     );
-    assert_eq!(
-        balance_of(env, ledger_id, from_sub_1),
-        Nat::from(1_000_000_000 - FEE)
-    );
+    assert_eq!(balance_of(env, ledger_id, from_sub_1), 1_000_000_000 - FEE);
     assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(
@@ -1068,6 +1093,8 @@ fn test_transfer_from_smoke() {
     let allowance = get_allowance(env, ledger_id, from_sub_1, spender);
     assert_eq!(allowance.allowance, Nat::from(150_000_000));
     assert_eq!(allowance.expires_at, None);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Transfer_from with insufficient funds
     assert_eq!(
@@ -1076,6 +1103,7 @@ fn test_transfer_from_smoke() {
             balance: Nat::from(350_000_000 - 30_000_000 - 2 * FEE)
         })
     );
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Transfer_from `from_sub_1`
     let block_index = transfer_from(env, ledger_id, from_sub_1, to, spender, 30_000_000)
@@ -1083,7 +1111,7 @@ fn test_transfer_from_smoke() {
     assert_eq!(block_index, 5);
     assert_eq!(
         balance_of(env, ledger_id, from_sub_1),
-        Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
+        1_000_000_000 - 30_000_000 - 2 * FEE
     );
     let allowance = get_allowance(env, ledger_id, from_sub_1, spender);
     assert_eq!(
@@ -1091,6 +1119,8 @@ fn test_transfer_from_smoke() {
         Nat::from(150_000_000 - 30_000_000 - FEE)
     );
     assert_eq!(allowance.expires_at, None);
+    expected_total_supply -= FEE;
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Transfer_from with insufficient allowance
     assert_eq!(
@@ -1101,8 +1131,9 @@ fn test_transfer_from_smoke() {
     );
     assert_eq!(
         balance_of(env, ledger_id, from_sub_1),
-        Nat::from(1_000_000_000 - 30_000_000 - 2 * FEE)
+        1_000_000_000 - 30_000_000 - 2 * FEE
     );
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
 #[test]
@@ -1128,9 +1159,10 @@ fn test_transfer_from_self() {
     assert_eq!(block_index, 1);
     assert_eq!(
         balance_of(env, ledger_id, from),
-        Nat::from(350_000_000 - 30_000_000 - FEE)
+        350_000_000 - 30_000_000 - FEE
     );
-    assert_eq!(balance_of(env, ledger_id, to), Nat::from(30_000_000));
+    assert_eq!(balance_of(env, ledger_id, to), 30_000_000);
+    assert_eq!(total_supply(env, ledger_id), 350_000_000 - FEE);
 }
 
 #[test]
@@ -1149,6 +1181,7 @@ fn test_basic_transfer() {
     let deposit_amount = 1_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
     let fee = fee(env, ledger_id);
+    let mut expected_total_supply = deposit_amount;
 
     let transfer_amount = Nat::from(100_000);
     transfer(
@@ -1171,6 +1204,8 @@ fn test_basic_transfer() {
         balance_of(env, ledger_id, user1),
         Nat::from(deposit_amount) - fee.clone() - transfer_amount.clone()
     );
+    expected_total_supply -= fee.0.to_u128().unwrap();
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Should not be able to send back the full amount as the user2 cannot pay the fee
     assert_eq!(
@@ -1192,6 +1227,7 @@ fn test_basic_transfer() {
         )
         .unwrap_err()
     );
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Should not be able to set a fee that is incorrect
     assert_eq!(
@@ -1213,6 +1249,7 @@ fn test_basic_transfer() {
         )
         .unwrap_err()
     );
+<<<<<<< HEAD
 }
 
 #[test]
@@ -1262,6 +1299,9 @@ fn test_deduplication() {
         },
     )
     .unwrap();
+=======
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+>>>>>>> main
 
     // Should not be able commit a transaction that was created in the future
     let mut now = env
@@ -1286,6 +1326,7 @@ fn test_deduplication() {
         )
         .unwrap_err()
     );
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Should be able to make a transfer when created_at_time is valid
     let tx: Nat = transfer(
@@ -1361,4 +1402,54 @@ fn test_deduplication() {
         },
     )
     .unwrap();
+    expected_total_supply -= fee.0.to_u128().unwrap();
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+}
+
+#[test]
+fn test_total_supply_after_upgrade() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account::from(Principal::from_slice(&[1]));
+    let user2 = Account::from(Principal::from_slice(&[2]));
+
+    deposit(env, depositor_id, user1, 2_000_000_000);
+    deposit(env, depositor_id, user2, 3_000_000_000);
+    let fee = fee(env, ledger_id);
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(1_000_000_000),
+        },
+    )
+    .unwrap();
+    send(
+        env,
+        ledger_id,
+        user2,
+        SendArg {
+            from_subaccount: None,
+            to: depositor_id,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(1_000_000_000),
+        },
+    )
+    .unwrap();
+
+    // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and send
+    let expected_total_supply = 5_000_000_000 - 1_000_000_000 - 2 * fee.0.to_u128().unwrap();
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), vec![], None)
+        .unwrap();
+    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
