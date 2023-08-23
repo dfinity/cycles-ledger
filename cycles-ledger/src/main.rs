@@ -163,7 +163,7 @@ fn execute_transfer(
             });
         }
     };
-    let suggested_feed = match fee {
+    let suggested_fee = match fee {
         Some(fee) => match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
@@ -216,7 +216,7 @@ fn execute_transfer(
         memo,
         now,
         created_at_time,
-        suggested_feed,
+        suggested_fee,
     );
 
     Ok(Nat::from(txid))
