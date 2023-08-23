@@ -48,7 +48,19 @@ pub fn balance_of(env: &StateMachine, ledger_id: Principal, account: Account) ->
     {
         Decode!(&res, Nat).unwrap().0.to_u128().unwrap()
     } else {
-        panic!("balance_of rejected")
+        panic!("icrc1_balance_of rejected")
+    }
+}
+
+pub fn total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(ledger_id, Principal::anonymous(), "icrc1_total_supply", arg)
+        .unwrap()
+    {
+        Decode!(&res, Nat).unwrap().0.to_u128().unwrap()
+    } else {
+        panic!("icrc1_total_supply rejected")
     }
 }
 
