@@ -65,7 +65,7 @@ type SendArg = record {
 };
 
 type SendError = record {
-    fee_block : BlockIndex;
+    fee_block : opt BlockIndex;
     reason : SendErrorReason;
 };
 

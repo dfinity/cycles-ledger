@@ -43,7 +43,7 @@ pub struct SendArg {
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SendError {
-    pub fee_block: Nat,
+    pub fee_block: Option<Nat>,
     pub reason: SendErrorReason,
 }
 
