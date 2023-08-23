@@ -466,7 +466,7 @@ fn test_send_fails() {
     expected_total_supply -= FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // user loses all cycles if they don't have enough balance to pay the fee
+    // user keeps the cycles if they don't have enough balance to pay the fee
     let user_2 = Account {
         owner: Principal::from_slice(&[2]),
         subaccount: None,
@@ -501,7 +501,7 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    assert_eq!(0, balance_of(env, ledger_id, user_2));
+    assert_eq!(1, balance_of(env, ledger_id, user_2));
 }
 
 #[test]

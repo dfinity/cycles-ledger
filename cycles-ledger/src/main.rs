@@ -268,7 +268,7 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
 
 fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
     let now = ic_cdk::api::time();
-    let (fee_block, _fee_hash) = storage::penalize(from, now);
+    let fee_block = storage::penalize(from, now).map(|(fee_block, _block_hash)| fee_block);
     Err(SendError { fee_block, reason })
 }
 

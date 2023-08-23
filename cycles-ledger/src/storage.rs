@@ -397,22 +397,24 @@ fn check_transfer_preconditions(
 
 const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
 
-pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
+// Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
+// is lower than [crate::config::FEE].
+pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        let amount = s
-            .balances
-            .get(&from_key)
-            .unwrap_or_default()
-            .min(crate::config::FEE);
-        s.debit(from_key, amount);
+        let balance = s.balances.get(&from_key).unwrap_or_default();
+        if balance < crate::config::FEE {
+            return None;
+        }
+
+        s.debit(from_key, crate::config::FEE);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount,
+                    amount: crate::config::FEE,
                 },
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 created_at_time: None,
@@ -421,7 +423,7 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
             phash,
             effective_fee: Some(0),
         });
-        (BlockIndex::from(s.blocks.len() - 1), block_hash)
+        Some((BlockIndex::from(s.blocks.len() - 1), block_hash))
     })
 }
 
