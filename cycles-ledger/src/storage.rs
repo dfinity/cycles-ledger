@@ -686,7 +686,7 @@ mod tests {
             },
             timestamp: 1691065957,
             phash: None,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: None,
         };
         // check that it doesn't panic and that it doesn't return a fake hash
         assert_ne!(block.hash(), [0u8; 32]);
