@@ -386,7 +386,7 @@ fn check_transfer_preconditions(
 const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
-// is lower than fee tokens.
+// is lower than [crate::config::FEE].
 pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     let from_key = to_account_key(from);
 
