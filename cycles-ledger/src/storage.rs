@@ -514,7 +514,7 @@ pub fn approve(
             },
             timestamp: now,
             phash,
-            effective_fee: suggested_fee.map_or(Some(config::FEE), |_| None),
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         });
         s.blocks.len() - 1
     })
