@@ -12,7 +12,10 @@ use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{ciborium_to_generic_value, compact_account, config::MAX_MEMO_LENGTH};
+use crate::{
+    ciborium_to_generic_value, compact_account,
+    config::{self, MAX_MEMO_LENGTH},
+};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -72,7 +75,8 @@ pub enum Operation {
         spender: Option<Account>,
         #[serde(rename = "amt")]
         amount: u128,
-        fee: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fee: Option<u128>,
     },
     Burn {
         #[serde(with = "compact_account")]
@@ -91,7 +95,8 @@ pub enum Operation {
         expected_allowance: Option<u128>,
         #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<u64>,
-        fee: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fee: Option<u128>,
     },
 }
 
@@ -102,6 +107,9 @@ pub struct Block {
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phash: Option<[u8; 32]>,
+    #[serde(rename = "fee")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_fee: Option<u128>,
 }
 
 impl Block {
@@ -316,11 +324,13 @@ pub fn record_deposit(
             },
             timestamp: now,
             phash,
+            effective_fee: Some(crate::config::FEE),
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn transfer(
     from: &Account,
     to: &Account,
@@ -329,6 +339,7 @@ pub fn transfer(
     memo: Option<Memo>,
     now: u64,
     created_at_time: Option<u64>,
+    suggested_fee: Option<u128>,
 ) -> (u64, Hash) {
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
@@ -354,13 +365,14 @@ pub fn transfer(
                     to: *to,
                     spender,
                     amount,
-                    fee: crate::config::FEE,
+                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         });
         (s.blocks.len() - 1, block_hash)
     })
@@ -407,6 +419,7 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
             },
             timestamp: now,
             phash,
+            effective_fee: Some(0),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -440,6 +453,7 @@ pub fn send(
             },
             timestamp: now,
             phash,
+            effective_fee: Some(0),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -454,6 +468,7 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) 
     allowance
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn approve(
     from_spender: (&Account, &Account),
     amount: u128,
@@ -462,6 +477,7 @@ pub fn approve(
     expected_allowance: Option<u128>,
     memo: Option<Memo>,
     created_at_time: Option<u64>,
+    suggested_fee: Option<u128>,
 ) -> u64 {
     let from = from_spender.0;
     let spender = from_spender.1;
@@ -491,13 +507,14 @@ pub fn approve(
                     amount,
                     expected_allowance,
                     expires_at,
-                    fee: crate::config::FEE,
+                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         });
         s.blocks.len() - 1
     })
@@ -662,13 +679,14 @@ mod tests {
                     to: Account::from(Principal::anonymous()),
                     spender: None,
                     amount: u128::MAX,
-                    fee: 10_000,
+                    fee: Some(10_000),
                 },
                 memo: Some(Memo::default()),
                 created_at_time: None,
             },
             timestamp: 1691065957,
             phash: None,
+            effective_fee: None,
         };
         // check that it doesn't panic and that it doesn't return a fake hash
         assert_ne!(block.hash(), [0u8; 32]);

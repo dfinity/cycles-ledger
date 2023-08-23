@@ -163,22 +163,25 @@ fn execute_transfer(
             });
         }
     };
-    if let Some(fee) = fee {
-        match fee.0.to_u128() {
+    let suggested_fee = match fee {
+        Some(fee) => match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
                     return Err(TransferFromError::BadFee {
                         expected_fee: config::FEE.into(),
                     });
                 }
+                Some(fee)
             }
             None => {
                 return Err(TransferFromError::BadFee {
                     expected_fee: config::FEE.into(),
                 });
             }
-        }
-    }
+        },
+        None => None,
+    };
+
     let memo = validate_memo(memo);
 
     if balance < amount.saturating_add(config::FEE) {
@@ -205,7 +208,16 @@ fn execute_transfer(
         }
     }
 
-    let (txid, _hash) = storage::transfer(from, to, spender, amount, memo, now, created_at_time);
+    let (txid, _hash) = storage::transfer(
+        from,
+        to,
+        spender,
+        amount,
+        memo,
+        now,
+        created_at_time,
+        suggested_fee,
+    );
 
     Ok(Nat::from(txid))
 }
@@ -322,6 +334,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             }
         }
     }
+
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
         return send_emit_error(
@@ -412,22 +425,25 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         },
         None => None,
     };
-    if let Some(fee) = args.fee {
-        match fee.0.to_u128() {
+    let suggested_fee = match args.fee {
+        Some(fee) => match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
                     return Err(ApproveError::BadFee {
                         expected_fee: Nat::from(config::FEE),
                     });
                 }
+                Some(fee)
             }
             None => {
                 return Err(ApproveError::BadFee {
                     expected_fee: Nat::from(config::FEE),
                 });
             }
-        }
-    }
+        },
+        None => None,
+    };
+
     let balance = storage::balance_of(&from_account);
     if balance < config::FEE {
         return Err(ApproveError::InsufficientFunds {
@@ -454,6 +470,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         expected_allowance,
         memo,
         args.created_at_time,
+        suggested_fee,
     );
 
     Ok(Nat::from(txid))
