@@ -312,8 +312,8 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             );
         }
     };
-    let suggested_fee = match args.fee {
-        Some(fee) => match fee.0.to_u128() {
+    if let Some(fee) = args.fee {
+        match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
                     return send_emit_error(
@@ -323,7 +323,6 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
                         },
                     );
                 }
-                Some(fee)
             }
             None => {
                 return send_emit_error(
@@ -333,9 +332,8 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
                     },
                 );
             }
-        },
-        None => None,
-    };
+        }
+    }
 
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
@@ -372,14 +370,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             },
         )
     } else {
-        let (send, _send_hash) = storage::send(
-            &from,
-            amount,
-            memo,
-            now,
-            args.created_at_time,
-            suggested_fee,
-        );
+        let (send, _send_hash) = storage::send(&from, amount, memo, now, args.created_at_time);
         Ok(send)
     }
 }

@@ -8,10 +8,14 @@ use icrc_ledger_types::icrc1::{
     transfer::{BlockIndex, Memo},
 };
 use serde::{Deserialize, Serialize};
+use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{ciborium_to_generic_value, compact_account};
+use crate::{
+    ciborium_to_generic_value, compact_account,
+    config::{self, MAX_MEMO_LENGTH},
+};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -57,8 +61,6 @@ pub enum Operation {
         to: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        fee: Option<u128>,
     },
     Transfer {
         #[serde(with = "compact_account")]
@@ -81,8 +83,6 @@ pub enum Operation {
         from: Account,
         #[serde(rename = "amt")]
         amount: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        fee: Option<u128>,
     },
     Approve {
         #[serde(with = "compact_account")]
@@ -318,7 +318,6 @@ pub fn record_deposit(
                 operation: Operation::Mint {
                     to: *account,
                     amount,
-                    fee: None,
                 },
                 memo,
                 created_at_time,
@@ -373,7 +372,7 @@ pub fn transfer(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: suggested_fee.map_or(Some(config::FEE), |_| None),
         });
         (s.blocks.len() - 1, block_hash)
     })
@@ -396,30 +395,31 @@ fn check_transfer_preconditions(
     }
 }
 
+const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
+
 pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        let cost = s
+        let amount = s
             .balances
             .get(&from_key)
             .unwrap_or_default()
             .min(crate::config::FEE);
-        s.debit(from_key, cost);
+        s.debit(from_key, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount: 0,
-                    fee: None,
+                    amount,
                 },
-                memo: None,
+                memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 created_at_time: None,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: None,
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -431,7 +431,6 @@ pub fn send(
     memo: Option<Memo>,
     now: u64,
     created_at_time: Option<u64>,
-    suggested_fee: Option<u128>,
 ) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
@@ -448,14 +447,13 @@ pub fn send(
                 operation: Operation::Burn {
                     from: *from,
                     amount,
-                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: None,
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -516,7 +514,7 @@ pub fn approve(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: suggested_fee.map_or(Some(config::FEE), |_| None),
         });
         s.blocks.len() - 1
     })
