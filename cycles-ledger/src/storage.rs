@@ -6,6 +6,8 @@ use crate::{
 };
 use anyhow::Context;
 use candid::Nat;
+use ic_cdk::api::set_certified_data;
+use ic_certified_map::{leaf_hash, AsHashTree, RbTree};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -48,6 +50,8 @@ pub struct Cache {
     pub phash: Option<Hash>,
     // The total supply of cycles.
     pub total_supply: u128,
+    // The hash tree
+    pub hash_tree: RbTree<&'static str, Hash>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -220,6 +224,39 @@ impl State {
         new_balance
     }
 
+    /// Returns the root hash of the certified ledger state.
+    /// The canister code must call set_certified_data with the value this function returns after
+    /// each successful modification of the ledger.
+    pub fn root_hash(&self) -> Hash {
+        self.cache.hash_tree.root_hash()
+    }
+
+    pub fn upgrade_hash_tree(
+        hash_tree: &mut RbTree<&'static str, Hash>,
+        last_block_index: u64,
+        last_block_hash: Hash,
+    ) {
+        hash_tree.insert(
+            "last_block_index",
+            leaf_hash(&last_block_index.to_be_bytes()),
+        );
+        hash_tree.insert("tip_hash", leaf_hash(&last_block_hash));
+    }
+
+    pub fn compute_last_block_hash_and_hash_tree(
+        blocks: &BlockLog,
+    ) -> (Option<Hash>, RbTree<&'static str, Hash>) {
+        let mut hash_tree = RbTree::new();
+        let n = blocks.len();
+        if n == 0 {
+            return (None, hash_tree);
+        }
+        let last_block_hash = blocks.get(n - 1).unwrap().hash();
+        hash_tree.insert("last_block_index", leaf_hash(&(n - 1).to_be_bytes()));
+        hash_tree.insert("tip_hash", leaf_hash(&last_block_hash));
+        (Some(last_block_hash), hash_tree)
+    }
+
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
@@ -228,17 +265,14 @@ impl State {
             .append(&Cbor(b))
             .expect("failed to append a block");
         // Add block index to the list of transactions and set the hash as its key
-        self.transactions.insert(tx_hash, self.blocks.len() - 1);
+        let block_idx = self.blocks.len() - 1;
+        self.transactions.insert(tx_hash, block_idx);
+        self.cache
+            .hash_tree
+            .insert("last_block_index", leaf_hash(&block_idx.to_be_bytes()));
+        self.cache.hash_tree.insert("tip_hash", leaf_hash(&hash));
+        set_certified_data(&self.root_hash());
         hash
-    }
-
-    fn compute_last_block_hash(blocks: &BlockLog) -> Option<Hash> {
-        let n = blocks.len();
-        if n == 0 {
-            return None;
-        }
-        let last_block = blocks.get(n - 1).unwrap();
-        Some(last_block.hash())
     }
 
     fn compute_total_supply(balances: &Balances) -> u128 {
@@ -262,10 +296,12 @@ thread_local! {
                 mm.get(BLOCK_LOG_DATA_MEMORY_ID)
             ).expect("failed to initialize the block log");
         let balances = Balances::init(mm.get(BALANCES_MEMORY_ID));
+        let (phash, hash_tree) = State::compute_last_block_hash_and_hash_tree(&blocks);
 
         RefCell::new(State {
             cache: Cache {
-                phash: State::compute_last_block_hash(&blocks),
+                phash,
+                hash_tree,
                 total_supply: State::compute_total_supply(&balances),
             },
             blocks,
