@@ -419,7 +419,7 @@ pub fn penalize(from: &Account, now: u64) -> (BlockIndex, Hash) {
             },
             timestamp: now,
             phash,
-            effective_fee: None,
+            effective_fee: Some(0),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
