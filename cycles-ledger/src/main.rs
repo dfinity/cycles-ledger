@@ -1,5 +1,7 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{SendError, SendErrorReason};
+use cycles_ledger::endpoints::{
+    GetTransactionsArgs, GetTransactionsResult, SendError, SendErrorReason,
+};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::{mutate_state, read_state};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
@@ -264,6 +266,12 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
         args.memo,
         args.created_at_time,
     )
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc3_get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    storage::get_transactions(args)
 }
 
 fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {

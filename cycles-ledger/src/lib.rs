@@ -32,7 +32,7 @@ pub enum ValueDecodingError {
 }
 
 pub fn ciborium_to_generic_value(
-    value: CiboriumValue,
+    value: &CiboriumValue,
     depth: usize,
 ) -> Result<Value, ValueDecodingError> {
     if depth >= VALUE_DEPTH_LIMIT {
@@ -43,14 +43,14 @@ pub fn ciborium_to_generic_value(
 
     match value {
         CiboriumValue::Integer(int) => {
-            let v: i128 = int.into();
+            let v: i128 = (*int).into();
             let uv: u128 = v
                 .try_into()
                 .map_err(|_| ValueDecodingError::UnsupportedValueType("negative integers"))?;
             Ok(Value::Int(uv.into()))
         }
-        CiboriumValue::Bytes(bytes) => Ok(Value::Blob(ByteBuf::from(bytes))),
-        CiboriumValue::Text(text) => Ok(Value::Text(text)),
+        CiboriumValue::Bytes(bytes) => Ok(Value::Blob(ByteBuf::from(bytes.to_owned()))),
+        CiboriumValue::Text(text) => Ok(Value::Text(text.to_owned())),
         CiboriumValue::Array(values) => Ok(Value::Array(
             values
                 .into_iter()
@@ -61,6 +61,7 @@ pub fn ciborium_to_generic_value(
             map.into_iter()
                 .map(|(k, v)| {
                     let key = k
+                        .to_owned()
                         .into_text()
                         .map_err(|k| ValueDecodingError::UnsupportedKeyType(format!("{:?}", k)))?;
                     Ok((key, ciborium_to_generic_value(v, depth + 1)?))
@@ -71,19 +72,22 @@ pub fn ciborium_to_generic_value(
         CiboriumValue::Null => Err(ValueDecodingError::UnsupportedValueType("null")),
         CiboriumValue::Float(_) => Err(ValueDecodingError::UnsupportedValueType("float")),
         CiboriumValue::Tag(known_tags::SELF_DESCRIBED, value) => {
-            ciborium_to_generic_value(*value, depth + 1)
+            ciborium_to_generic_value(value, depth + 1)
         }
         CiboriumValue::Tag(known_tags::BIGNUM, value) => {
             let value_bytes = value
+                .to_owned()
                 .into_bytes()
                 .map_err(|_| ValueDecodingError::UnsupportedValueType("non-bytes bignums"))?;
             Ok(Value::Nat(candid::Nat(num_bigint::BigUint::from_bytes_be(
                 &value_bytes,
             ))))
         }
-        CiboriumValue::Tag(tag, value) => Err(ValueDecodingError::UnsupportedTag(tag, *value)),
+        CiboriumValue::Tag(tag, value) => {
+            Err(ValueDecodingError::UnsupportedTag(*tag, *value.to_owned()))
+        }
         // NB. ciborium::value::Value is marked as #[non_exhaustive]
-        other => Err(ValueDecodingError::UnsupportedValue(other)),
+        other => Err(ValueDecodingError::UnsupportedValue(other.to_owned())),
     }
 }
 

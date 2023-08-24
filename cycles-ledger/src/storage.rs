@@ -1,12 +1,18 @@
+use anyhow::Context;
+use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
-use icrc_ledger_types::icrc1::{
-    account::Account,
-    transfer::{BlockIndex, Memo},
+use icrc_ledger_types::{
+    icrc::generic_value::Value,
+    icrc1::{
+        account::Account,
+        transfer::{BlockIndex, Memo},
+    },
 };
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -15,6 +21,9 @@ use std::cell::RefCell;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
+    endpoints::{
+        GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult, TransactionWithId,
+    },
 };
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -113,17 +122,21 @@ pub struct Block {
 }
 
 impl Block {
+    pub fn to_value(&self) -> anyhow::Result<Value> {
+        let value = ciborium::Value::serialized(self).context(format!(
+            "Bug: unable to convert Block to Ciborium Value. Block: {:?}",
+            self
+        ))?;
+        ciborium_to_generic_value(&value, 0).context(format!(
+            "Bug: unable to convert Ciborium Value to Value. Block: {:?}, Value: {:?}",
+            self, value
+        ))
+    }
+
     pub fn hash(&self) -> Hash {
-        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
-            panic!(
-                "Bug: unable to convert Block to Ciborium Value. Error: {}, Block: {:?}",
-                e, self
-            )
-        });
-        match ciborium_to_generic_value(value.clone(), 0) {
+        match self.to_value() {
             Ok(value) => value.hash(),
-            Err(err) =>
-                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
+            Err(err) => panic!("{}", err),
         }
     }
 }
@@ -654,6 +667,43 @@ fn prune(s: &mut State, now: u64, limit: usize) -> usize {
     pruned
 }
 
+pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    let log_length = read_state(|state| state.blocks.len());
+    let mut transactions = Vec::new();
+    for GetTransactionsArg { start, length } in args {
+        let start = match start.0.to_u64() {
+            Some(start) if start < log_length => start,
+            _ => continue,
+        };
+        let end = match length.0.to_u64() {
+            Some(length) => start + length.min(log_length - start),
+            None => continue,
+        };
+        read_state(|state| {
+            for id in start..=end {
+                let transaction = state
+                    .blocks
+                    .get(id)
+                    .unwrap()
+                    .0
+                    .to_value()
+                    .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
+                let transaction_with_id = TransactionWithId {
+                    id: Nat::from(id),
+                    transaction,
+                };
+                transactions.push(transaction_with_id);
+            }
+        });
+    }
+    GetTransactionsResult {
+        log_length: Nat::from(log_length),
+        certificate: None, // TODO
+        transactions,
+        archived_transactions: vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -703,7 +753,7 @@ mod tests {
         ));
 
         let cvalue = ciborium::Value::serialized(&num).unwrap();
-        let value = ciborium_to_generic_value(cvalue, 0).unwrap();
+        let value = ciborium_to_generic_value(&cvalue, 0).unwrap();
 
         assert_eq!(value, expected);
     }
