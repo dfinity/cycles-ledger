@@ -476,7 +476,13 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     Ok(Nat::from(txid))
 }
 
-fn main() {}
+fn main() {
+    // The line below generates did types and service definition from the
+    // methods annotated with `candid_method` above. The definition is then
+    // obtained with `__export_service()`.
+    candid::export_service!();
+    std::print!("{}", __export_service());
+}
 
 #[test]
 fn test_candid_interface_compatibility() {
