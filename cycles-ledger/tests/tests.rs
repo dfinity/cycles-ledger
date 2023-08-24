@@ -471,7 +471,7 @@ fn test_send_fails() {
     expected_total_supply -= FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // user loses all cycles if they don't have enough balance to pay the fee
+    // user keeps the cycles if they don't have enough balance to pay the fee
     let user_2 = Account {
         owner: Principal::from_slice(&[2]),
         subaccount: None,
@@ -506,7 +506,7 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    assert_eq!(0, balance_of(env, ledger_id, user_2));
+    assert_eq!(1, balance_of(env, ledger_id, user_2));
 }
 
 #[test]
@@ -1249,7 +1249,6 @@ fn test_basic_transfer() {
         )
         .unwrap_err()
     );
-<<<<<<< HEAD
 }
 
 #[test]
@@ -1299,9 +1298,6 @@ fn test_deduplication() {
         },
     )
     .unwrap();
-=======
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
->>>>>>> main
 
     // Should not be able commit a transaction that was created in the future
     let mut now = env
@@ -1326,7 +1322,6 @@ fn test_deduplication() {
         )
         .unwrap_err()
     );
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
     // Should be able to make a transfer when created_at_time is valid
     let tx: Nat = transfer(
@@ -1402,8 +1397,6 @@ fn test_deduplication() {
         },
     )
     .unwrap();
-    expected_total_supply -= fee.0.to_u128().unwrap();
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
 #[test]

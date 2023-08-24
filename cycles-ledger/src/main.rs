@@ -1,7 +1,7 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
-use cycles_ledger::storage::{deduplicate, mutate_state, Operation, Transaction};
+use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
@@ -206,17 +206,23 @@ fn execute_transfer(
         }
     }
 
-    deduplicate(created_at_time, Transaction {
-        operation: Operation::Transfer {
-            from: *from,
-            to: *to,
-            amount,
-            spender,
-            fee: suggested_fee,
-        },
-        memo: memo.clone(),
+    deduplicate(
         created_at_time,
-    }.hash(), now).map_err(|err| match err {
+        Transaction {
+            operation: Operation::Transfer {
+                from: *from,
+                to: *to,
+                amount,
+                spender,
+                fee: suggested_fee,
+            },
+            memo: memo.clone(),
+            created_at_time,
+        }
+        .hash(),
+        now,
+    )
+    .map_err(|err| match err {
         DeduplicationError::TooOld => TransferFromError::TooOld,
         DeduplicationError::CreatedInFuture { ledger_time } => {
             TransferFromError::CreatedInFuture { ledger_time }
@@ -286,7 +292,7 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
 
 fn send_error(from: &Account, reason: SendErrorReason) -> SendError {
     let now = ic_cdk::api::time();
-    let (fee_block, _fee_hash) = storage::penalize(from, now);
+    let fee_block = storage::penalize(from, now).map(|(fee_block, _block_hash)| fee_block);
     SendError { fee_block, reason }
 }
 
@@ -369,11 +375,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     let memo = validate_memo(Some(encoded_memo));
 
     let transaction = Transaction {
-        operation: Operation::Burn {
-            from,
-            amount,
-            fee: config::FEE,
-        },
+        operation: Operation::Burn { from, amount },
         memo: memo.clone(),
         created_at_time: args.created_at_time,
     };
