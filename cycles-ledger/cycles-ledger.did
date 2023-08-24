@@ -128,4 +128,4 @@ service : {
   icrc2_approve : (ApproveArgs) -> (Result_1);
   icrc2_transfer_from : (TransferFromArgs) -> (Result_2);
   send : (SendArg) -> (Result_3);
-}⏎               
+}           
