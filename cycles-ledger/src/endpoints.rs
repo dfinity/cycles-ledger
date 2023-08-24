@@ -1,9 +1,15 @@
+use std::marker::PhantomData;
+
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::api::call::RejectionCode;
-use icrc_ledger_types::icrc1::{
-    account::{Account, Subaccount},
-    transfer::{BlockIndex, Memo},
+use icrc_ledger_types::{
+    icrc::generic_value::Value,
+    icrc1::{
+        account::{Account, Subaccount},
+        transfer::{BlockIndex, Memo},
+    },
 };
+use serde_bytes::ByteBuf;
 
 pub type NumCycles = Nat;
 
@@ -92,4 +98,100 @@ impl From<DeduplicationError> for SendErrorReason {
             }
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "candid::types::reference::Func")]
+pub struct GetTransactionsFn {
+    pub canister_id: Principal,
+    pub method: String,
+    pub _marker: PhantomData<(GetTransactionsArgs, GetTransactionsResult)>,
+}
+
+impl GetTransactionsFn {
+    pub fn new(canister_id: Principal, method: impl Into<String>) -> Self {
+        Self {
+            canister_id,
+            method: method.into(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl From<GetTransactionsFn> for candid::Func {
+    fn from(archive_fn: GetTransactionsFn) -> Self {
+        let principal = Principal::try_from(archive_fn.canister_id.as_ref())
+            .expect("could not deserialize principal");
+        Self {
+            principal,
+            method: archive_fn.method,
+        }
+    }
+}
+
+impl TryFrom<candid::Func> for GetTransactionsFn {
+    type Error = String;
+    fn try_from(func: candid::types::reference::Func) -> Result<Self, Self::Error> {
+        let canister_id = Principal::try_from(func.principal.as_slice())
+            .map_err(|e| format!("principal is not a canister id: {}", e))?;
+        Ok(GetTransactionsFn {
+            canister_id,
+            method: func.method,
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl CandidType for GetTransactionsFn {
+    fn _ty() -> candid::types::Type {
+        candid::types::Type::Func(candid::types::Function {
+            modes: vec![candid::parser::types::FuncMode::Query],
+            args: vec![GetTransactionsArgs::_ty()],
+            rets: vec![GetTransactionsResult::_ty()],
+        })
+    }
+
+    fn idl_serialize<S>(&self, serializer: S) -> Result<(), S::Error>
+    where
+        S: candid::types::Serializer,
+    {
+        candid::types::reference::Func::from(self.clone()).idl_serialize(serializer)
+    }
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GetTransactionsArg {
+    pub start: Nat,
+    pub length: Nat,
+}
+
+pub type GetTransactionsArgs = Vec<GetTransactionsArg>;
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct TransactionWithId {
+    pub id: Nat,
+    pub transaction: Value,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ArchivedTransactions {
+    pub args: GetTransactionsArgs,
+    pub callback: GetTransactionsFn,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GetTransactionsResult {
+    // Total number of transactions in the
+    // transaction log
+    pub log_length: Nat,
+
+    // System certificate for the hash of the
+    // latest transaction in the chain.
+    // Only present if `icrc3_get_transactions`
+    // is called in a non-replicated query context.
+    pub certificate: Option<ByteBuf>,
+
+    pub transactions: Vec<TransactionWithId>,
+
+    pub archived_transactions: Vec<ArchivedTransactions>,
 }

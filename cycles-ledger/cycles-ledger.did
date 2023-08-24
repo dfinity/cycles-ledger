@@ -108,6 +108,28 @@ type Value = variant {
   Text : text;
   Array : vec Value;
 };
+
+type GetTransactionsArgs = vec record { start : nat; length : nat };
+
+type GetTransactionsResult = record {
+    // Total number of transactions in the
+    // transaction log
+    log_length : nat;
+
+    // System certificate for the hash of the
+    // latest transaction in the chain.
+    // Only present if `icrc3_get_transactions`
+    // is called in a non-replicated query context.
+    certificate : opt blob;
+
+    transactions : vec record { id : nat; transaction: Value };
+
+    archived_transactions : vec record {
+        args : GetTransactionsArgs;
+        callback : func (GetTransactionsArgs) -> (GetTransactionsResult) query;
+    };
+};
+
 service : {
   deposit : (DepositArgs) -> (DepositResult);
   icrc1_balance_of : (Account) -> (nat) query;
@@ -123,5 +145,6 @@ service : {
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
-  send : (SendArg) -> (variant { Ok : nat; Err : SendError });
-}           
+  icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
+  send : (SendArg) -> (variant { Ok : BlockIndex; Err : SendError });
+};

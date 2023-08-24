@@ -1,9 +1,4 @@
 use crate::generic_to_ciborium_value;
-use crate::{
-    ciborium_to_generic_value, compact_account,
-    config::{self, MAX_MEMO_LENGTH},
-    endpoints::DeduplicationError,
-};
 use anyhow::Context;
 use candid::Nat;
 use ic_stable_structures::{
@@ -18,10 +13,20 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
+
+use crate::{
+    ciborium_to_generic_value, compact_account,
+    config::{self, MAX_MEMO_LENGTH},
+    endpoints::{
+        DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        TransactionWithId,
+    },
+};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -725,6 +730,43 @@ fn prune(s: &mut State, now: u64, limit: usize) -> usize {
         }
     }
     pruned
+}
+
+pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    let log_length = read_state(|state| state.blocks.len());
+    let mut transactions = Vec::new();
+    for GetTransactionsArg { start, length } in args {
+        let start = match start.0.to_u64() {
+            Some(start) if start < log_length => start,
+            _ => continue,
+        };
+        let end = match length.0.to_u64() {
+            Some(length) => start + length.min(log_length - start),
+            None => continue,
+        };
+        read_state(|state| {
+            for id in start..=end {
+                let transaction = state
+                    .blocks
+                    .get(id)
+                    .unwrap()
+                    .0
+                    .to_value()
+                    .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
+                let transaction_with_id = TransactionWithId {
+                    id: Nat::from(id),
+                    transaction,
+                };
+                transactions.push(transaction_with_id);
+            }
+        });
+    }
+    GetTransactionsResult {
+        log_length: Nat::from(log_length),
+        certificate: None, // TODO
+        transactions,
+        archived_transactions: vec![],
+    }
 }
 
 #[cfg(test)]
