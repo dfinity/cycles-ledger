@@ -1,6 +1,7 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
 type Allowance = record { allowance : nat; expires_at : opt nat64 };
 type AllowanceArgs = record { account : Account; spender : Account };
+type BlockIndex = nat;
 type ApproveArgs = record {
   fee : opt nat;
   memo : opt vec nat8;
@@ -37,10 +38,6 @@ type RejectionCode = variant {
   SysFatal;
   CanisterReject;
 };
-type Result = variant { Ok : nat; Err : TransferError };
-type Result_1 = variant { Ok : nat; Err : ApproveError };
-type Result_2 = variant { Ok : nat; Err : TransferFromError };
-type Result_3 = variant { Ok : nat; Err : SendError };
 type SendArg = record {
   to : principal;
   fee : opt nat;
@@ -123,9 +120,9 @@ service : {
   icrc1_supported_standards : () -> (vec SupportedStandard) query;
   icrc1_symbol : () -> (text) query;
   icrc1_total_supply : () -> (nat) query;
-  icrc1_transfer : (TransferArg) -> (Result);
+  icrc1_transfer : (TransferArg) -> (variant { Ok : BlockIndex; Err : TransferError });
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
-  icrc2_approve : (ApproveArgs) -> (Result_1);
-  icrc2_transfer_from : (TransferFromArgs) -> (Result_2);
-  send : (SendArg) -> (Result_3);
+  icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
+  icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
+  send : (SendArg) -> (variant { Ok : nat; Err : SendError });
 }           
