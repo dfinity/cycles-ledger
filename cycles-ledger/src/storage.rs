@@ -329,7 +329,6 @@ pub fn record_deposit(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
-    created_at_time: Option<u64>,
 ) -> (u64, u128, Hash) {
     assert!(amount >= crate::config::FEE);
 
@@ -344,7 +343,7 @@ pub fn record_deposit(
                     amount,
                 },
                 memo,
-                created_at_time,
+                created_at_time: None,
             },
             timestamp: now,
             phash,
@@ -363,14 +362,14 @@ pub fn deduplicate(
     if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
         // If the created timestamp is outside of the permitted Transaction window
         if created_at_time
-            + (config::TRANSACTION_WINDOW.as_nanos() as u64)
-            + (config::PERMITTED_DRIFT.as_nanos() as u64)
+            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
             < now
         {
             return Err(DeduplicationError::TooOld);
         }
 
-        if created_at_time > now + (config::PERMITTED_DRIFT.as_nanos() as u64) {
+        if created_at_time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
             return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
         }
 

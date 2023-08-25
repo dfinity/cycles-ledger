@@ -35,7 +35,6 @@ async fn deposit(arg: DepositArg) -> DepositResult {
     let arg = cycles_ledger::endpoints::DepositArg {
         to: arg.to,
         memo: arg.memo,
-        created_at_time: Some(ic_cdk::api::time()),
     };
     let (result,): (DepositResult,) = call_with_payment128(ledger_id, "deposit", (arg,), cycles)
         .await

@@ -118,20 +118,13 @@ fn validate_memo(memo: Option<Memo>) -> Option<Memo> {
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
 
-    // TODO(FI-767): Implement deduplication.
-
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
         ic_cdk::trap("deposit amount is insufficient");
     }
     let memo = validate_memo(arg.memo);
-    let (txid, balance, _phash) = storage::record_deposit(
-        &arg.to,
-        amount,
-        memo,
-        ic_cdk::api::time(),
-        arg.created_at_time,
-    );
+    let (txid, balance, _phash) =
+        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
 
     // TODO(FI-766): set the certified variable.
 

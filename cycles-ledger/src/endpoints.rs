@@ -11,8 +11,6 @@ pub type NumCycles = Nat;
 pub struct DepositArg {
     pub to: Account,
     pub memo: Option<Memo>,
-    #[serde(default)]
-    pub created_at_time: Option<u64>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
