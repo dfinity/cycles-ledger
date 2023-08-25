@@ -1,4 +1,3 @@
-use crate::generic_to_ciborium_value;
 use anyhow::Context;
 use candid::Nat;
 use ic_stable_structures::{
@@ -26,6 +25,7 @@ use crate::{
         DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
         TransactionWithId,
     },
+    generic_to_ciborium_value,
 };
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -741,7 +741,7 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
             _ => continue,
         };
         let end = match length.0.to_u64() {
-            Some(length) => start + length.min(log_length - start),
+            Some(length) => start + length.min(log_length - start - 1),
             None => continue,
         };
         read_state(|state| {
@@ -749,7 +749,7 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
                 let transaction = state
                     .blocks
                     .get(id)
-                    .unwrap()
+                    .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
                     .0
                     .to_value()
                     .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));

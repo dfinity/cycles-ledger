@@ -4,16 +4,17 @@ use std::{
 };
 
 use candid::{Encode, Nat, Principal};
-use client::{deposit, transfer};
+use client::{deposit, get_transactions, transfer};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{SendArg, SendErrorReason},
+    endpoints::{GetTransactionsResult, SendArg, SendErrorReason},
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
+    icrc::generic_value::Value,
     icrc1::{
         account::Account,
         transfer::{Memo, TransferArg, TransferError},
@@ -1445,4 +1446,37 @@ fn test_total_supply_after_upgrade() {
     env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), vec![], None)
         .unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+}
+
+#[test]
+fn test_icrc3_get_transactions() {
+    // Utility to extract the id and the tx of all transactions in the result
+    let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Value)> {
+        res.transactions
+            .iter()
+            .map(|tx| (tx.id.0.to_u64().unwrap(), tx.transaction.clone()))
+            .collect()
+    };
+
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+
+    let txs = get_transactions(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 0);
+    assert_eq!(get_txs(&txs), vec![]);
+    assert_eq!(txs.transactions, vec![]);
+
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account::from(Principal::from_slice(&[1]));
+    let user2 = Account::from(Principal::from_slice(&[2]));
+
+    // add a mint block
+    deposit(env, depositor_id, user1, 2_000_000_000);
+
+    let txs = get_transactions(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 1);
+    assert_eq!(get_txs(&txs), vec![]);
+    assert_eq!(txs.transactions, vec![]);
+
+    deposit(env, depositor_id, user2, 3_000_000_000);
 }

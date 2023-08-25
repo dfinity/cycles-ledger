@@ -3,7 +3,10 @@ use core::panic;
 use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{self, DepositResult, SendArg},
+    endpoints::{
+        self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        SendArg,
+    },
 };
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
@@ -195,5 +198,33 @@ pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
         Decode!(&res, Nat).unwrap()
     } else {
         panic!("fee call rejected")
+    }
+}
+
+pub fn get_transactions(
+    env: &StateMachine,
+    ledger_id: Principal,
+    start_lengths: Vec<(u64, u64)>,
+) -> GetTransactionsResult {
+    let get_transactions_args: GetTransactionsArgs = start_lengths
+        .iter()
+        .map(|(start, length)| GetTransactionsArg {
+            start: Nat::from(*start),
+            length: Nat::from(*length),
+        })
+        .collect();
+    let arg = Encode!(&get_transactions_args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "icrc3_get_transactions",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, GetTransactionsResult).unwrap()
+    } else {
+        panic!("icrc3_get_transactions call rejected")
     }
 }
