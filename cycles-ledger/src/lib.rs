@@ -55,12 +55,12 @@ pub fn ciborium_to_generic_value(
         CiboriumValue::Text(text) => Ok(Value::Text(text.to_owned())),
         CiboriumValue::Array(values) => Ok(Value::Array(
             values
-                .into_iter()
+                .iter()
                 .map(|v| ciborium_to_generic_value(v, depth + 1))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         CiboriumValue::Map(map) => Ok(Value::Map(
-            map.into_iter()
+            map.iter()
                 .map(|(k, v)| {
                     let key = k
                         .to_owned()
@@ -110,12 +110,12 @@ pub fn generic_to_ciborium_value(value: &Value, depth: usize) -> anyhow::Result<
         Value::Text(text) => Ok(CiboriumValue::Text(text.to_owned())),
         Value::Array(values) => Ok(CiboriumValue::Array(
             values
-                .into_iter()
+                .iter()
                 .map(|v| generic_to_ciborium_value(v, depth + 1))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         Value::Map(map) => Ok(CiboriumValue::Map(
-            map.into_iter()
+            map.iter()
                 .map(|(k, v)| {
                     let key = CiboriumValue::Text(k.to_owned());
                     let value = generic_to_ciborium_value(v, depth + 1)?;
