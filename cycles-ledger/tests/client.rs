@@ -3,10 +3,7 @@ use core::panic;
 use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{
-        self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
-        SendArg,
-    },
+    endpoints::{self, DepositResult, SendArg},
 };
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
