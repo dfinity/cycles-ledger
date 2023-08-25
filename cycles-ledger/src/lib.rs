@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
+use anyhow::{bail, Context};
 use ciborium::Value as CiboriumValue;
 use icrc_ledger_types::{
     icrc::generic_value::Value, icrc1::transfer::TransferError,
     icrc2::transfer_from::TransferFromError,
 };
+use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 use thiserror::Error;
 
@@ -91,6 +93,45 @@ pub fn ciborium_to_generic_value(
     }
 }
 
+pub fn generic_to_ciborium_value(value: &Value, depth: usize) -> anyhow::Result<CiboriumValue> {
+    if depth >= VALUE_DEPTH_LIMIT {
+        bail!("Depth limit exceeded (max_depth: {})", VALUE_DEPTH_LIMIT);
+    }
+
+    match value {
+        Value::Int(int) => {
+            let uv = int.0.to_u128().context("Unable to convert int to u128")?;
+            let v = i128::try_from(uv).context("Unable to convert u128 to i128")?;
+            let i = ciborium::value::Integer::try_from(v)
+                .context("Unable to create ciborium Integer from i128")?;
+            Ok(CiboriumValue::Integer(i))
+        }
+        Value::Blob(bytes) => Ok(CiboriumValue::Bytes(bytes.to_vec())),
+        Value::Text(text) => Ok(CiboriumValue::Text(text.to_owned())),
+        Value::Array(values) => Ok(CiboriumValue::Array(
+            values
+                .into_iter()
+                .map(|v| generic_to_ciborium_value(v, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::Map(map) => Ok(CiboriumValue::Map(
+            map.into_iter()
+                .map(|(k, v)| {
+                    let key = CiboriumValue::Text(k.to_owned());
+                    let value = generic_to_ciborium_value(v, depth + 1)?;
+                    Ok::<(CiboriumValue, CiboriumValue), anyhow::Error>((key, value))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::Nat(nat) => {
+            let value_bytes = nat.0.to_bytes_be();
+            let value = CiboriumValue::try_from(value_bytes)?;
+            Ok(CiboriumValue::Tag(known_tags::BIGNUM, Box::new(value)))
+        }
+        v => bail!("Unknown value: {:?}", v),
+    }
+}
+
 mod known_tags {
     //! This module defines well-known CBOR tags used for block decoding.
 
@@ -127,4 +168,62 @@ pub fn try_convert_transfer_error(e: TransferFromError) -> Result<TransferError,
             message,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use ciborium::{value::Integer, Value};
+    use num_bigint::BigUint;
+    use proptest::{arbitrary::any, prelude::prop, prop_oneof, proptest, strategy::Strategy};
+
+    use crate::{ciborium_to_generic_value, generic_to_ciborium_value, known_tags};
+
+    fn ciborium_value_strategy() -> impl Strategy<Value = Value> {
+        let integer_strategy = any::<u64>().prop_map(|i| Value::Integer(Integer::from(i)));
+        let bytes_strategy = any::<Vec<u8>>().prop_map(Value::Bytes);
+        let text_strategy = any::<String>().prop_map(Value::Text);
+        let bignum_strategy = any::<Vec<u32>>().prop_map(|digits| {
+            let value_bytes = BigUint::new(digits).to_bytes_be();
+            let value = Value::Bytes(value_bytes);
+            Value::Tag(known_tags::BIGNUM, Box::new(value))
+        });
+
+        let leaf = prop_oneof![
+            integer_strategy,
+            bytes_strategy,
+            text_strategy.clone(),
+            bignum_strategy,
+        ];
+
+        leaf.prop_recursive(
+            8,   // 8 levels deep
+            256, // Shoot for maximum size of 256 nodes
+            10,  // We put up to 10 items per collection
+            |inner| {
+                prop_oneof![
+                    // Take the inner strategy and make the two recursive cases.
+                    prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
+                    // Note that we force the key to be of type text because
+                    // it's the only key type supported.
+                    // We also use btree_map because we need them sorted for when
+                    // we check equality.
+                    prop::collection::btree_map(any::<String>(), inner, 0..10).prop_map(|kvs| {
+                        let kvs = kvs.into_iter().map(|(k, v)| (Value::Text(k), v)).collect();
+                        Value::Map(kvs)
+                    }),
+                ]
+            },
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn test_ciborium_to_generic_value(value in ciborium_value_strategy()) {
+            let ciborium_value = ciborium_to_generic_value(&value, 0)
+                .expect("Unable to convert ciborium value to generic value");
+            let actual_value = generic_to_ciborium_value(&ciborium_value, 0)
+                .expect("Unable to convert generic value to ciborium value");
+            assert_eq!(value, actual_value);
+        }
+    }
 }

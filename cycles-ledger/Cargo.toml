@@ -32,3 +32,4 @@ thiserror = "1.0"
 depositor = { path = "../depositor" }
 escargot = { version = "0.5.7", features = ["print"] }
 ic-test-state-machine-client = "2.2.1"
+proptest = "1.2.0"
