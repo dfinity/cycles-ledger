@@ -205,7 +205,7 @@ mod tests {
                     prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
                     // Note that we force the key to be of type text because
                     // it's the only key type supported.
-                    // We also use btree_map because we need them sorted for when
+                    // We also use btree_map because we need the keys sorted for when
                     // we check equality.
                     prop::collection::btree_map(any::<String>(), inner, 0..10).prop_map(|kvs| {
                         let kvs = kvs.into_iter().map(|(k, v)| (Value::Text(k), v)).collect();
