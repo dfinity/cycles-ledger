@@ -1,116 +1,127 @@
-// Number of nanoseconds since the UNIX epoch in UTC timezone.
-type Timestamp = nat64;
-
-// Number of nanoseconds between two [Timestamp]s.
-type Duration = nat64;
-
-type Subaccount = blob;
-
-type RejectionCode = variant {
-    NoError;
-    CanisterError;
-    SysTransient;
-    DestinationInvalid;
-    Unknown;
-    SysFatal;
-    CanisterReject;
-};
-
+type Account = record { owner : principal; subaccount : opt vec nat8 };
+type Allowance = record { allowance : nat; expires_at : opt nat64 };
+type AllowanceArgs = record { account : Account; spender : Account };
 type BlockIndex = nat;
-
-type Account = record {
-    owner : principal;
-    subaccount : opt Subaccount;
+type ApproveArgs = record {
+  fee : opt nat;
+  memo : opt vec nat8;
+  from_subaccount : opt vec nat8;
+  created_at_time : opt nat64;
+  amount : nat;
+  expected_allowance : opt nat;
+  expires_at : opt nat64;
+  spender : Account;
 };
-
-type TransferArgs = record {
-    from_subaccount : opt Subaccount;
-    to : Account;
-    amount : nat;
-    fee : opt nat;
-    memo : opt blob;
-    created_at_time : opt Timestamp;
+type ApproveError = variant {
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  Duplicate : record { duplicate_of : nat };
+  BadFee : record { expected_fee : nat };
+  AllowanceChanged : record { current_allowance : nat };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  Expired : record { ledger_time : nat64 };
+  InsufficientFunds : record { balance : nat };
 };
-
-type TransferError = variant {
-    BadFee : record { expected_fee : nat };
-    BadBurn : record { min_burn_amount : nat };
-    InsufficientFunds : record { balance : nat };
-    TooOld;
-    CreatedInFuture : record { ledger_time : Timestamp };
-    Duplicate : record { duplicate_of : BlockIndex };
-    TemporarilyUnavailable;
-    GenericError : record { error_code : nat; message : text };
+type DepositArgs = record {
+  to : Account;
+  memo : opt vec nat8;
 };
-
-type Value = variant {
-    Blob : blob;
-    Text : text;
-    Nat : nat;
-    Nat64: nat64;
-    Int : int;
-    Array : vec Value;
-    Map : Map;
+type DepositResult = record { balance : nat; txid : nat };
+type RejectionCode = variant {
+  NoError;
+  CanisterError;
+  SysTransient;
+  DestinationInvalid;
+  Unknown;
+  SysFatal;
+  CanisterReject;
 };
-
-type Map = vec record { text; Value };
-
 type SendArg = record {
-    amount : nat;
-    from_subaccount : opt Subaccount;
-    to : principal;
-    fee : opt nat;
-    created_at_time : opt Timestamp;
-    memo : opt blob;
+  to : principal;
+  fee : opt nat;
+  memo : opt vec nat8;
+  from_subaccount : opt vec nat8;
+  created_at_time : opt nat64;
+  amount : nat;
 };
-
-type SendError = record {
-    fee_block : BlockIndex;
-    reason : SendErrorReason;
-};
-
+type SendError = record { fee_block : opt nat; reason : SendErrorReason };
 type SendErrorReason = variant {
-    BadFee : record {
-        expected_fee : nat;
-    };
-    InsufficientFunds : record {
-        balance : nat;
-    };
-    TooOld;
-    CreatedInFuture : record {
-        ledger_time : Timestamp;
-    };
-    TemporarilyUnavailable;
-    Duplicate : record {
-        duplicate_of : BlockIndex;
-    };
-    FailedToSend : record {
-        rejection_code : RejectionCode;
-        rejection_reason : text;
-    };
-    GenericError : record {
-        error_code : nat;
-        message : text;
-    };
-    InvalidReceiver : record {
-        receiver : principal;
-    };
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  FailedToSend : record {
+    rejection_code : RejectionCode;
+    rejection_reason : text;
+  };
+  Duplicate : record { duplicate_of : nat };
+  BadFee : record { expected_fee : nat };
+  InvalidReceiver : record { receiver : principal };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  InsufficientFunds : record { balance : nat };
 };
-
+type SupportedStandard = record { url : text; name : text };
+type TransferArg = record {
+  to : Account;
+  fee : opt nat;
+  memo : opt vec nat8;
+  from_subaccount : opt vec nat8;
+  created_at_time : opt nat64;
+  amount : nat;
+};
+type TransferError = variant {
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  BadBurn : record { min_burn_amount : nat };
+  Duplicate : record { duplicate_of : nat };
+  BadFee : record { expected_fee : nat };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  InsufficientFunds : record { balance : nat };
+};
+type TransferFromArgs = record {
+  to : Account;
+  fee : opt nat;
+  spender_subaccount : opt vec nat8;
+  from : Account;
+  memo : opt vec nat8;
+  created_at_time : opt nat64;
+  amount : nat;
+};
+type TransferFromError = variant {
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  InsufficientAllowance : record { allowance : nat };
+  BadBurn : record { min_burn_amount : nat };
+  Duplicate : record { duplicate_of : nat };
+  BadFee : record { expected_fee : nat };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  InsufficientFunds : record { balance : nat };
+};
+type Value = variant {
+  Int : int;
+  Map : vec record { text; Value };
+  Nat : nat;
+  Nat64 : nat64;
+  Blob : vec nat8;
+  Text : text;
+  Array : vec Value;
+};
 service : {
-    icrc1_metadata : () -> (vec record { text; Value }) query;
-    icrc1_name : () -> (text) query;
-    icrc1_symbol : () -> (text) query;
-    icrc1_decimals : () -> (nat8) query;
-    icrc1_fee : () -> (nat) query;
-    icrc1_total_supply : () -> (nat) query;
-    icrc1_minting_account : () -> (opt Account) query;
-    icrc1_balance_of : (Account) -> (nat) query;
-    icrc1_transfer : (TransferArgs) -> (variant { Ok : BlockIndex; Err : TransferError });
-    icrc1_supported_standards : () -> (vec record { name : text; url : text }) query;
-
-    // Endpoints specific to the cycle ledger.
-    deposit : (record { to : Account; memo : opt blob }) -> (record { txid : BlockIndex; balance : nat });
-    // Charges the fee no matter if the attempt was successful or not.
-    send : (SendArg) -> (variant { Ok : BlockIndex; Err : SendError });
-};
+  deposit : (DepositArgs) -> (DepositResult);
+  icrc1_balance_of : (Account) -> (nat) query;
+  icrc1_decimals : () -> (nat8) query;
+  icrc1_fee : () -> (nat) query;
+  icrc1_metadata : () -> (vec record { text; Value }) query;
+  icrc1_minting_account : () -> (opt Account) query;
+  icrc1_name : () -> (text) query;
+  icrc1_supported_standards : () -> (vec SupportedStandard) query;
+  icrc1_symbol : () -> (text) query;
+  icrc1_total_supply : () -> (nat) query;
+  icrc1_transfer : (TransferArg) -> (variant { Ok : BlockIndex; Err : TransferError });
+  icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
+  icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
+  icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
+  send : (SendArg) -> (variant { Ok : nat; Err : SendError });
+}           

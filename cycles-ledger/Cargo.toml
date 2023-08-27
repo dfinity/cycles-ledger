@@ -14,6 +14,7 @@ opt-level = 'z'
 panic = 'abort'
 
 [dependencies]
+anyhow = "1.0.75"
 candid = "0.8.4"
 ciborium = "0.2"
 ic-cdk = { version = "0.6.0" }
@@ -34,3 +35,4 @@ ic-test-state-machine-client = "2.2.1"
 icrc1-test-env-state-machine = { git = "https://github.com/dfinity/ICRC-1", version = "0.1.0" }
 icrc1-test-suite = { git = "https://github.com/dfinity/ICRC-1", version = "0.1.1" }
 futures = "0.3.28"
+proptest = "1.2.0"
