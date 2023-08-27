@@ -59,7 +59,6 @@ type SendArg = record {
     amount : nat;
     from_subaccount : opt Subaccount;
     to : principal;
-    fee : opt nat;
     created_at_time : opt Timestamp;
     memo : opt blob;
 };

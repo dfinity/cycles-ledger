@@ -31,8 +31,6 @@ pub struct SendArg {
     pub from_subaccount: Option<Subaccount>,
     pub to: Principal,
     #[serde(default)]
-    pub fee: Option<NumCycles>,
-    #[serde(default)]
     pub created_at_time: Option<u64>,
     #[serde(default)]
     pub memo: Option<Memo>,

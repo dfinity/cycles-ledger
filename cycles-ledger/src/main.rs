@@ -327,28 +327,6 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             ));
         }
     };
-    if let Some(fee) = args.fee {
-        match fee.0.to_u128() {
-            Some(fee) => {
-                if fee != config::FEE {
-                    return Err(send_error(
-                        &from,
-                        SendErrorReason::BadFee {
-                            expected_fee: Nat::from(config::FEE),
-                        },
-                    ));
-                }
-            }
-            None => {
-                return Err(send_error(
-                    &from,
-                    SendErrorReason::BadFee {
-                        expected_fee: Nat::from(config::FEE),
-                    },
-                ));
-            }
-        }
-    }
 
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
