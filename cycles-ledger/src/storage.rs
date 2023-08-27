@@ -1,17 +1,22 @@
+use crate::generic_to_ciborium_value;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
     endpoints::DeduplicationError,
 };
+use anyhow::Context;
 use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
-use icrc_ledger_types::icrc1::{
-    account::Account,
-    transfer::{BlockIndex, Memo},
+use icrc_ledger_types::{
+    icrc::generic_value::Value,
+    icrc1::{
+        account::Account,
+        transfer::{BlockIndex, Memo},
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
@@ -45,7 +50,7 @@ pub struct Cache {
     pub total_supply: u128,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Transaction {
     pub operation: Operation,
     #[serde(default)]
@@ -65,7 +70,7 @@ impl Transaction {
                 e, self
             )
         });
-        match ciborium_to_generic_value(value.clone(), 0) {
+        match ciborium_to_generic_value(&value.clone(), 0) {
             Ok(value) => value.hash(),
             Err(err) =>
                 panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
@@ -73,7 +78,7 @@ impl Transaction {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Operation {
     Mint {
         #[serde(with = "compact_account")]
@@ -119,7 +124,7 @@ pub enum Operation {
     },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Block {
     transaction: Transaction,
     #[serde(rename = "ts")]
@@ -132,17 +137,32 @@ pub struct Block {
 }
 
 impl Block {
+    pub fn from_value(value: Value) -> anyhow::Result<Self> {
+        let value = generic_to_ciborium_value(&value, 0).context(format!(
+            "Bug: unable to convert Value to Ciborium Value. Value: {:?}",
+            value
+        ))?;
+        ciborium::value::Value::deserialized(&value).context(format!(
+            "Bug: unable to convert Ciborium Value to Block. Value: {:?}",
+            value
+        ))
+    }
+
+    pub fn to_value(&self) -> anyhow::Result<Value> {
+        let value = ciborium::Value::serialized(self).context(format!(
+            "Bug: unable to convert Block to Ciborium Value. Block: {:?}",
+            self
+        ))?;
+        ciborium_to_generic_value(&value, 0).context(format!(
+            "Bug: unable to convert Ciborium Value to Value. Block: {:?}, Value: {:?}",
+            self, value
+        ))
+    }
+
     pub fn hash(&self) -> Hash {
-        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
-            panic!(
-                "Bug: unable to convert Block to Ciborium Value. Error: {}, Block: {:?}",
-                e, self
-            )
-        });
-        match ciborium_to_generic_value(value.clone(), 0) {
+        match self.to_value() {
             Ok(value) => value.hash(),
-            Err(err) =>
-                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
+            Err(err) => panic!("{}", err),
         }
     }
 }
@@ -717,9 +737,11 @@ mod tests {
         icrc1::{account::Account, transfer::Memo},
     };
     use num_bigint::BigUint;
+    use proptest::{prelude::any, prop_compose, prop_oneof, proptest, strategy::Strategy};
 
     use crate::{
         ciborium_to_generic_value,
+        config::MAX_MEMO_LENGTH,
         storage::{Operation, Transaction},
     };
 
@@ -756,8 +778,118 @@ mod tests {
         ));
 
         let cvalue = ciborium::Value::serialized(&num).unwrap();
-        let value = ciborium_to_generic_value(cvalue, 0).unwrap();
+        let value = ciborium_to_generic_value(&cvalue, 0).unwrap();
 
         assert_eq!(value, expected);
+    }
+
+    prop_compose! {
+        fn principal_strategy()
+                             (bytes in any::<[u8; 29]>())
+                             -> Principal {
+            Principal::from_slice(&bytes)
+        }
+    }
+
+    prop_compose! {
+        fn account_strategy()
+                           (owner in principal_strategy(),
+                            subaccount in proptest::option::of(any::<[u8; 32]>()))
+                            -> Account {
+            Account { owner, subaccount }
+        }
+    }
+
+    prop_compose! {
+        fn approve_strategy()
+                           (from in account_strategy(),
+                            spender in account_strategy(),
+                            amount in any::<u128>(),
+                            expected_allowance in proptest::option::of(any::<u128>()),
+                            expires_at in proptest::option::of(any::<u64>()),
+                            fee in proptest::option::of(any::<u128>()))
+                           -> Operation {
+            Operation::Approve { from, spender, amount, expected_allowance, expires_at, fee }
+        }
+    }
+
+    prop_compose! {
+        fn burn_strategy()
+                        (from in account_strategy(),
+                         amount in any::<u128>())
+                        -> Operation {
+            Operation::Burn { from, amount }
+        }
+    }
+
+    prop_compose! {
+        fn mint_strategy()
+                        (to in account_strategy(),
+                         amount in any::<u128>())
+                        -> Operation {
+            Operation::Mint { to, amount }
+        }
+    }
+
+    prop_compose! {
+        fn transfer_strategy()
+                            (from in account_strategy(),
+                             to in account_strategy(),
+                             spender in proptest::option::of(account_strategy()),
+                             amount in any::<u128>(),
+                             fee in proptest::option::of(any::<u128>()))
+                            -> Operation {
+            Operation::Transfer { from, to, spender, amount, fee }
+        }
+    }
+
+    fn operation_strategy() -> impl Strategy<Value = Operation> {
+        prop_oneof![
+            approve_strategy(),
+            burn_strategy(),
+            mint_strategy(),
+            transfer_strategy()
+        ]
+    }
+
+    prop_compose! {
+        fn memo_strategy()
+                        (bytes in any::<[u8; MAX_MEMO_LENGTH as usize]>())
+                        -> Memo {
+            Memo::from(bytes.to_vec())
+        }
+    }
+
+    prop_compose! {
+        fn transaction_strategy()
+                               (operation in operation_strategy(),
+                                created_at_time in proptest::option::of(any::<u64>()),
+                                memo in proptest::option::of(memo_strategy()))
+                               -> Transaction {
+            Transaction { operation, created_at_time, memo }
+        }
+    }
+
+    prop_compose! {
+        // Generate a block with no parent hash set
+        fn block_strategy()
+                         (transaction in transaction_strategy(),
+                          timestamp in any::<u64>(),
+                          effective_fee in proptest::option::of(any::<u128>()))
+                         -> Block {
+            Block { transaction, timestamp, phash: None, effective_fee}
+        }
+    }
+
+    proptest! {
+
+        #[test]
+        fn test_block_to_value(block in block_strategy()) {
+            let value = block.to_value()
+                .expect("Unable to convert block to value");
+            let actual_block = Block::from_value(value)
+                .expect("Unable to convert value to block");
+            assert_eq!(block, actual_block)
+        }
     }
 }
