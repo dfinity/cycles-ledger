@@ -353,6 +353,7 @@ pub fn record_deposit(
     })
 }
 
+// This method implements deduplication accorind to the ICRC-1 standard: https://github.com/dfinity/ICRC-1
 pub fn deduplicate(
     created_at_timestamp: Option<u64>,
     tx_hash: [u8; 32],
