@@ -111,5 +111,5 @@ service : {
     // Endpoints specific to the cycle ledger.
     deposit : (record { to : Account; memo : opt blob }) -> (record { txid : BlockIndex; balance : nat });
     // Charges the fee no matter if the attempt was successful or not.
-    send : (SendArg) -> (variant { Ok : BlockIndex; Err : SendError });
+    send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
 };
