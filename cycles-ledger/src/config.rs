@@ -6,3 +6,4 @@ pub const TOKEN_NAME: &str = "ICP Cycles";
 pub const TOKEN_SYMBOL: &str = "CYC";
 pub const MAX_MEMO_LENGTH: u32 = 32;
 pub const PERMITTED_DRIFT: Duration = Duration::from_secs(60);
+pub const TRANSACTION_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);

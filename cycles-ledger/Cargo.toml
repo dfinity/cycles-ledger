@@ -14,6 +14,7 @@ opt-level = 'z'
 panic = 'abort'
 
 [dependencies]
+anyhow = "1.0.75"
 candid = "0.8.4"
 ciborium = "0.2"
 ic-cdk = { version = "0.6.0" }
@@ -31,3 +32,4 @@ thiserror = "1.0"
 depositor = { path = "../depositor" }
 escargot = { version = "0.5.7", features = ["print"] }
 ic-test-state-machine-client = "2.2.1"
+proptest = "1.2.0"

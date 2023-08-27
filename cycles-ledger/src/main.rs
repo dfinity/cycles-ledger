@@ -1,7 +1,7 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{SendError, SendErrorReason};
+use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
 use cycles_ledger::memo::SendMemo;
-use cycles_ledger::storage::{mutate_state, read_state};
+use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
@@ -118,20 +118,13 @@ fn validate_memo(memo: Option<Memo>) -> Option<Memo> {
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
 
-    // TODO(FI-767): Implement deduplication.
-
     let amount = msg_cycles_accept128(cycles_available);
     if amount <= config::FEE {
         ic_cdk::trap("deposit amount is insufficient");
     }
     let memo = validate_memo(arg.memo);
-    let (txid, balance, _phash) = storage::record_deposit(
-        &arg.to,
-        amount,
-        memo,
-        ic_cdk::api::time(),
-        arg.created_at_time,
-    );
+    let (txid, balance, _phash) =
+        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
 
     // TODO(FI-766): set the certified variable.
 
@@ -152,8 +145,6 @@ fn execute_transfer(
 ) -> Result<Nat, TransferFromError> {
     let now = ic_cdk::api::time();
     let balance = storage::balance_of(from);
-
-    // TODO(FI-767): Implement deduplication.
 
     let amount = match amount.0.to_u128() {
         Some(value) => value,
@@ -207,6 +198,32 @@ fn execute_transfer(
             return Err(TransferFromError::CreatedInFuture { ledger_time: now });
         }
     }
+
+    deduplicate(
+        created_at_time,
+        Transaction {
+            operation: Operation::Transfer {
+                from: *from,
+                to: *to,
+                amount,
+                spender,
+                fee: suggested_fee,
+            },
+            memo: memo.clone(),
+            created_at_time,
+        }
+        .hash(),
+        now,
+    )
+    .map_err(|err| match err {
+        DeduplicationError::TooOld => TransferFromError::TooOld,
+        DeduplicationError::CreatedInFuture { ledger_time } => {
+            TransferFromError::CreatedInFuture { ledger_time }
+        }
+        DeduplicationError::Duplicate { duplicate_of } => {
+            TransferFromError::Duplicate { duplicate_of }
+        }
+    })?;
 
     let (txid, _hash) = storage::transfer(
         from,
@@ -266,10 +283,10 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
     )
 }
 
-fn send_emit_error(from: &Account, reason: SendErrorReason) -> Result<Nat, SendError> {
+fn send_error(from: &Account, reason: SendErrorReason) -> SendError {
     let now = ic_cdk::api::time();
     let fee_block = storage::penalize(from, now).map(|(fee_block, _block_hash)| fee_block);
-    Err(SendError { fee_block, reason })
+    SendError { fee_block, reason }
 }
 
 #[update]
@@ -287,10 +304,10 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         .unwrap_or_default()
     {
         // if it is not an opaque principal ID, the user is trying to send to a non-canister target
-        return send_emit_error(
+        return Err(send_error(
             &from,
             SendErrorReason::InvalidReceiver { receiver: args.to },
-        );
+        ));
     }
     let from_key = storage::to_account_key(&from);
     let balance = storage::balance_of(&from);
@@ -299,50 +316,48 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
         canister_id: args.to,
     };
 
-    // TODO(FI-767): Implement deduplication.
-
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
         None => {
-            return send_emit_error(
+            return Err(send_error(
                 &from,
                 SendErrorReason::InsufficientFunds {
                     balance: Nat::from(balance),
                 },
-            );
+            ));
         }
     };
     if let Some(fee) = args.fee {
         match fee.0.to_u128() {
             Some(fee) => {
                 if fee != config::FEE {
-                    return send_emit_error(
+                    return Err(send_error(
                         &from,
                         SendErrorReason::BadFee {
                             expected_fee: Nat::from(config::FEE),
                         },
-                    );
+                    ));
                 }
             }
             None => {
-                return send_emit_error(
+                return Err(send_error(
                     &from,
                     SendErrorReason::BadFee {
                         expected_fee: Nat::from(config::FEE),
                     },
-                );
+                ));
             }
         }
     }
 
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
-        return send_emit_error(
+        return Err(send_error(
             &from,
             SendErrorReason::InsufficientFunds {
                 balance: Nat::from(balance),
             },
-        );
+        ));
     }
     let memo = SendMemo {
         receiver: target_canister.canister_id.as_slice(),
@@ -352,7 +367,15 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     let encoded_memo = encoder.into_writer().into();
     let memo = validate_memo(Some(encoded_memo));
 
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        memo: memo.clone(),
+        created_at_time: args.created_at_time,
+    };
+
     let now = ic_cdk::api::time();
+    deduplicate(args.created_at_time, transaction.hash(), now)
+        .map_err(|err| send_error(&from, err.into()))?;
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
     mutate_state(now, |s| s.debit(from_key, total_send_cost));
@@ -362,13 +385,13 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
     mutate_state(now, |s| s.credit(from_key, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        send_emit_error(
+        Err(send_error(
             &from,
             SendErrorReason::FailedToSend {
                 rejection_code,
                 rejection_reason,
             },
-        )
+        ))
     } else {
         let (send, _send_hash) = storage::send(&from, amount, memo, now, args.created_at_time);
         Ok(send)
