@@ -55,7 +55,7 @@ type Value = variant {
 
 type Map = vec record { text; Value };
 
-type SendArg = record {
+type SendArgs = record {
     amount : nat;
     from_subaccount : opt Subaccount;
     to : principal;

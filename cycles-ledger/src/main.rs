@@ -291,7 +291,7 @@ fn send_error(from: &Account, reason: SendErrorReason) -> SendError {
 
 #[update]
 #[candid_method]
-async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
+async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,

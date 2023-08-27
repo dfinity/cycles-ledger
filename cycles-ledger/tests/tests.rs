@@ -7,7 +7,7 @@ use candid::{Encode, Nat, Principal};
 use client::{deposit, transfer};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{SendArg, SendErrorReason},
+    endpoints::{SendArgs, SendErrorReason},
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
@@ -178,7 +178,7 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_main_account,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: send_receiver,
             created_at_time: None,
@@ -205,7 +205,7 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_subaccount_1,
-        SendArg {
+        SendArgs {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
             to: send_receiver,
             created_at_time: None,
@@ -237,7 +237,7 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_subaccount_3,
-        SendArg {
+        SendArgs {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
             to: send_receiver,
             created_at_time: Some(now),
@@ -264,7 +264,7 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_subaccount_4,
-        SendArg {
+        SendArgs {
             from_subaccount: Some(*user_subaccount_4.effective_subaccount()),
             to: send_receiver,
             created_at_time: None,
@@ -306,7 +306,7 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -331,7 +331,7 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: Some([5; 32]),
             to: depositor_id,
             created_at_time: None,
@@ -356,7 +356,7 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: self_authenticating_principal,
             created_at_time: None,
@@ -385,7 +385,7 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: deleted_canister,
             created_at_time: None,
@@ -418,7 +418,7 @@ fn test_send_fails() {
         env,
         ledger_id,
         user_2,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -432,7 +432,7 @@ fn test_send_fails() {
         env,
         ledger_id,
         user_2,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -1363,7 +1363,7 @@ fn test_total_supply_after_upgrade() {
         env,
         ledger_id,
         user2,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,

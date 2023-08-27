@@ -3,7 +3,7 @@ use core::panic;
 use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{self, DepositResult, SendArg},
+    endpoints::{self, DepositResult, SendArgs},
 };
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
@@ -68,7 +68,7 @@ pub fn send(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
-    args: SendArg,
+    args: SendArgs,
 ) -> Result<Nat, endpoints::SendError> {
     let arg = Encode!(&args).unwrap();
     if let WasmResult::Reply(res) = env.update_call(ledger_id, from.owner, "send", arg).unwrap() {
