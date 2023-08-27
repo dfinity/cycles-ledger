@@ -1,4 +1,11 @@
+use crate::generic_to_ciborium_value;
+use crate::{
+    ciborium_to_generic_value, compact_account,
+    config::{self, MAX_MEMO_LENGTH},
+    endpoints::DeduplicationError,
+};
 use anyhow::Context;
+use candid::Nat;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -16,23 +23,19 @@ use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{
-    ciborium_to_generic_value, compact_account,
-    config::{self, MAX_MEMO_LENGTH},
-    generic_to_ciborium_value,
-};
-
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
 const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
+const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(6);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
+pub type TransactionLog = StableBTreeMap<Hash, u64, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
@@ -57,6 +60,22 @@ pub struct Transaction {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<Memo>,
+}
+
+impl Transaction {
+    pub fn hash(&self) -> Hash {
+        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
+            panic!(
+                "Bug: unable to convert Operation to Ciborium Value. Error: {}, Block: {:?}",
+                e, self
+            )
+        });
+        match ciborium_to_generic_value(&value.clone(), 0) {
+            Ok(value) => value.hash(),
+            Err(err) =>
+                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -153,6 +172,7 @@ pub struct State {
     balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
+    pub transactions: TransactionLog,
     // In-memory cache dropped on each upgrade.
     cache: Cache,
 }
@@ -203,9 +223,12 @@ impl State {
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
+        let tx_hash = b.transaction.hash();
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
+        // Add block index to the list of transactions and set the hash as its key
+        self.transactions.insert(tx_hash, self.blocks.len() - 1);
         hash
     }
 
@@ -248,6 +271,7 @@ thread_local! {
             blocks,
             balances,
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
+            transactions: TransactionLog::init(mm.get(TRANSACTION_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
@@ -325,7 +349,6 @@ pub fn record_deposit(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
-    created_at_time: Option<u64>,
 ) -> (u64, u128, Hash) {
     assert!(amount >= crate::config::FEE);
 
@@ -340,7 +363,7 @@ pub fn record_deposit(
                     amount,
                 },
                 memo,
-                created_at_time,
+                created_at_time: None,
             },
             timestamp: now,
             phash,
@@ -348,6 +371,36 @@ pub fn record_deposit(
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
+}
+
+// This method implements deduplication accorind to the ICRC-1 standard: https://github.com/dfinity/ICRC-1
+pub fn deduplicate(
+    created_at_timestamp: Option<u64>,
+    tx_hash: [u8; 32],
+    now: u64,
+) -> Result<(), DeduplicationError> {
+    // TODO: purge old transactions
+    if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
+        // If the created timestamp is outside of the permitted Transaction window
+        if created_at_time
+            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+            < now
+        {
+            return Err(DeduplicationError::TooOld);
+        }
+
+        if created_at_time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
+            return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
+        }
+
+        if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
+            return Err(DeduplicationError::Duplicate {
+                duplicate_of: Nat::from(block_height),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
