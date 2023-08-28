@@ -37,13 +37,12 @@ type RejectionCode = variant {
   SysFatal;
   CanisterReject;
 };
-type SendArg = record {
-  to : principal;
-  fee : opt nat;
-  memo : opt vec nat8;
-  from_subaccount : opt vec nat8;
-  created_at_time : opt nat64;
-  amount : nat;
+type SendArgs = record {
+    amount : nat;
+    from_subaccount : opt vec nat8;
+    to : principal;
+    created_at_time : opt nat64;
+    memo : opt blob;
 };
 type SendError = record { fee_block : opt nat; reason : SendErrorReason };
 type SendErrorReason = variant {
@@ -123,5 +122,5 @@ service : {
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
-  send : (SendArg) -> (variant { Ok : nat; Err : SendError });
+  send : (SendArgs) -> (variant { Ok : nat; Err : SendError });
 }           

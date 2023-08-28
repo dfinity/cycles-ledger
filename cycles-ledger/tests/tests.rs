@@ -7,7 +7,7 @@ use candid::{Encode, Nat, Principal};
 use client::{deposit, transfer};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{SendArg, SendErrorReason},
+    endpoints::{SendArgs, SendErrorReason},
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
@@ -178,10 +178,9 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_main_account,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: send_receiver,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(send_amount),
@@ -206,10 +205,9 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_subaccount_1,
-        SendArg {
+        SendArgs {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
             to: send_receiver,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(send_amount),
@@ -227,34 +225,6 @@ fn test_send_flow() {
     expected_total_supply -= send_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from subaccount with the correct fee set
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 200_000_000_u128;
-    let _send_idx = send(
-        env,
-        ledger_id,
-        user_subaccount_2,
-        SendArg {
-            from_subaccount: Some(*user_subaccount_2.effective_subaccount()),
-            to: send_receiver,
-            fee: Some(Nat::from(config::FEE)),
-            created_at_time: None,
-            memo: None,
-            amount: Nat::from(send_amount),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
-    );
-    assert_eq!(
-        balance_of(env, ledger_id, user_subaccount_2),
-        1_000_000_000 - send_amount - FEE
-    );
-    expected_total_supply -= send_amount + FEE;
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
-
     // send cycles from subaccount with created_at_time set
     let now = env
         .time()
@@ -267,10 +237,9 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_subaccount_3,
-        SendArg {
+        SendArgs {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
             to: send_receiver,
-            fee: None,
             created_at_time: Some(now),
             memo: None,
             amount: Nat::from(send_amount),
@@ -295,10 +264,9 @@ fn test_send_flow() {
         env,
         ledger_id,
         user_subaccount_4,
-        SendArg {
+        SendArgs {
             from_subaccount: Some(*user_subaccount_4.effective_subaccount()),
             to: send_receiver,
-            fee: None,
             created_at_time: None,
             memo: Some(Memo(ByteBuf::from([5; 32]))),
             amount: Nat::from(send_amount),
@@ -338,10 +306,9 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(u128::MAX),
@@ -364,10 +331,9 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: Some([5; 32]),
             to: depositor_id,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(100_000_000_u128),
@@ -380,33 +346,6 @@ fn test_send_fails() {
     ));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // bad fee
-    let balance_before_attempt = balance_of(env, ledger_id, user);
-    let send_result = send(
-        env,
-        ledger_id,
-        user,
-        SendArg {
-            from_subaccount: None,
-            to: depositor_id,
-            fee: Some(FEE + Nat::from(1)),
-            created_at_time: None,
-            memo: None,
-            amount: Nat::from(100_000_000_u128),
-        },
-    )
-    .unwrap_err();
-    assert!(matches!(
-        send_result.reason,
-        SendErrorReason::BadFee { expected_fee } if expected_fee == config::FEE
-    ));
-    assert_eq!(
-        balance_before_attempt - FEE,
-        balance_of(env, ledger_id, user)
-    );
-    expected_total_supply -= FEE;
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
-
     // send cycles to user instead of canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
     let self_authenticating_principal = candid::Principal::from_text(
@@ -417,10 +356,9 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: self_authenticating_principal,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(500_000_000_u128),
@@ -447,10 +385,9 @@ fn test_send_fails() {
         env,
         ledger_id,
         user,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: deleted_canister,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(500_000_000_u128),
@@ -481,10 +418,9 @@ fn test_send_fails() {
         env,
         ledger_id,
         user_2,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(u128::MAX),
@@ -496,10 +432,9 @@ fn test_send_fails() {
         env,
         ledger_id,
         user_2,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(u128::MAX),
@@ -1428,10 +1363,9 @@ fn test_total_supply_after_upgrade() {
         env,
         ledger_id,
         user2,
-        SendArg {
+        SendArgs {
             from_subaccount: None,
             to: depositor_id,
-            fee: None,
             created_at_time: None,
             memo: None,
             amount: Nat::from(1_000_000_000),
