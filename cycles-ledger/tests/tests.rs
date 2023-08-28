@@ -1,5 +1,6 @@
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -11,6 +12,7 @@ use cycles_ledger::{
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
+use futures::FutureExt;
 use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
@@ -1379,4 +1381,33 @@ fn test_total_supply_after_upgrade() {
     env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), vec![], None)
         .unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
+}
+
+#[test]
+fn test_icrc1_test_suite() {
+    let env = new_state_machine();
+    let ledger_id = install_ledger(&env);
+    let depositor_id = install_depositor(&env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[10]),
+        subaccount: Some([0; 32]),
+    };
+
+    // make the first deposit to the user and check the result
+    let deposit_res = deposit(&env, depositor_id, user, 1_000_000_000_000_000);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
+    assert_eq!(1_000_000_000_000_000, balance_of(&env, ledger_id, user));
+
+    let ledger_env =
+        icrc1_test_env_state_machine::SMLedger::new(Arc::new(env), ledger_id, user.owner);
+    let tests = icrc1_test_suite::test_suite(ledger_env)
+        .now_or_never()
+        .unwrap();
+    if !icrc1_test_suite::execute_tests(tests)
+        .now_or_never()
+        .unwrap()
+    {
+        panic!("The ICRC-1 test suite failed");
+    }
 }
