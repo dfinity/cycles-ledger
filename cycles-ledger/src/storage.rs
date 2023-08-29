@@ -696,7 +696,7 @@ fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u1
     let key = (to_account_key(account), to_account_key(spender));
 
     if amount == 0 {
-        ic_cdk::trap("Cannot use amount 0 from allowance")
+        ic_cdk::trap("Cannot deduct amount 0 from allowance")
     }
     let (current_allowance, current_expiration) = s.approvals.get(&key).unwrap_or_else(|| {
         ic_cdk::trap(&format!(
