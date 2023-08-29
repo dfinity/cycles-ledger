@@ -350,11 +350,11 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         .map_err(|err| send_error(&from, err.into()))?;
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(now, |s| s.debit(from_key, total_send_cost));
+    mutate_state(|s| s.debit(from_key, total_send_cost));
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    mutate_state(now, |s| s.credit(from_key, total_send_cost));
+    mutate_state(|s| s.credit(from_key, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         Err(send_error(
@@ -472,6 +472,32 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
 }
 
 fn main() {}
+
+//#[cfg(feature = "testing")]
+#[query]
+#[candid_method(query)]
+fn get_transactions_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
+    let mut res = std::collections::BTreeMap::new();
+    read_state(|state| {
+        for (key, value) in state.transaction_hashes.iter() {
+            res.insert(key, value);
+        }
+    });
+    res
+}
+
+//#[cfg(feature = "testing")]
+#[query]
+#[candid_method(query)]
+fn get_block_timestamps() -> std::collections::BTreeMap<u64, u64> {
+    let mut res = std::collections::BTreeMap::new();
+    read_state(|state| {
+        for (key, value) in state.block_timestamps.iter() {
+            res.insert(key, value);
+        }
+    });
+    res
+}
 
 #[test]
 fn test_candid_interface_compatibility() {

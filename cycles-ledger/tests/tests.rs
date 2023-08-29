@@ -5,7 +5,7 @@ use std::{
 };
 
 use candid::{Encode, Nat, Principal};
-use client::{deposit, transfer};
+use client::{deposit, transaction_hashes, transfer};
 use cycles_ledger::{
     config::{self, FEE},
     endpoints::{SendArgs, SendErrorReason},
@@ -29,7 +29,9 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
-use crate::client::{approve, balance_of, fee, get_allowance, send, total_supply, transfer_from};
+use crate::client::{
+    approve, balance_of, block_timestamps, fee, get_allowance, send, total_supply, transfer_from,
+};
 
 mod client;
 
@@ -60,6 +62,8 @@ fn get_wasm(name: &str) -> Vec<u8> {
         .target("wasm32-unknown-unknown")
         .bin(name)
         .arg("--release")
+        .arg("--features")
+        .arg("testing")
         .run()
         .expect("Unable to run cargo build");
     std::fs::read(binary.path()).unwrap_or_else(|_| panic!("{} wasm file not found", name))
@@ -1320,8 +1324,7 @@ fn test_deduplication() {
         .as_nanos() as u64;
 
     // Now the transfer which was deduplicated previously should be ok
-    // Pruning of transactions is triggered
-    let tx = transfer(
+    transfer(
         env,
         ledger_id,
         user1,
@@ -1335,25 +1338,204 @@ fn test_deduplication() {
         },
     )
     .unwrap();
+}
 
-    // Deduplication should again be triggered after pruning
-    assert_eq!(
-        TransferError::Duplicate { duplicate_of: tx },
-        transfer(
+#[test]
+fn test_pruning_transactions() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    let transfer_amount = Nat::from(100_000);
+
+    let transactions_hashes = transaction_hashes(env, ledger_id);
+    // There have not been any transactions. The transaction hashes log should be empty
+    assert!(transactions_hashes.is_empty());
+
+    let deposit_amount = 100_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+    let time_tx_0 = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+
+    // Advance time so no two transaction have the same timestamp
+    env.advance_time(Duration::from_secs(1));
+    env.tick();
+
+    // Time of transaction with index 0
+    let time_tx_1 = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+
+    // Create a transfer to fill the btree
+    let tx = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    let transactions_hashes = transaction_hashes(env, ledger_id);
+    // Should have two transactions at index 0 and 1
+    assert_eq!(transactions_hashes.len() - 1, tx);
+    // The last transaction is the transfer with index 1
+    let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
+    idxs.sort();
+    assert_eq!(*idxs[0], 0);
+    assert_eq!(*idxs[idxs.len() - 1], 1);
+
+    let bt = block_timestamps(env, ledger_id);
+    // No prune has occured, therefore the first entry should be index 0
+    assert_eq!(bt.first_key_value().unwrap(), (&time_tx_0, &0u64));
+    // The second and last entry should be index 1
+    assert_eq!(bt.last_key_value().unwrap(), (&time_tx_1, &1u64));
+
+    // Advance time to move the Transaction window
+    env.advance_time(Duration::from_nanos(
+        config::TRANSACTION_WINDOW.as_nanos() as u64
+            + config::PERMITTED_DRIFT.as_nanos() as u64 * 2,
+    ));
+    env.tick();
+
+    // Timestamp of transaction with index 2
+    let time_tx_2 = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+
+    // Make transfer to trigger pruning
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    let transactions_hashes = transaction_hashes(env, ledger_id);
+    // Previous transactions should be removed
+    let bt = block_timestamps(env, ledger_id);
+    // There should be only entry as the first were pruned
+    assert_eq!(bt.len(), 1usize);
+    assert_eq!(transactions_hashes.len(), 1);
+    // The last entry should be the second transfer (idx 2)
+    assert_eq!(bt.last_key_value().unwrap(), (&time_tx_2, &2u64));
+
+    let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
+    idxs.sort();
+    assert_eq!(*idxs[0], 2);
+    assert_eq!(*idxs[idxs.len() - 1], 2);
+
+    // Make a couple of transfers that should not be removed since the transaction window was not surpassed
+    for _ in 0..10 {
+        env.advance_time(Duration::from_secs(1));
+        env.tick();
+
+        // Time of most recent block
+        let time = env
+            .time()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+
+        // Make a couple of unique transactions
+        let tx = transfer(
             env,
             ledger_id,
             user1,
             TransferArg {
                 from_subaccount: None,
-                to: user2,
+                to: Principal::anonymous().into(),
                 fee: None,
-                created_at_time: Some(now),
+                created_at_time: Some(time),
                 memo: None,
                 amount: transfer_amount.clone(),
             },
         )
-        .unwrap_err()
-    );
+        .unwrap();
+
+        let transactions_hashes = transaction_hashes(env, ledger_id);
+        let bt = block_timestamps(env, ledger_id);
+
+        // The transaction hashes should include all transactions except for 2 that were pruned previously
+        let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
+        idxs.sort();
+        assert_eq!(*idxs[0], 2);
+        assert_eq!(*idxs[idxs.len() - 1], tx);
+
+        assert_eq!(
+            bt.last_key_value().unwrap(),
+            (&time, &tx.0.to_u64().unwrap())
+        );
+        assert_eq!(bt.first_key_value().unwrap(), (&time_tx_2, &2));
+    }
+
+    // Advance time to move the Transaction window
+    env.advance_time(Duration::from_nanos(
+        config::TRANSACTION_WINDOW.as_nanos() as u64
+            + config::PERMITTED_DRIFT.as_nanos() as u64 * 2,
+    ));
+    env.tick();
+
+    // Timestamp of the last transaction
+    let time_last = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+
+    // Prune all previous transactions
+    let tx = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: Some(time_last),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
+
+    let transactions_hashes = transaction_hashes(env, ledger_id);
+    let bt = block_timestamps(env, ledger_id);
+    // All transactions except for one should have been pruned
+    let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
+    idxs.sort();
+    assert_eq!(*idxs[0], tx);
+    assert_eq!(*idxs[idxs.len() - 1], tx);
+    assert_eq!(bt.last_key_value().unwrap(), (&time_last, &tx));
+    assert_eq!(bt.first_key_value().unwrap(), (&time_last, &tx));
 }
 
 #[test]

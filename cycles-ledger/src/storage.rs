@@ -289,15 +289,11 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|cell| f(&cell.borrow()))
 }
 
-pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
+pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| {
         let result = f(&mut cell.borrow_mut());
-        prune_approvals(&mut cell.borrow_mut(), now, config::APPROVE_PRUNE_LIMIT);
-        prune_transactions(
-            &mut cell.borrow_mut(),
-            now,
-            config::TRANSACTION_PURGE_LIMIT,
-        );
+        prune_approvals(&mut cell.borrow_mut(), config::APPROVE_PRUNE_LIMIT);
+        prune_transactions(&mut cell.borrow_mut(), config::TRANSACTION_PURGE_LIMIT);
         check_invariants(&cell.borrow());
         result
     })
@@ -364,7 +360,7 @@ pub fn record_deposit(
     assert!(amount >= crate::config::FEE);
 
     let key = to_account_key(account);
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         let new_balance = s.credit(key, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -430,7 +426,7 @@ pub fn transfer(
     let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
     check_transfer_preconditions(from_balance, total_spent_amount, now, created_at_time);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         if let Some(spender) = spender {
             if spender != *from {
                 use_allowance(s, from, &spender, total_spent_amount, now);
@@ -485,7 +481,7 @@ const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH 
 pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     let from_key = to_account_key(from);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
             return None;
@@ -519,7 +515,7 @@ pub fn send(
 ) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
@@ -578,7 +574,7 @@ pub fn approve(
         created_at_time,
     );
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         record_approval(s, from, spender, amount, expires_at, expected_allowance);
 
         s.debit(from_key, crate::config::FEE);
@@ -716,55 +712,51 @@ fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u1
     }
 }
 
-fn prune_approvals(s: &mut State, now: u64, limit: usize) -> usize {
-    let mut pruned = 0;
-
+fn prune_approvals(s: &mut State, limit: usize) {
+    let now = ic_cdk::api::time();
     for _ in 0..limit {
         match s.expiration_queue.first_key_value() {
             Some((key, _value)) => {
                 if key.0 > now {
-                    return pruned;
+                    return;
                 }
                 s.approvals.remove(&key.1);
                 s.expiration_queue.remove(&key);
-                pruned += 1;
             }
-            None => {
-                return pruned;
-            }
+            None => return,
         }
     }
-    pruned
 }
 
-fn prune_transactions(s: &mut State, now: u64, limit: usize) -> usize {
-    let mut pruned = 0;
-
-    for _ in 0..limit {
-        match s.block_timestamps.first_key_value() {
-            Some((key, value)) => {
-                let block = s.blocks.get(value).unwrap_or_else(|| {
-                    ic_cdk::trap(&format!("Cannot find block with block id: {}", value))
-                });
-                if block
-                    .0
-                    .timestamp
-                    .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
-                    .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
-                    >= now
-                {
-                    return pruned;
-                }
-                s.block_timestamps.remove(&key);
-                s.transaction_hashes.remove(&block.transaction.hash());
-                pruned += 1;
-            }
-            None => {
-                return pruned;
-            }
+fn prune_transactions(s: &mut State, limit: usize) {
+    let now = ic_cdk::api::time();
+    let pruned = 0;
+    while let Some((block_timestamp, block_idx)) = s.block_timestamps.first_key_value() {
+        if pruned >= limit {
+            return;
+        }
+        let block = s.blocks.get(block_idx).unwrap_or_else(|| {
+            ic_cdk::trap(&format!("Cannot find block with block id: {}", block_idx))
+        });
+        if block_timestamp
+            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+            >= now
+        {
+            return;
+        }
+        s.block_timestamps.remove(&block_timestamp);
+        let tx_hash = block.transaction.hash();
+        // Transaction hashes are not unique, it is possible that tx hashes are overwritten
+        // To be sure that only outdated transaction are removed a check for the block index is necessary
+        if s.transaction_hashes
+            .get(&tx_hash)
+            .unwrap_or_else(|| ic_cdk::trap(&format!("Cannot find tx hash : {:?}", tx_hash)))
+            <= block_idx
+        {
+            s.transaction_hashes.remove(&block.transaction.hash());
         }
     }
-    pruned
 }
 
 #[cfg(test)]
