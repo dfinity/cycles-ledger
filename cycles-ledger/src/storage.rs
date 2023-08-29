@@ -353,7 +353,7 @@ pub fn record_deposit(
 ) -> (u64, u128, Hash) {
     if amount < crate::config::FEE {
         ic_cdk::trap(&format!(
-            "The requested amount {} to be deposited is be less than the cycles ledger fee: {}",
+            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
             amount,
             crate::config::FEE
         ))
