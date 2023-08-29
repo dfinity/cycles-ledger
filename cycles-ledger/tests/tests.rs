@@ -1320,7 +1320,8 @@ fn test_deduplication() {
         .as_nanos() as u64;
 
     // Now the transfer which was deduplicated previously should be ok
-    transfer(
+    // Pruning of transactions is triggered
+    let tx = transfer(
         env,
         ledger_id,
         user1,
@@ -1334,6 +1335,25 @@ fn test_deduplication() {
         },
     )
     .unwrap();
+
+    // Deduplication should again be triggered after pruning
+    assert_eq!(
+        TransferError::Duplicate { duplicate_of: tx },
+        transfer(
+            env,
+            ledger_id,
+            user1,
+            TransferArg {
+                from_subaccount: None,
+                to: user2,
+                fee: None,
+                created_at_time: Some(now),
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
 }
 
 #[test]
