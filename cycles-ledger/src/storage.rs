@@ -616,7 +616,7 @@ fn check_approve_preconditions(
 ) {
     if from_balance < crate::config::FEE {
         ic_cdk::trap(&format!(
-            "The balance of the account {:?} is {} which is lower than the cycles ledger fee {}",
+            "The balance of the account {:?} is {}, which is lower than the cycles ledger fee: {}",
             from,
             from_balance,
             crate::config::FEE
