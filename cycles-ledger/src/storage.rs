@@ -227,14 +227,15 @@ impl State {
         let hash = b.hash();
         self.cache.phash = Some(hash);
         let tx_hash = b.transaction.hash();
+        let timestamp = b.timestamp;
         self.blocks
-            .append(&Cbor(b.clone()))
+            .append(&Cbor(b))
             .expect("failed to append a block");
         // Add block index to the list of transactions and set the hash as its key
         self.transaction_hashes
             .insert(tx_hash, self.blocks.len() - 1);
         self.block_timestamps
-            .insert(b.timestamp, self.blocks.len() - 1);
+            .insert(timestamp, self.blocks.len() - 1);
         hash
     }
 
