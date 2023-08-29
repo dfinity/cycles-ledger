@@ -523,7 +523,7 @@ pub fn send(
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
         if from_balance < total_balance_deduction {
-            ic_cdk::trap(&format!("The balance of the account sending cycles {} is lower than the total amount of cycles needed to make the transfer {}",from_balance,total_balance_deduction))
+            ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_balance_deduction))
         }
 
         s.debit(from_key, total_balance_deduction);
