@@ -36,8 +36,8 @@ type VMem = VirtualMemory<DefaultMemoryImpl>;
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type TransactionHashLog = StableBTreeMap<Hash, u64, VMem>;
-pub type BlockTimeStampLog = StableBTreeMap<u64, u64, VMem>;
+pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
+pub type BlockTimeStamps = StableBTreeMap<u64, u64, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
@@ -174,8 +174,8 @@ pub struct State {
     balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
-    pub transaction_hashes: TransactionHashLog,
-    pub block_timestamps: BlockTimeStampLog,
+    pub transaction_hashes: TransactionHashes,
+    pub block_timestamps: BlockTimeStamps,
     // In-memory cache dropped on each upgrade.
     cache: Cache,
 }
@@ -277,8 +277,8 @@ thread_local! {
             blocks,
             balances,
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
-            transaction_hashes: TransactionHashLog::init(mm.get(TRANSACTION_HASH_MEMORY_ID)),
-            block_timestamps: BlockTimeStampLog::init(mm.get(BLOCK_TIMESTAMP_MEMORY_ID)),
+            transaction_hashes: TransactionHashes::init(mm.get(TRANSACTION_HASH_MEMORY_ID)),
+            block_timestamps: BlockTimeStamps::init(mm.get(BLOCK_TIMESTAMP_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
