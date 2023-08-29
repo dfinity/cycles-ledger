@@ -296,7 +296,7 @@ pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
         prune_transactions(
             &mut cell.borrow_mut(),
             now,
-            config::MAX_TRANSACTIONS_TO_PURGE,
+            config::TRANSACTION_PURGE_LIMIT,
         );
         check_invariants(&cell.borrow());
         result
