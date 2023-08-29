@@ -465,7 +465,7 @@ fn check_transfer_preconditions(
     created_at_time: Option<u64>,
 ) {
     if from_balance < total_spent_amount {
-        ic_cdk::trap(&format!("The balance of the account sending cycles {} is lower than the total amount of cycles needed to make the transfer {}",from_balance,total_spent_amount))
+        ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_spent_amount))
     }
     if let Some(time) = created_at_time {
         if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
