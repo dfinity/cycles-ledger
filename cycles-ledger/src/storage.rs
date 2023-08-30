@@ -294,7 +294,7 @@ pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| {
         let result = f(&mut cell.borrow_mut());
         prune_approvals(&mut cell.borrow_mut(), config::APPROVE_PRUNE_LIMIT);
-        prune_transactions(&mut cell.borrow_mut(), config::TRANSACTION_PURGE_LIMIT);
+        prune_transactions(&mut cell.borrow_mut(), config::TRANSACTION_PRUNE_LIMIT);
         check_invariants(&cell.borrow());
         result
     })

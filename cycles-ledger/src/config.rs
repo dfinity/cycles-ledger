@@ -8,6 +8,6 @@ pub const MAX_MEMO_LENGTH: u32 = 32;
 pub const PERMITTED_DRIFT: Duration = Duration::from_secs(60);
 pub const TRANSACTION_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 // The number of transactions in the transaction to hash and block timestamp to block index mappings to be pruned in a single prune process
-pub const TRANSACTION_PURGE_LIMIT: usize = 100_000;
+pub const TRANSACTION_PRUNE_LIMIT: usize = 100_000;
 // The number of entries in the approval list and expiration queue to be pruned in a single prune process
 pub const APPROVE_PRUNE_LIMIT: usize = 100;
