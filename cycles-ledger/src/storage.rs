@@ -37,7 +37,8 @@ pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
-pub type BlockTimeStamps = StableBTreeMap<u64, u64, VMem>;
+pub type BlockTimeStampKey = (u64, u64);
+pub type BlockTimeStamps = StableBTreeMap<BlockTimeStampKey, (), VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
@@ -235,7 +236,7 @@ impl State {
         self.transaction_hashes
             .insert(tx_hash, self.blocks.len() - 1);
         self.block_timestamps
-            .insert(timestamp, self.blocks.len() - 1);
+            .insert((timestamp, self.blocks.len() - 1), ());
         hash
     }
 
@@ -731,7 +732,7 @@ fn prune_approvals(s: &mut State, limit: usize) {
 fn prune_transactions(s: &mut State, limit: usize) {
     let now = ic_cdk::api::time();
     let pruned = 0;
-    while let Some((block_timestamp, block_idx)) = s.block_timestamps.first_key_value() {
+    while let Some(((block_timestamp, block_idx), _)) = s.block_timestamps.first_key_value() {
         if pruned >= limit {
             return;
         }
@@ -745,7 +746,7 @@ fn prune_transactions(s: &mut State, limit: usize) {
         {
             return;
         }
-        s.block_timestamps.remove(&block_timestamp);
+        s.block_timestamps.remove(&(block_timestamp, block_idx));
         let tx_hash = block.transaction.hash();
         // Transaction hashes are not unique, it is possible that tx hashes are overwritten
         // To be sure that only outdated transaction are removed a check for the block index is necessary

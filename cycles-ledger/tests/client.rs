@@ -216,7 +216,7 @@ pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<
     }
 }
 
-pub fn block_timestamps(env: &StateMachine, ledger_id: Principal) -> BTreeMap<u64, u64> {
+pub fn block_timestamps(env: &StateMachine, ledger_id: Principal) -> BTreeMap<(u64, u64), ()> {
     let arg = Encode!(&()).unwrap();
     if let WasmResult::Reply(res) = env
         .query_call(
@@ -227,7 +227,7 @@ pub fn block_timestamps(env: &StateMachine, ledger_id: Principal) -> BTreeMap<u6
         )
         .unwrap()
     {
-        Decode!(&res, BTreeMap<u64,u64>).unwrap()
+        Decode!(&res, BTreeMap<(u64, u64),()>).unwrap()
     } else {
         panic!("fee call rejected")
     }

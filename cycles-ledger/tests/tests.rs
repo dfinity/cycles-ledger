@@ -1402,9 +1402,9 @@ fn test_pruning_transactions() {
 
     let bt = block_timestamps(env, ledger_id);
     // No prune has occured, therefore the first entry should be index 0
-    assert_eq!(bt.first_key_value().unwrap(), (&time_tx_0, &0u64));
+    assert_eq!(bt.first_key_value().unwrap(), (&(time_tx_0, 0u64), &()));
     // The second and last entry should be index 1
-    assert_eq!(bt.last_key_value().unwrap(), (&time_tx_1, &1u64));
+    assert_eq!(bt.last_key_value().unwrap(), (&(time_tx_1, 1u64), &()));
 
     // Advance time to move the Transaction window
     env.advance_time(Duration::from_nanos(
@@ -1443,7 +1443,7 @@ fn test_pruning_transactions() {
     assert_eq!(bt.len(), 1usize);
     assert_eq!(transactions_hashes.len(), 1);
     // The last entry should be the second transfer (idx 2)
-    assert_eq!(bt.last_key_value().unwrap(), (&time_tx_2, &2u64));
+    assert_eq!(bt.last_key_value().unwrap(), (&(time_tx_2, 2u64), &()));
 
     let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
     idxs.sort();
@@ -1489,9 +1489,9 @@ fn test_pruning_transactions() {
 
         assert_eq!(
             bt.last_key_value().unwrap(),
-            (&time, &tx.0.to_u64().unwrap())
+            (&(time, tx.0.to_u64().unwrap()), &())
         );
-        assert_eq!(bt.first_key_value().unwrap(), (&time_tx_2, &2));
+        assert_eq!(bt.first_key_value().unwrap(), (&(time_tx_2, 2), &()));
     }
 
     // Advance time to move the Transaction window
@@ -1534,8 +1534,34 @@ fn test_pruning_transactions() {
     idxs.sort();
     assert_eq!(*idxs[0], tx);
     assert_eq!(*idxs[idxs.len() - 1], tx);
-    assert_eq!(bt.last_key_value().unwrap(), (&time_last, &tx));
-    assert_eq!(bt.first_key_value().unwrap(), (&time_last, &tx));
+    assert_eq!(bt.last_key_value().unwrap(), (&(time_last, tx), &()));
+    assert_eq!(bt.first_key_value().unwrap(), (&(time_last, tx), &()));
+
+    let tx_concurrent = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
+    // Two transactions with the same timestamp should be ordered by block index
+    let bt = block_timestamps(env, ledger_id);
+    assert_eq!(bt.first_key_value().unwrap(), (&(time_last, tx), &()));
+    // The second and last entry should be index 1
+    assert_eq!(
+        bt.last_key_value().unwrap(),
+        (&(time_last, tx_concurrent), &())
+    );
 }
 
 #[test]
