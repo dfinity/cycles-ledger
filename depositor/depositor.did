@@ -1,0 +1,3 @@
+type Account = record { owner : principal; subaccount : opt vec nat8 };type DepositArg = record { to : Account; memo : opt vec nat8; cycles : nat };
+type DepositResult = record { balance : nat; txid : nat };
+service : { deposit : (DepositArg) -> (DepositResult) }
