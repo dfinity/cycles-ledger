@@ -16,6 +16,8 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
     CONFIG.with(|cell| f(&cell.borrow()))
 }
 
+fn main() {}
+
 #[init]
 #[candid_method(init)]
 fn init(arg: InitArg) {
@@ -39,9 +41,4 @@ async fn deposit(arg: DepositArg) -> DepositResult {
         .await
         .expect("Unable to call deposit");
     result
-}
-
-fn main() {
-    candid::export_service!();
-    print!("{}", __export_service())
 }
