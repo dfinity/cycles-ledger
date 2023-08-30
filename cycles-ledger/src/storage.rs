@@ -751,10 +751,16 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
         }
         s.transaction_timestamps
             .remove(&(transaction_timestamp, block_idx));
+        let tx_hash = block.transaction.hash();
         // Two tx hashes cannot exists within the deduplication window, which means that two identical created_at_timestamps entries cannot have the same transaction hash within the deduplication window
         // Transactions before and after the deduplication window never make it into storage as they are rejected by the deduplication method
         // Example: if the transaction_timestamp storage has the entries [(time_a,block_a),(time_a,block_b)] then the hashes of the transactions in block_a and block_b cannot be identical
-        s.transaction_hashes.remove(&block.transaction.hash());
+        if s.transaction_hashes.remove(&tx_hash) != Some(block_idx) {
+            ic_cdk::trap(&format!(
+                "Transaction hash {:?} is stored in multiple blocks within the transaction window",
+                tx_hash
+            ))
+        }
     }
 }
 
