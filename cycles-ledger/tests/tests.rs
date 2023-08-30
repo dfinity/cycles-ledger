@@ -30,7 +30,8 @@ use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
 use crate::client::{
-    approve, balance_of, block_timestamps, fee, get_allowance, send, total_supply, transfer_from,
+    approve, balance_of, fee, get_allowance, send, total_supply, transaction_timestamps,
+    transfer_from,
 };
 
 mod client;
@@ -1349,8 +1350,29 @@ fn test_pruning_transactions() {
         owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
-
     let transfer_amount = Nat::from(100_000);
+
+    let check_tx_hashes = |length: u64, first_block: u64, last_block: u64| {
+        let tx_hashes = transaction_hashes(env, ledger_id);
+        let mut idxs: Vec<&u64> = tx_hashes.values().collect::<Vec<&u64>>();
+        idxs.sort();
+        assert_eq!(idxs.len() as u64, length);
+        assert_eq!(*idxs[0], first_block);
+        assert_eq!(*idxs[idxs.len() - 1], last_block);
+    };
+    let check_tx_timestamps =
+        |length: u64, first_timestamp: (u64, u64), last_timestamp: (u64, u64)| {
+            let tx_timestamps = transaction_timestamps(env, ledger_id);
+            assert_eq!(
+                tx_timestamps.first_key_value().unwrap(),
+                (&first_timestamp, &())
+            );
+            assert_eq!(
+                tx_timestamps.last_key_value().unwrap(),
+                (&last_timestamp, &())
+            );
+            assert_eq!(tx_timestamps.len() as u64, length);
+        };
 
     let transactions_hashes = transaction_hashes(env, ledger_id);
     // There have not been any transactions. The transaction hashes log should be empty
@@ -1358,69 +1380,12 @@ fn test_pruning_transactions() {
 
     let deposit_amount = 100_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
-    let time_tx_0 = env
-        .time()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
 
-    // Advance time so no two transaction have the same timestamp
-    env.advance_time(Duration::from_secs(1));
-    env.tick();
-
-    // Time of transaction with index 0
-    let time_tx_1 = env
-        .time()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
-
-    // Create a transfer to fill the btree
-    let tx = transfer(
-        env,
-        ledger_id,
-        user1,
-        TransferArg {
-            from_subaccount: None,
-            to: Principal::anonymous().into(),
-            fee: None,
-            created_at_time: None,
-            memo: None,
-            amount: transfer_amount.clone(),
-        },
-    )
-    .unwrap();
-
+    // A deposit has not created_at_time
     let transactions_hashes = transaction_hashes(env, ledger_id);
-    // Should have two transactions at index 0 and 1
-    assert_eq!(transactions_hashes.len() - 1, tx);
-    // The last transaction is the transfer with index 1
-    let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
-    idxs.sort();
-    assert_eq!(*idxs[0], 0);
-    assert_eq!(*idxs[idxs.len() - 1], 1);
+    assert!(transactions_hashes.is_empty());
 
-    let bt = block_timestamps(env, ledger_id);
-    // No prune has occured, therefore the first entry should be index 0
-    assert_eq!(bt.first_key_value().unwrap(), (&(time_tx_0, 0u64), &()));
-    // The second and last entry should be index 1
-    assert_eq!(bt.last_key_value().unwrap(), (&(time_tx_1, 1u64), &()));
-
-    // Advance time to move the Transaction window
-    env.advance_time(Duration::from_nanos(
-        config::TRANSACTION_WINDOW.as_nanos() as u64
-            + config::PERMITTED_DRIFT.as_nanos() as u64 * 2,
-    ));
-    env.tick();
-
-    // Timestamp of transaction with index 2
-    let time_tx_2 = env
-        .time()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
-
-    // Make transfer to trigger pruning
+    // Create a transfer with no created_at_time set
     transfer(
         env,
         ledger_id,
@@ -1436,63 +1401,59 @@ fn test_pruning_transactions() {
     )
     .unwrap();
 
+    // There should not be an entry for deduplication
     let transactions_hashes = transaction_hashes(env, ledger_id);
-    // Previous transactions should be removed
-    let bt = block_timestamps(env, ledger_id);
-    // There should be only entry as the first were pruned
-    assert_eq!(bt.len(), 1usize);
-    assert_eq!(transactions_hashes.len(), 1);
-    // The last entry should be the second transfer (idx 2)
-    assert_eq!(bt.last_key_value().unwrap(), (&(time_tx_2, 2u64), &()));
+    assert!(transactions_hashes.is_empty());
 
-    let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
-    idxs.sort();
-    assert_eq!(*idxs[0], 2);
-    assert_eq!(*idxs[idxs.len() - 1], 2);
+    let time = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // Create a transfer with created_at_time set
+    let transfer_idx_2 = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: Some(time),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
 
-    // Make a couple of transfers that should not be removed since the transaction window was not surpassed
-    for _ in 0..10 {
-        env.advance_time(Duration::from_secs(1));
-        env.tick();
+    // There should be one transaction appearing in the transaction queue for deduplication
+    check_tx_hashes(1, transfer_idx_2, transfer_idx_2);
+    check_tx_timestamps(1, (time, transfer_idx_2), (time, transfer_idx_2));
 
-        // Time of most recent block
-        let time = env
-            .time()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-
-        // Make a couple of unique transactions
-        let tx = transfer(
-            env,
-            ledger_id,
-            user1,
-            TransferArg {
-                from_subaccount: None,
-                to: Principal::anonymous().into(),
-                fee: None,
-                created_at_time: Some(time),
-                memo: None,
-                amount: transfer_amount.clone(),
-            },
-        )
-        .unwrap();
-
-        let transactions_hashes = transaction_hashes(env, ledger_id);
-        let bt = block_timestamps(env, ledger_id);
-
-        // The transaction hashes should include all transactions except for 2 that were pruned previously
-        let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
-        idxs.sort();
-        assert_eq!(*idxs[0], 2);
-        assert_eq!(*idxs[idxs.len() - 1], tx);
-
-        assert_eq!(
-            bt.last_key_value().unwrap(),
-            (&(time, tx.0.to_u64().unwrap()), &())
-        );
-        assert_eq!(bt.first_key_value().unwrap(), (&(time_tx_2, 2), &()));
-    }
+    // Create another transaction the same timestamp but different hash
+    let transfer_idx_3 = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: Some(time),
+            memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
+    // There are now two different tx hashes in 2 different transactions
+    check_tx_hashes(2, transfer_idx_2, transfer_idx_3);
+    check_tx_timestamps(2, (time, transfer_idx_2), (time, transfer_idx_3));
 
     // Advance time to move the Transaction window
     env.advance_time(Duration::from_nanos(
@@ -1500,16 +1461,13 @@ fn test_pruning_transactions() {
             + config::PERMITTED_DRIFT.as_nanos() as u64 * 2,
     ));
     env.tick();
-
-    // Timestamp of the last transaction
-    let time_last = env
+    let time = env
         .time()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64;
-
-    // Prune all previous transactions
-    let tx = transfer(
+    // Create another transaction to trigger pruning
+    let transfer_idx_4 = transfer(
         env,
         ledger_id,
         user1,
@@ -1517,7 +1475,7 @@ fn test_pruning_transactions() {
             from_subaccount: None,
             to: Principal::anonymous().into(),
             fee: None,
-            created_at_time: Some(time_last),
+            created_at_time: Some(time),
             memo: None,
             amount: transfer_amount.clone(),
         },
@@ -1526,42 +1484,9 @@ fn test_pruning_transactions() {
     .0
     .to_u64()
     .unwrap();
-
-    let transactions_hashes = transaction_hashes(env, ledger_id);
-    let bt = block_timestamps(env, ledger_id);
-    // All transactions except for one should have been pruned
-    let mut idxs: Vec<&u64> = transactions_hashes.values().collect::<Vec<&u64>>();
-    idxs.sort();
-    assert_eq!(*idxs[0], tx);
-    assert_eq!(*idxs[idxs.len() - 1], tx);
-    assert_eq!(bt.last_key_value().unwrap(), (&(time_last, tx), &()));
-    assert_eq!(bt.first_key_value().unwrap(), (&(time_last, tx), &()));
-
-    let tx_concurrent = transfer(
-        env,
-        ledger_id,
-        user1,
-        TransferArg {
-            from_subaccount: None,
-            to: Principal::anonymous().into(),
-            fee: None,
-            created_at_time: None,
-            memo: None,
-            amount: transfer_amount.clone(),
-        },
-    )
-    .unwrap()
-    .0
-    .to_u64()
-    .unwrap();
-    // Two transactions with the same timestamp should be ordered by block index
-    let bt = block_timestamps(env, ledger_id);
-    assert_eq!(bt.first_key_value().unwrap(), (&(time_last, tx), &()));
-    // The second and last entry should be index 1
-    assert_eq!(
-        bt.last_key_value().unwrap(),
-        (&(time_last, tx_concurrent), &())
-    );
+    // Transfers 2 and 3 should be removed leaving only one transfer left
+    check_tx_hashes(1, transfer_idx_4, transfer_idx_4);
+    check_tx_timestamps(1, (time, transfer_idx_4), (time, transfer_idx_4));
 }
 
 #[test]

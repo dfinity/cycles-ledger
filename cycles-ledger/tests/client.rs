@@ -216,13 +216,16 @@ pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<
     }
 }
 
-pub fn block_timestamps(env: &StateMachine, ledger_id: Principal) -> BTreeMap<(u64, u64), ()> {
+pub fn transaction_timestamps(
+    env: &StateMachine,
+    ledger_id: Principal,
+) -> BTreeMap<(u64, u64), ()> {
     let arg = Encode!(&()).unwrap();
     if let WasmResult::Reply(res) = env
         .query_call(
             ledger_id,
             Principal::anonymous(),
-            "get_block_timestamps",
+            "get_transaction_timestamps",
             arg,
         )
         .unwrap()
