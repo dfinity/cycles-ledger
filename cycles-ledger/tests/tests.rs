@@ -1374,16 +1374,16 @@ fn test_pruning_transactions() {
             assert_eq!(tx_timestamps.len() as u64, length);
         };
 
-    let transactions_hashes = transaction_hashes(env, ledger_id);
+    let tx_hashes = transaction_hashes(env, ledger_id);
     // There have not been any transactions. The transaction hashes log should be empty
-    assert!(transactions_hashes.is_empty());
+    assert!(tx_hashes.is_empty());
 
     let deposit_amount = 100_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
 
     // A deposit does not have a `created_at_time` argument and is therefore not recorded
-    let transactions_hashes = transaction_hashes(env, ledger_id);
-    assert!(transactions_hashes.is_empty());
+    let tx_hashes = transaction_hashes(env, ledger_id);
+    assert!(tx_hashes.is_empty());
 
     // Create a transfer where `created_at_time` is not set
     transfer(
@@ -1402,8 +1402,8 @@ fn test_pruning_transactions() {
     .unwrap();
 
     // There should not be an entry for deduplication
-    let transactions_hashes = transaction_hashes(env, ledger_id);
-    assert!(transactions_hashes.is_empty());
+    let tx_hashes = transaction_hashes(env, ledger_id);
+    assert!(tx_hashes.is_empty());
 
     let time = env
         .time()
