@@ -1410,7 +1410,7 @@ fn test_pruning_transactions() {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64;
-    // Create a transfer with created_at_time set
+    // Create a transfer with `created_at_time` set
     let transfer_idx_2 = transfer(
         env,
         ledger_id,
