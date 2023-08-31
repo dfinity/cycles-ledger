@@ -23,4 +23,3 @@ pub fn encode_send_memo(target_canister: &Principal) -> Memo {
     encoder.encode(memo).expect("Encoding of memo failed");
     encoder.into_writer().into()
 }
-

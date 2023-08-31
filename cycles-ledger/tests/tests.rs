@@ -8,7 +8,13 @@ use candid::{Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transfer};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{GetTransactionsResult, SendArgs, SendErrorReason}, storage::{Block, Transaction, Operation::{Approve, Burn, Mint, Transfer, self}}, memo::encode_send_memo,
+    endpoints::{GetTransactionsResult, SendArgs, SendErrorReason},
+    memo::encode_send_memo,
+    storage::{
+        Block,
+        Operation::{self, Approve, Burn, Mint, Transfer},
+        Transaction,
+    },
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
@@ -1391,8 +1397,12 @@ fn test_icrc3_get_transactions() {
             .iter()
             .map(|tx| {
                 let tx_id = tx.id.0.to_u64().unwrap();
-                let tx_decoded = Block::from_value(tx.transaction.clone())
-                    .unwrap_or_else(|e| panic!("Unable to decode block at index:{} value:{:?} : {}", tx_id, tx.transaction, e));
+                let tx_decoded = Block::from_value(tx.transaction.clone()).unwrap_or_else(|e| {
+                    panic!(
+                        "Unable to decode block at index:{} value:{:?} : {}",
+                        tx_id, tx.transaction, e
+                    )
+                });
                 (tx_id, tx_decoded)
             })
             .collect()
@@ -1403,19 +1413,29 @@ fn test_icrc3_get_transactions() {
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 0);
+    assert_eq!(txs.archived_transactions.len(), 0);
     assert_eq!(get_txs(&txs), vec![]);
 
     let depositor_id = install_depositor(env, ledger_id);
     let user1 = Account::from(Principal::from_slice(&[1]));
     let user2 = Account::from(Principal::from_slice(&[2]));
+    let user3 = Account::from(Principal::from_slice(&[3]));
 
-    
     // add the first mint block
-    deposit(env, depositor_id, user1, 2_000_000_000);
+    deposit(env, depositor_id, user1, 5_000_000_000);
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 1);
-    let block0 = block(Mint { to: user1, amount: 2_000_000_000 }, None, None, None);
+    assert_eq!(txs.archived_transactions.len(), 0);
+    let block0 = block(
+        Mint {
+            to: user1,
+            amount: 5_000_000_000,
+        },
+        None,
+        None,
+        None,
+    );
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
@@ -1423,13 +1443,21 @@ fn test_icrc3_get_transactions() {
     // blocks have the timestamp
     let block0 = actual_txs[0].1.clone();
 
-
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 2);
-    let block1 = block(Mint { to: user2, amount: 3_000_000_000 }, None, None, Some(block0.hash()));
+    assert_eq!(txs.archived_transactions.len(), 0);
+    let block1 = block(
+        Mint {
+            to: user2,
+            amount: 3_000_000_000,
+        },
+        None,
+        None,
+        Some(block0.hash()),
+    );
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone()), (1, block1.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
@@ -1437,42 +1465,190 @@ fn test_icrc3_get_transactions() {
     // blocks have the timestamp
     let block1 = actual_txs[1].1.clone();
 
-
     // add a burn block
-    send(env, ledger_id, user2, SendArgs { from_subaccount: None, to: depositor_id, created_at_time: None, memo: None, amount: Nat::from(2_000_000_000) })
-        .expect("Send failed");
+    send(
+        env,
+        ledger_id,
+        user2,
+        SendArgs {
+            from_subaccount: None,
+            to: depositor_id,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(2_000_000_000),
+        },
+    )
+    .expect("Send failed");
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 3);
+    assert_eq!(txs.archived_transactions.len(), 0);
     let send_memo = encode_send_memo(&depositor_id);
-    let block2 = block(Burn { from: user2, amount: 2_000_000_000 }, None, Some(send_memo), Some(block1.hash()));
+    let block2 = block(
+        Burn {
+            from: user2,
+            amount: 2_000_000_000,
+        },
+        None,
+        Some(send_memo),
+        Some(block1.hash()),
+    );
     let actual_txs = get_txs(&txs);
-    let expected_txs = vec![(0, block0.clone()), (1, block1.clone()), (2, block2.clone())];
+    let expected_txs = vec![
+        (0, block0.clone()),
+        (1, block1.clone()),
+        (2, block2.clone()),
+    ];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
     // Replacing expected blocks with the actual blocks is needed because only actual
     // blocks have the timestamp
     let block2 = actual_txs[2].1.clone();
+
+    // add a couple of blocks
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(1_000_000_000),
+        },
+    )
+    .expect("Transfer failed");
+    approve(
+        env,
+        ledger_id,
+        /*from:*/ user1,
+        /*spender:*/ user2,
+        /*amount:*/ 1_000_000_000 + FEE,
+        /*expected_allowance:*/ Some(0),
+        /*expires_at:*/ None,
+    )
+    .expect("Approve failed");
+    transfer_from(
+        env,
+        ledger_id,
+        /*from:*/ user1,
+        /*to:*/ user3,
+        /*spender:*/ user2,
+        /*amount:*/ 1_000_000_000,
+    )
+    .expect("Transfer from failed");
+
+    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 6);
+    assert_eq!(txs.archived_transactions.len(), 0);
+    let actual_txs = get_txs(&txs);
+    let block3 = block(
+        Transfer {
+            from: user1,
+            to: user2,
+            spender: None,
+            amount: 1_000_000_000,
+            fee: None,
+        },
+        None,
+        None,
+        Some(block2.hash()),
+    );
+    let block4 = block(
+        Approve {
+            from: user1,
+            spender: user2,
+            amount: 1_000_000_000 + FEE,
+            expected_allowance: Some(0),
+            expires_at: None,
+            fee: Some(FEE),
+        },
+        None,
+        None,
+        Some(actual_txs[3].1.hash()),
+    );
+    let block5 = block(
+        Transfer {
+            from: user1,
+            to: user3,
+            spender: Some(user2),
+            amount: 1_000_000_000,
+            fee: Some(FEE),
+        },
+        None,
+        None,
+        Some(actual_txs[4].1.hash()),
+    );
+    let expected_txs = vec![
+        (0, block0.clone()),
+        (1, block1.clone()),
+        (2, block2.clone()),
+        (3, block3.clone()),
+        (4, block4.clone()),
+        (5, block5.clone()),
+    ];
+    assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
 }
 
 // Checks two lists of blocks are the same.
 // Skips the timestamp check because timestamps are set by the Ledger.
 #[track_caller]
 fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
-    assert_eq!(left.len(), right.len(), "The block lists have different sizes!");
+    assert_eq!(
+        left.len(),
+        right.len(),
+        "The block lists have different sizes!"
+    );
     for i in 0..left.len() {
-        assert_eq!(left[i].0, right[i].0, "Blocks at position {} have different index", i);
-        assert_eq!(left[i].1.transaction, right[i].1.transaction, "Blocks at position {} have different transactions", i);
-        assert_eq!(left[i].1.phash, right[i].1.phash, "Blocks at position {} have different parent hash", i);
-        assert_eq!(left[i].1.effective_fee, right[i].1.effective_fee, "Blocks at position {} have different effective fee", i);
+        assert_eq!(
+            left[i].0, right[i].0,
+            "Blocks at position {} have different index",
+            i
+        );
+        assert_eq!(
+            left[i].1.transaction, right[i].1.transaction,
+            "Blocks at position {} have different tr=ansactions",
+            i
+        );
+        assert_eq!(
+            left[i].1.phash, right[i].1.phash,
+            "Blocks at position {} have different parent hash",
+            i
+        );
+        assert_eq!(
+            left[i].1.effective_fee, right[i].1.effective_fee,
+            "Blocks at position {} have different effective fee",
+            i
+        );
     }
 }
 
-// creates a block out of the given that with `timestamp` set to [u64::MAX ] and `effective_fee` set to `Some(FEE)`
-fn block(operation: Operation, created_at_time: Option<u64>, memo: Option<Memo>, phash: Option<[u8;32]>) -> Block {
+// creates a block out of the given operation and metadata with `timestamp` set to [u64::MAX ] and `effective_fee`
+// based on the operation
+fn block(
+    operation: Operation,
+    created_at_time: Option<u64>,
+    memo: Option<Memo>,
+    phash: Option<[u8; 32]>,
+) -> Block {
     let effective_fee = match operation {
         Burn { .. } => Some(0),
-        // TODO: https://dfinity.atlassian.net/browse/FI-919 effective fee of mint should be 0
-        Approve { .. } | Mint { .. } | Transfer { .. } => Some(FEE),
+        Mint { .. } => Some(FEE),
+        Transfer { fee, .. } => {
+            if fee.is_none() {
+                Some(FEE)
+            } else {
+                None
+            }
+        }
+        Approve { fee, .. } => {
+            if fee.is_none() {
+                Some(FEE)
+            } else {
+                None
+            }
+        }
     };
     Block {
         transaction: Transaction {

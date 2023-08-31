@@ -5,7 +5,7 @@ use cycles_ledger::{
     config::FEE,
     endpoints::{
         self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
-        SendArgs
+        SendArgs,
     },
 };
 use depositor::endpoints::DepositArg;

@@ -146,4 +146,4 @@ service : {
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
   icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
   send : (SendArg) -> (variant { Ok : BlockIndex; Err : SendError });
-}           
+}
