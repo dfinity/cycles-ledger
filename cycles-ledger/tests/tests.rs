@@ -1433,7 +1433,7 @@ fn test_pruning_transactions() {
     check_tx_hashes(1, transfer_idx_2, transfer_idx_2);
     check_tx_timestamps(1, (time, transfer_idx_2), (time, transfer_idx_2));
 
-    // Create another transaction the same timestamp but different hash
+    // Create another transaction with the same timestamp but a different hash
     let transfer_idx_3 = transfer(
         env,
         ledger_id,
