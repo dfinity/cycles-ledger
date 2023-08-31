@@ -1385,7 +1385,7 @@ fn test_pruning_transactions() {
     let transactions_hashes = transaction_hashes(env, ledger_id);
     assert!(transactions_hashes.is_empty());
 
-    // Create a transfer with no created_at_time set
+    // Create a transfer where `created_at_time` is not set
     transfer(
         env,
         ledger_id,
