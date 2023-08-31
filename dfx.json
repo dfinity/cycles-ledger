@@ -6,6 +6,13 @@
       "package": "cycles-ledger",
       "optimize": "cycles",
       "gzip": true
+    },
+    "cycles-depositor": {
+      "type": "rust",
+      "candid": "./depositor/depositor.did",
+      "package": "depositor",
+      "optimize": "cycles",
+      "gzip": true
     }
   } 
 }

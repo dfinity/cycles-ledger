@@ -19,6 +19,7 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
 fn main() {}
 
 #[init]
+#[candid_method(init)]
 fn init(arg: InitArg) {
     CONFIG.with(|cell| {
         *cell.borrow_mut() = Config {
