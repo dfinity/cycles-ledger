@@ -201,7 +201,7 @@ pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
     }
 }
 
-pub fn get_transactions(
+pub fn get_raw_transactions(
     env: &StateMachine,
     ledger_id: Principal,
     start_lengths: Vec<(u64, u64)>,

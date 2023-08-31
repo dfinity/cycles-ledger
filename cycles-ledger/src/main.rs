@@ -2,7 +2,7 @@ use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
     DeduplicationError, GetTransactionsArgs, GetTransactionsResult, SendError, SendErrorReason,
 };
-use cycles_ledger::memo::SendMemo;
+use cycles_ledger::memo::encode_send_memo;
 use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
@@ -15,7 +15,6 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
-use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
 // candid::Principal has these two consts as private
@@ -367,13 +366,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             },
         ));
     }
-    let memo = SendMemo {
-        receiver: target_canister.canister_id.as_slice(),
-    };
-    let mut encoder = Encoder::new(Vec::new());
-    encoder.encode(memo).expect("Encoding failed");
-    let encoded_memo = encoder.into_writer().into();
-    let memo = validate_memo(Some(encoded_memo));
+    let memo = validate_memo(Some(encode_send_memo(&target_canister.canister_id)));
 
     let transaction = Transaction {
         operation: Operation::Burn { from, amount },

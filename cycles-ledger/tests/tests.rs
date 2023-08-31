@@ -4,17 +4,16 @@ use std::{
 };
 
 use candid::{Encode, Nat, Principal};
-use client::{deposit, get_transactions, transfer};
+use client::{deposit, get_raw_transactions, transfer};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{GetTransactionsResult, SendArg, SendErrorReason},
+    endpoints::{GetTransactionsResult, SendArg, SendErrorReason}, storage::{Block, Transaction, Operation::{Approve, Burn, Mint, Transfer, self}}, memo::encode_send_memo,
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use ic_cdk::api::call::RejectionCode;
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
-    icrc::generic_value::Value,
     icrc1::{
         account::Account,
         transfer::{Memo, TransferArg, TransferError},
@@ -1451,32 +1450,101 @@ fn test_total_supply_after_upgrade() {
 #[test]
 fn test_icrc3_get_transactions() {
     // Utility to extract the id and the tx of all transactions in the result
-    let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Value)> {
+    let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Block)> {
         res.transactions
             .iter()
-            .map(|tx| (tx.id.0.to_u64().unwrap(), tx.transaction.clone()))
+            .map(|tx| {
+                let tx_id = tx.id.0.to_u64().unwrap();
+                let tx_decoded = Block::from_value(tx.transaction.clone())
+                    .unwrap_or_else(|e| panic!("Unable to decode block at index:{} value:{:?} : {}", tx_id, tx.transaction, e));
+                (tx_id, tx_decoded)
+            })
             .collect()
     };
 
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
 
-    let txs = get_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 0);
     assert_eq!(get_txs(&txs), vec![]);
-    assert_eq!(txs.transactions, vec![]);
 
     let depositor_id = install_depositor(env, ledger_id);
     let user1 = Account::from(Principal::from_slice(&[1]));
     let user2 = Account::from(Principal::from_slice(&[2]));
 
-    // add a mint block
+    
+    // add the first mint block
     deposit(env, depositor_id, user1, 2_000_000_000);
 
-    let txs = get_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 1);
-    assert_eq!(get_txs(&txs), vec![]);
-    assert_eq!(txs.transactions, vec![]);
+    let block0 = block(Mint { to: user1, amount: 2_000_000_000 }, None, None, None);
+    let actual_txs = get_txs(&txs);
+    let expected_txs = vec![(0, block0.clone())];
+    assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
+    // Replacing expected blocks with the actual blocks is needed because only actual
+    // blocks have the timestamp
+    let block0 = actual_txs[0].1.clone();
 
+
+    // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
+
+    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 2);
+    let block1 = block(Mint { to: user2, amount: 3_000_000_000 }, None, None, Some(block0.hash()));
+    let actual_txs = get_txs(&txs);
+    let expected_txs = vec![(0, block0.clone()), (1, block1.clone())];
+    assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
+    // Replacing expected blocks with the actual blocks is needed because only actual
+    // blocks have the timestamp
+    let block1 = actual_txs[1].1.clone();
+
+
+    // add a burn block
+    send(env, ledger_id, user2, SendArg { from_subaccount: None, to: depositor_id, fee: None, created_at_time: None, memo: None, amount: Nat::from(2_000_000_000) })
+        .expect("Send failed");
+
+    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 3);
+    let send_memo = encode_send_memo(&depositor_id);
+    let block2 = block(Burn { from: user2, amount: 2_000_000_000 }, None, Some(send_memo), Some(block1.hash()));
+    let actual_txs = get_txs(&txs);
+    let expected_txs = vec![(0, block0.clone()), (1, block1.clone()), (2, block2.clone())];
+    assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
+    // Replacing expected blocks with the actual blocks is needed because only actual
+    // blocks have the timestamp
+    let block2 = actual_txs[2].1.clone();
+}
+
+// Checks two lists of blocks are the same.
+// Skips the timestamp check because timestamps are set by the Ledger.
+#[track_caller]
+fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
+    assert_eq!(left.len(), right.len(), "The block lists have different sizes!");
+    for i in 0..left.len() {
+        assert_eq!(left[i].0, right[i].0, "Blocks at position {} have different index", i);
+        assert_eq!(left[i].1.transaction, right[i].1.transaction, "Blocks at position {} have different transactions", i);
+        assert_eq!(left[i].1.phash, right[i].1.phash, "Blocks at position {} have different parent hash", i);
+        assert_eq!(left[i].1.effective_fee, right[i].1.effective_fee, "Blocks at position {} have different effective fee", i);
+    }
+}
+
+// creates a block out of the given that with `timestamp` set to [u64::MAX ] and `effective_fee` set to `Some(FEE)`
+fn block(operation: Operation, created_at_time: Option<u64>, memo: Option<Memo>, phash: Option<[u8;32]>) -> Block {
+    let effective_fee = match operation {
+        Burn { .. } | Mint { .. } => Some(0),
+        Approve { .. } | Transfer { .. } => Some(FEE),
+    };
+    Block {
+        transaction: Transaction {
+            operation,
+            created_at_time,
+            memo,
+        },
+        timestamp: u64::MIN,
+        phash,
+        effective_fee,
+    }
 }
