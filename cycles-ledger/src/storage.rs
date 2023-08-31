@@ -298,12 +298,13 @@ pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
 }
 
 fn check_invariants(s: &State) {
-    debug_assert!(
-        s.expiration_queue.len() <= s.approvals.len(),
-        "expiration_queue len ({}) larger than approvals len ({})",
-        s.expiration_queue.len(),
-        s.approvals.len()
-    );
+    if s.expiration_queue.len() > s.approvals.len() {
+        ic_cdk::trap(&format!(
+            "expiration_queue len ({}) larger than approvals len ({})",
+            s.expiration_queue.len(),
+            s.approvals.len()
+        ))
+    }
 }
 
 #[derive(Default)]
@@ -355,7 +356,13 @@ pub fn record_deposit(
     memo: Option<Memo>,
     now: u64,
 ) -> (u64, u128, Hash) {
-    assert!(amount >= crate::config::FEE);
+    if amount < crate::config::FEE {
+        ic_cdk::trap(&format!(
+            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
+            amount,
+            crate::config::FEE
+        ))
+    }
 
     let key = to_account_key(account);
     mutate_state(now, |s| {
@@ -462,14 +469,16 @@ fn check_transfer_preconditions(
     now: u64,
     created_at_time: Option<u64>,
 ) {
-    assert!(from_balance >= total_spent_amount);
+    if from_balance < total_spent_amount {
+        ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_spent_amount))
+    }
     if let Some(time) = created_at_time {
-        assert!(
-            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
-            "Transfer created in the future, created_at_time: {}, now: {}",
-            time,
-            now
-        );
+        if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
+            ic_cdk::trap(&format!(
+                "Transfer created in the future, created_at_time: {}, now: {}",
+                time, now
+            ))
+        }
     }
 }
 
@@ -518,7 +527,9 @@ pub fn send(
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
-        assert!(from_balance >= total_balance_deduction);
+        if from_balance < total_balance_deduction {
+            ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_balance_deduction))
+        }
 
         s.debit(from_key, total_balance_deduction);
         let phash = s.last_block_hash();
@@ -608,21 +619,30 @@ fn check_approve_preconditions(
     now: u64,
     created_at_time: Option<u64>,
 ) {
-    assert!(from_balance >= crate::config::FEE);
-    assert!(
-        from != spender,
-        "self approvals are not allowed, should be checked in the endpoint"
-    );
-    assert!(
-        expires_at.unwrap_or(REMOTE_FUTURE) > now,
-        "Approval expiration time ({}) should be later than now ({now})",
-        expires_at.unwrap_or(REMOTE_FUTURE),
-    );
+    if from_balance < crate::config::FEE {
+        ic_cdk::trap(&format!(
+            "The balance of the account {:?} is {}, which is lower than the cycles ledger fee: {}",
+            from,
+            from_balance,
+            crate::config::FEE
+        ))
+    }
+    if from == spender {
+        ic_cdk::trap("self approvals are not allowed, should be checked in the endpoint")
+    }
+    if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+        ic_cdk::trap(&format!(
+            "Approval expiration time ({}) should be later than now ({now})",
+            expires_at.unwrap_or(REMOTE_FUTURE)
+        ))
+    }
     if let Some(time) = created_at_time {
-        assert!(
-            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
-            "Approval created in the future, created_at_time: {time}, now: {now}"
-        );
+        if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
+            ic_cdk::trap(&format!(
+                "Approval created in the future, created_at_time: {}, now: {}",
+                time, now
+            ))
+        }
     }
 }
 
@@ -680,25 +700,29 @@ fn record_approval(
 fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u128, now: u64) {
     let key = (to_account_key(account), to_account_key(spender));
 
-    assert!(amount > 0, "Cannot use amount 0 from allowance");
+    if amount == 0 {
+        ic_cdk::trap("Cannot deduct amount 0 from allowance")
+    }
     let (current_allowance, current_expiration) = s.approvals.get(&key).unwrap_or_else(|| {
-        panic!(
+        ic_cdk::trap(&format!(
             "Allowance does not exist, account {}, spender {}",
             account, spender
-        )
+        ));
     });
-    assert!(
-        current_expiration == 0 || current_expiration > now,
-        "Expired allowance, expiration {} is earlier than now {}",
-        current_expiration,
-        now
-    );
-    assert!(
-        current_allowance >= amount,
-        "Insufficient allowance, current_allowance {}, total spent amount {}",
-        current_allowance,
-        amount
-    );
+
+    if !(current_expiration == 0 || current_expiration > now) {
+        ic_cdk::trap(&format!(
+            "Expired allowance, expiration {} is earlier than now {}",
+            current_expiration, now
+        ))
+    }
+
+    if current_allowance < amount {
+        ic_cdk::trap(&format!(
+            "Insufficient allowance, current_allowance {}, total spent amount {}",
+            current_allowance, amount
+        ))
+    }
 
     let new_amount = current_allowance - amount;
     if new_amount == 0 {

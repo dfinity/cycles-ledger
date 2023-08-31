@@ -5,7 +5,7 @@ use cycles_ledger::{
     config::FEE,
     endpoints::{
         self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
-        SendArg,
+        SendArgs
     },
 };
 use depositor::endpoints::DepositArg;
@@ -71,7 +71,7 @@ pub fn send(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
-    args: SendArg,
+    args: SendArgs,
 ) -> Result<Nat, endpoints::SendError> {
     let arg = Encode!(&args).unwrap();
     if let WasmResult::Reply(res) = env.update_call(ledger_id, from.owner, "send", arg).unwrap() {

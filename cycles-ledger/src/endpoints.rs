@@ -32,12 +32,10 @@ pub struct SupportedStandard {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct SendArg {
+pub struct SendArgs {
     #[serde(default)]
     pub from_subaccount: Option<Subaccount>,
     pub to: Principal,
-    #[serde(default)]
-    pub fee: Option<NumCycles>,
     #[serde(default)]
     pub created_at_time: Option<u64>,
     #[serde(default)]
