@@ -1381,7 +1381,7 @@ fn test_pruning_transactions() {
     let deposit_amount = 100_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
 
-    // A deposit has not created_at_time
+    // A deposit does not have a `created_at_time` argument and is therefore not recorded
     let transactions_hashes = transaction_hashes(env, ledger_id);
     assert!(transactions_hashes.is_empty());
 
