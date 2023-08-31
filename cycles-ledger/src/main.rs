@@ -476,7 +476,7 @@ fn main() {}
 #[cfg(feature = "testing")]
 #[query]
 #[candid_method(query)]
-fn get_transactions_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
+fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {
         for (key, value) in state.transaction_hashes.iter() {

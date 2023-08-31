@@ -205,7 +205,7 @@ pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<
         .query_call(
             ledger_id,
             Principal::anonymous(),
-            "get_transactions_hashes",
+            "get_transaction_hashes",
             arg,
         )
         .unwrap()
