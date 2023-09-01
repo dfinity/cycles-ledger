@@ -189,7 +189,6 @@ fn test_send_flow() {
             from_subaccount: None,
             to: send_receiver,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(send_amount),
         },
     )
@@ -216,7 +215,6 @@ fn test_send_flow() {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
             to: send_receiver,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(send_amount),
         },
     )
@@ -248,7 +246,6 @@ fn test_send_flow() {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
             to: send_receiver,
             created_at_time: Some(now),
-            memo: None,
             amount: Nat::from(send_amount),
         },
     )
@@ -259,33 +256,6 @@ fn test_send_flow() {
     );
     assert_eq!(
         balance_of(env, ledger_id, user_subaccount_3),
-        1_000_000_000 - send_amount - FEE
-    );
-    expected_total_supply -= send_amount + FEE;
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
-
-    // send cycles from subaccount with Memo set
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 300_000_000_u128;
-    let _send_idx = send(
-        env,
-        ledger_id,
-        user_subaccount_4,
-        SendArgs {
-            from_subaccount: Some(*user_subaccount_4.effective_subaccount()),
-            to: send_receiver,
-            created_at_time: None,
-            memo: Some(Memo(ByteBuf::from([5; 32]))),
-            amount: Nat::from(send_amount),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
-    );
-    assert_eq!(
-        balance_of(env, ledger_id, user_subaccount_4),
         1_000_000_000 - send_amount - FEE
     );
     expected_total_supply -= send_amount + FEE;
@@ -317,7 +287,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(u128::MAX),
         },
     )
@@ -342,7 +311,6 @@ fn test_send_fails() {
             from_subaccount: Some([5; 32]),
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(100_000_000_u128),
         },
     )
@@ -367,7 +335,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: self_authenticating_principal,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(500_000_000_u128),
         },
     )
@@ -396,7 +363,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: deleted_canister,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(500_000_000_u128),
         },
     )
@@ -429,7 +395,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(u128::MAX),
         },
     )
@@ -443,7 +408,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(u128::MAX),
         },
     )
@@ -1522,7 +1486,6 @@ fn test_total_supply_after_upgrade() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(1_000_000_000),
         },
     )
