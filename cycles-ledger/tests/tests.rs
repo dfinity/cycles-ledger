@@ -1613,7 +1613,7 @@ fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
         );
         assert_eq!(
             left[i].1.phash, right[i].1.phash,
-            "Blocks at position {} have different parent hash",
+            "Blocks at position {} have different parent hashes",
             i
         );
         assert_eq!(
