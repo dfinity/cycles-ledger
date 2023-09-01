@@ -1603,7 +1603,7 @@ fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
     for i in 0..left.len() {
         assert_eq!(
             left[i].0, right[i].0,
-            "Blocks at position {} have different index",
+            "Blocks at position {} have different indices",
             i
         );
         assert_eq!(
