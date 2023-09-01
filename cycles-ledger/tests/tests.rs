@@ -1592,7 +1592,7 @@ fn test_icrc3_get_transactions() {
 }
 
 // Checks two lists of blocks are the same.
-// Skips the timestamp check because timestamps are set by the Ledger.
+// Skips the timestamp check because timestamps are set by the ledger.
 #[track_caller]
 fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
     assert_eq!(
