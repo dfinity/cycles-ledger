@@ -1608,7 +1608,7 @@ fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
         );
         assert_eq!(
             left[i].1.transaction, right[i].1.transaction,
-            "Blocks at position {} have different tr=ansactions",
+            "Blocks at position {} have different transactions",
             i
         );
         assert_eq!(
