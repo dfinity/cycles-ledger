@@ -1624,7 +1624,7 @@ fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
     }
 }
 
-// creates a block out of the given operation and metadata with `timestamp` set to [u64::MAX ] and `effective_fee`
+// Creates a block out of the given operation and metadata with `timestamp` set to [u64::MAX ] and `effective_fee`
 // based on the operation
 fn block(
     operation: Operation,
