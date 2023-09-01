@@ -787,7 +787,7 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     }
     GetTransactionsResult {
         log_length: Nat::from(log_length),
-        certificate: None, // TODO
+        certificate: None, // TODO FI-766
         transactions,
         archived_transactions: vec![],
     }
