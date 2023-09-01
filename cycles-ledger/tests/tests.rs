@@ -1618,7 +1618,7 @@ fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
         );
         assert_eq!(
             left[i].1.effective_fee, right[i].1.effective_fee,
-            "Blocks at position {} have different effective fee",
+            "Blocks at position {} have different effective fees",
             i
         );
     }
