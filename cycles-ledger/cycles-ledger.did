@@ -145,5 +145,5 @@ service : {
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
   icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
-  send : (SendArg) -> (variant { Ok : BlockIndex; Err : SendError });
+  send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
 }
