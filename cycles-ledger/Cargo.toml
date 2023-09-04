@@ -36,3 +36,6 @@ icrc1-test-env-state-machine = { git = "https://github.com/dfinity/ICRC-1", vers
 icrc1-test-suite = { git = "https://github.com/dfinity/ICRC-1", version = "0.1.1" }
 futures = "0.3.28"
 proptest = "1.2.0"
+
+[features]
+testing = []

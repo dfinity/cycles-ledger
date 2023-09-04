@@ -1,4 +1,5 @@
 use core::panic;
+use std::collections::BTreeMap;
 
 use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
@@ -225,6 +226,43 @@ pub fn get_raw_transactions(
     {
         Decode!(&res, GetTransactionsResult).unwrap()
     } else {
-        panic!("icrc3_get_transactions call rejected")
+        panic!("fee call rejected")
+    }
+}
+
+pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<[u8; 32], u64> {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "get_transaction_hashes",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, BTreeMap<[u8; 32],u64>).unwrap()
+    } else {
+        panic!("fee call rejected")
+    }
+}
+
+pub fn transaction_timestamps(
+    env: &StateMachine,
+    ledger_id: Principal,
+) -> BTreeMap<(u64, u64), ()> {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "get_transaction_timestamps",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, BTreeMap<(u64, u64),()>).unwrap()
+    } else {
+        panic!("fee call rejected")
     }
 }

@@ -33,14 +33,17 @@ const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
 const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
-const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(6);
+const TRANSACTION_HASH_MEMORY_ID: MemoryId = MemoryId::new(6);
+const TRANSACTION_TIMESTAMP_MEMORY_ID: MemoryId = MemoryId::new(7);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type TransactionLog = StableBTreeMap<Hash, u64, VMem>;
+pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
+pub type TransactionTimeStampKey = (u64, u64);
+pub type TransactionTimeStamps = StableBTreeMap<TransactionTimeStampKey, (), VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
@@ -177,7 +180,8 @@ pub struct State {
     balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
-    pub transactions: TransactionLog,
+    pub transaction_hashes: TransactionHashes,
+    pub transaction_timestamps: TransactionTimeStamps,
     // In-memory cache dropped on each upgrade.
     cache: Cache,
 }
@@ -229,11 +233,18 @@ impl State {
         let hash = b.hash();
         self.cache.phash = Some(hash);
         let tx_hash = b.transaction.hash();
+        let created_at_time = b.transaction.created_at_time;
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
-        // Add block index to the list of transactions and set the hash as its key
-        self.transactions.insert(tx_hash, self.blocks.len() - 1);
+        if let Some(ts) = created_at_time {
+            // Add block index to the list of transactions and set the hash as its key
+            self.transaction_hashes
+                .insert(tx_hash, self.blocks.len() - 1);
+            self.transaction_timestamps
+                .insert((ts, self.blocks.len() - 1), ());
+        }
+
         hash
     }
 
@@ -276,7 +287,8 @@ thread_local! {
             blocks,
             balances,
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
-            transactions: TransactionLog::init(mm.get(TRANSACTION_MEMORY_ID)),
+            transaction_hashes: TransactionHashes::init(mm.get(TRANSACTION_HASH_MEMORY_ID)),
+            transaction_timestamps: TransactionTimeStamps::init(mm.get(TRANSACTION_TIMESTAMP_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
@@ -286,12 +298,11 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|cell| f(&cell.borrow()))
 }
 
-const APPROVE_PRUNE_LIMIT: usize = 100;
-
 pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| {
         let result = f(&mut cell.borrow_mut());
-        prune(&mut cell.borrow_mut(), now, APPROVE_PRUNE_LIMIT);
+        prune_approvals(now, &mut cell.borrow_mut(), config::APPROVE_PRUNE_LIMIT);
+        prune_transactions(now, &mut cell.borrow_mut(), config::TRANSACTION_PRUNE_LIMIT);
         check_invariants(&cell.borrow());
         result
     })
@@ -379,7 +390,7 @@ pub fn record_deposit(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: Some(0),
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
@@ -391,7 +402,6 @@ pub fn deduplicate(
     tx_hash: [u8; 32],
     now: u64,
 ) -> Result<(), DeduplicationError> {
-    // TODO: purge old transactions
     if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
         // If the created timestamp is outside of the permitted Transaction window
         if created_at_time
@@ -406,7 +416,7 @@ pub fn deduplicate(
             return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
         }
 
-        if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
+        if let Some(block_height) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
             return Err(DeduplicationError::Duplicate {
                 duplicate_of: Nat::from(block_height),
             });
@@ -544,7 +554,7 @@ pub fn send(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(0),
+            effective_fee: Some(crate::config::FEE),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -735,25 +745,52 @@ fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u1
     }
 }
 
-fn prune(s: &mut State, now: u64, limit: usize) -> usize {
-    let mut pruned = 0;
-
+fn prune_approvals(now: u64, s: &mut State, limit: usize) {
     for _ in 0..limit {
         match s.expiration_queue.first_key_value() {
             Some((key, _value)) => {
                 if key.0 > now {
-                    return pruned;
+                    return;
                 }
                 s.approvals.remove(&key.1);
                 s.expiration_queue.remove(&key);
-                pruned += 1;
             }
-            None => {
-                return pruned;
-            }
+            None => return,
         }
     }
-    pruned
+}
+
+fn prune_transactions(now: u64, s: &mut State, limit: usize) {
+    let pruned = 0;
+    while let Some(((transaction_timestamp, block_idx), _)) =
+        s.transaction_timestamps.first_key_value()
+    {
+        if pruned >= limit {
+            return;
+        }
+        let block = s.blocks.get(block_idx).unwrap_or_else(|| {
+            ic_cdk::trap(&format!("Cannot find block with block id: {}", block_idx))
+        });
+        if transaction_timestamp
+            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+            >= now
+        {
+            return;
+        }
+        s.transaction_timestamps
+            .remove(&(transaction_timestamp, block_idx));
+        let tx_hash = block.transaction.hash();
+        // Transactions before and after the deduplication window never make it into storage as they are rejected by the deduplication method
+        // Therefore, two tx hashes cannot exists within the deduplication window. This means that two entries in the ´transaction_timestamp´ struct with the same ´created_at_timestamps´ but different ´block_index´ cannot point to two blocks with identical transaction hashes within the deduplication window.
+        // Example: if the ´transaction_timestamp´ storage has the entries [(time_a,block_a),(time_a,block_b)] then the hashes of the transactions in block_a and block_b cannot be identical
+        if s.transaction_hashes.remove(&tx_hash) != Some(block_idx) {
+            ic_cdk::trap(&format!(
+                "Transaction hash {:?} is stored in multiple blocks within the transaction window",
+                tx_hash
+            ))
+        }
+    }
 }
 
 pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {

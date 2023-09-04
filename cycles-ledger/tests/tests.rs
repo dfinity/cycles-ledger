@@ -5,7 +5,7 @@ use std::{
 };
 
 use candid::{Encode, Nat, Principal};
-use client::{deposit, get_raw_transactions, transfer};
+use client::{deposit, get_raw_transactions, transaction_hashes, transfer};
 use cycles_ledger::{
     config::{self, FEE},
     endpoints::{GetTransactionsResult, SendArgs, SendErrorReason},
@@ -35,7 +35,10 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
-use crate::client::{approve, balance_of, fee, get_allowance, send, total_supply, transfer_from};
+use crate::client::{
+    approve, balance_of, fee, get_allowance, send, total_supply, transaction_timestamps,
+    transfer_from,
+};
 
 mod client;
 
@@ -66,6 +69,8 @@ fn get_wasm(name: &str) -> Vec<u8> {
         .target("wasm32-unknown-unknown")
         .bin(name)
         .arg("--release")
+        .arg("--features")
+        .arg("testing")
         .run()
         .expect("Unable to run cargo build");
     std::fs::read(binary.path()).unwrap_or_else(|_| panic!("{} wasm file not found", name))
@@ -190,7 +195,6 @@ fn test_send_flow() {
             from_subaccount: None,
             to: send_receiver,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(send_amount),
         },
     )
@@ -217,7 +221,6 @@ fn test_send_flow() {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
             to: send_receiver,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(send_amount),
         },
     )
@@ -249,7 +252,6 @@ fn test_send_flow() {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
             to: send_receiver,
             created_at_time: Some(now),
-            memo: None,
             amount: Nat::from(send_amount),
         },
     )
@@ -260,33 +262,6 @@ fn test_send_flow() {
     );
     assert_eq!(
         balance_of(env, ledger_id, user_subaccount_3),
-        1_000_000_000 - send_amount - FEE
-    );
-    expected_total_supply -= send_amount + FEE;
-    assert_eq!(total_supply(env, ledger_id), expected_total_supply);
-
-    // send cycles from subaccount with Memo set
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 300_000_000_u128;
-    let _send_idx = send(
-        env,
-        ledger_id,
-        user_subaccount_4,
-        SendArgs {
-            from_subaccount: Some(*user_subaccount_4.effective_subaccount()),
-            to: send_receiver,
-            created_at_time: None,
-            memo: Some(Memo(ByteBuf::from([5; 32]))),
-            amount: Nat::from(send_amount),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
-    );
-    assert_eq!(
-        balance_of(env, ledger_id, user_subaccount_4),
         1_000_000_000 - send_amount - FEE
     );
     expected_total_supply -= send_amount + FEE;
@@ -318,7 +293,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(u128::MAX),
         },
     )
@@ -343,7 +317,6 @@ fn test_send_fails() {
             from_subaccount: Some([5; 32]),
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(100_000_000_u128),
         },
     )
@@ -368,7 +341,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: self_authenticating_principal,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(500_000_000_u128),
         },
     )
@@ -397,7 +369,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: deleted_canister,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(500_000_000_u128),
         },
     )
@@ -430,7 +401,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(u128::MAX),
         },
     )
@@ -444,7 +414,6 @@ fn test_send_fails() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(u128::MAX),
         },
     )
@@ -1343,6 +1312,154 @@ fn test_deduplication() {
 }
 
 #[test]
+fn test_pruning_transactions() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let transfer_amount = Nat::from(100_000);
+
+    let check_tx_hashes = |length: u64, first_block: u64, last_block: u64| {
+        let tx_hashes = transaction_hashes(env, ledger_id);
+        let mut idxs: Vec<&u64> = tx_hashes.values().collect::<Vec<&u64>>();
+        idxs.sort();
+        assert_eq!(idxs.len() as u64, length);
+        assert_eq!(*idxs[0], first_block);
+        assert_eq!(*idxs[idxs.len() - 1], last_block);
+    };
+    let check_tx_timestamps =
+        |length: u64, first_timestamp: (u64, u64), last_timestamp: (u64, u64)| {
+            let tx_timestamps = transaction_timestamps(env, ledger_id);
+            assert_eq!(
+                tx_timestamps.first_key_value().unwrap(),
+                (&first_timestamp, &())
+            );
+            assert_eq!(
+                tx_timestamps.last_key_value().unwrap(),
+                (&last_timestamp, &())
+            );
+            assert_eq!(tx_timestamps.len() as u64, length);
+        };
+
+    let tx_hashes = transaction_hashes(env, ledger_id);
+    // There have not been any transactions. The transaction hashes log should be empty
+    assert!(tx_hashes.is_empty());
+
+    let deposit_amount = 100_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // A deposit does not have a `created_at_time` argument and is therefore not recorded
+    let tx_hashes = transaction_hashes(env, ledger_id);
+    assert!(tx_hashes.is_empty());
+
+    // Create a transfer where `created_at_time` is not set
+    transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    // There should not be an entry for deduplication
+    let tx_hashes = transaction_hashes(env, ledger_id);
+    assert!(tx_hashes.is_empty());
+
+    let time = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // Create a transfer with `created_at_time` set
+    let transfer_idx_2 = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: Some(time),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
+
+    // There should be one transaction appearing in the transaction queue for deduplication
+    check_tx_hashes(1, transfer_idx_2, transfer_idx_2);
+    check_tx_timestamps(1, (time, transfer_idx_2), (time, transfer_idx_2));
+
+    // Create another transaction with the same timestamp but a different hash
+    let transfer_idx_3 = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: Some(time),
+            memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
+    // There are now two different tx hashes in 2 different transactions
+    check_tx_hashes(2, transfer_idx_2, transfer_idx_3);
+    check_tx_timestamps(2, (time, transfer_idx_2), (time, transfer_idx_3));
+
+    // Advance time to move the Transaction window
+    env.advance_time(Duration::from_nanos(
+        config::TRANSACTION_WINDOW.as_nanos() as u64
+            + config::PERMITTED_DRIFT.as_nanos() as u64 * 2,
+    ));
+    env.tick();
+    let time = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // Create another transaction to trigger pruning
+    let transfer_idx_4 = transfer(
+        env,
+        ledger_id,
+        user1,
+        TransferArg {
+            from_subaccount: None,
+            to: Principal::anonymous().into(),
+            fee: None,
+            created_at_time: Some(time),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap()
+    .0
+    .to_u64()
+    .unwrap();
+    // Transfers 2 and 3 should be removed leaving only one transfer left
+    check_tx_hashes(1, transfer_idx_4, transfer_idx_4);
+    check_tx_timestamps(1, (time, transfer_idx_4), (time, transfer_idx_4));
+}
+
+#[test]
 fn test_total_supply_after_upgrade() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
@@ -1375,7 +1492,6 @@ fn test_total_supply_after_upgrade() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(1_000_000_000),
         },
     )
@@ -1482,7 +1598,6 @@ fn test_icrc3_get_transactions() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            memo: None,
             amount: Nat::from(2_000_000_000),
         },
     )
@@ -1642,7 +1757,7 @@ fn block(
 ) -> Block {
     let effective_fee = match operation {
         Burn { .. } => Some(0),
-        Mint { .. } => Some(FEE),
+        Mint { .. } => Some(0),
         Transfer { fee, .. } => {
             if fee.is_none() {
                 Some(FEE)

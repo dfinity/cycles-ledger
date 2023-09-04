@@ -474,6 +474,32 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
 
 fn main() {}
 
+#[cfg(feature = "testing")]
+#[query]
+#[candid_method(query)]
+fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
+    let mut res = std::collections::BTreeMap::new();
+    read_state(|state| {
+        for (key, value) in state.transaction_hashes.iter() {
+            res.insert(key, value);
+        }
+    });
+    res
+}
+
+#[cfg(feature = "testing")]
+#[query]
+#[candid_method(query)]
+fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
+    let mut res = std::collections::BTreeMap::new();
+    read_state(|state| {
+        for (key, value) in state.transaction_timestamps.iter() {
+            res.insert(key, value);
+        }
+    });
+    res
+}
+
 #[test]
 fn test_candid_interface_compatibility() {
     use candid::utils::{service_compatible, CandidSource};

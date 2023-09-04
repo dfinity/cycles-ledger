@@ -38,8 +38,6 @@ pub struct SendArgs {
     pub to: Principal,
     #[serde(default)]
     pub created_at_time: Option<u64>,
-    #[serde(default)]
-    pub memo: Option<Memo>,
     pub amount: NumCycles,
 }
 
