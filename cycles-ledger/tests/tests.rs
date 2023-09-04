@@ -1756,7 +1756,7 @@ fn block(
     phash: Option<[u8; 32]>,
 ) -> Block {
     let effective_fee = match operation {
-        Burn { .. } => Some(0),
+        Burn { .. } => Some(FEE),
         Mint { .. } => Some(0),
         Transfer { fee, .. } => {
             if fee.is_none() {
