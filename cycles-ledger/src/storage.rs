@@ -764,12 +764,12 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
             Some(start) if start < log_length => start,
             _ => continue,
         };
-        let end = match length.0.to_u64() {
-            Some(length) => start + length.min(log_length - start - 1),
+        let length = match length.0.to_u64() {
+            Some(length) => start + length.min(log_length - start),
             None => continue,
         };
         read_state(|state| {
-            for id in start..=end {
+            for id in start..length {
                 let transaction = state
                     .blocks
                     .get(id)

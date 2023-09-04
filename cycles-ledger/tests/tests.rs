@@ -1465,6 +1465,14 @@ fn test_icrc3_get_transactions() {
     // blocks have the timestamp
     let block1 = actual_txs[1].1.clone();
 
+    // check retrieving a subset of the transactions
+    let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
+    assert_eq!(txs.log_length, 2);
+    assert_eq!(txs.archived_transactions.len(), 0);
+    let actual_txs = get_txs(&txs);
+    let expected_txs = vec![(0, block0.clone())];
+    assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
+
     // add a burn block
     send(
         env,
