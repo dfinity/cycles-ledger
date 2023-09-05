@@ -15,12 +15,12 @@ panic = 'abort'
 
 [dependencies]
 anyhow = "1.0.75"
-candid = "0.8.4"
+candid = "0.9.5"
 ciborium = "0.2"
-ic-cdk = { version = "0.6.0" }
+ic-cdk = { version = "0.10.0" }
 ic-cdk-macros = { version = "0.6.0" }
 ic-stable-structures = "0.5.0"
-icrc-ledger-types = "0.1.0"
+icrc-ledger-types = "0.1.1"
 minicbor = {version = "0.19.1", features = ["alloc", "derive"]}
 num-bigint = "0.4"
 num-traits = "0.2"
@@ -31,9 +31,9 @@ thiserror = "1.0"
 [dev-dependencies]
 depositor = { path = "../depositor" }
 escargot = { version = "0.5.7", features = ["print"] }
-ic-test-state-machine-client = "2.2.1"
-icrc1-test-env-state-machine = { git = "https://github.com/dfinity/ICRC-1", version = "0.1.0" }
-icrc1-test-suite = { git = "https://github.com/dfinity/ICRC-1", version = "0.1.1" }
+ic-test-state-machine-client = "3.0.0"
+icrc1-test-env-state-machine = { git = "https://github.com/dfinity/ICRC-1" }
+icrc1-test-suite = { git = "https://github.com/dfinity/ICRC-1" }
 futures = "0.3.28"
 proptest = "1.2.0"
 
