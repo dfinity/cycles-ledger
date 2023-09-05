@@ -1543,7 +1543,7 @@ fn test_icrc3_get_transactions() {
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 1);
     assert_eq!(txs.archived_transactions.len(), 0);
-    let block0 = block(
+    let mut block0 = block(
         Mint {
             to: user1,
             amount: 5_000_000_000,
@@ -1555,9 +1555,10 @@ fn test_icrc3_get_transactions() {
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
-    // Replacing expected blocks with the actual blocks is needed because only actual
-    // blocks have the timestamp
-    let block0 = actual_txs[0].1.clone();
+    // Replace the dummy timestamp in the crafted block with the real one,
+    // i.e. the one the Ledger wrote in the real block. This is required
+    // so that we can hash the block and use that as parent hash.
+    block0.timestamp = actual_txs[0].1.timestamp;
 
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
@@ -1565,7 +1566,7 @@ fn test_icrc3_get_transactions() {
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 2);
     assert_eq!(txs.archived_transactions.len(), 0);
-    let block1 = block(
+    let mut block1 = block(
         Mint {
             to: user2,
             amount: 3_000_000_000,
@@ -1577,9 +1578,10 @@ fn test_icrc3_get_transactions() {
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone()), (1, block1.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
-    // Replacing expected blocks with the actual blocks is needed because only actual
-    // blocks have the timestamp
-    let block1 = actual_txs[1].1.clone();
+    // Replace the dummy timestamp in the crafted block with the real one,
+    // i.e. the one the Ledger wrote in the real block. This is required
+    // so that we can hash the block and use that as parent hash.
+    block1.timestamp = actual_txs[1].1.timestamp;
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
@@ -1607,7 +1609,7 @@ fn test_icrc3_get_transactions() {
     assert_eq!(txs.log_length, 3);
     assert_eq!(txs.archived_transactions.len(), 0);
     let send_memo = encode_send_memo(&depositor_id);
-    let block2 = block(
+    let mut block2 = block(
         Burn {
             from: user2,
             amount: 2_000_000_000,
@@ -1623,9 +1625,10 @@ fn test_icrc3_get_transactions() {
         (2, block2.clone()),
     ];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
-    // Replacing expected blocks with the actual blocks is needed because only actual
-    // blocks have the timestamp
-    let block2 = actual_txs[2].1.clone();
+    // Replace the dummy timestamp in the crafted block with the real one,
+    // i.e. the one the Ledger wrote in the real block. This is required
+    // so that we can hash the block and use that as parent hash.
+    block2.timestamp = actual_txs[2].1.timestamp;
 
     // add a couple of blocks
     transfer(
