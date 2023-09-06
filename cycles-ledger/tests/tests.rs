@@ -1579,8 +1579,8 @@ fn test_icrc3_get_transactions() {
     let expected_txs = vec![(0, block0.clone()), (1, block1.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
     // Replace the dummy timestamp in the crafted block with the real one,
-    // i.e. the one the Ledger wrote in the real block. This is required
-    // so that we can hash the block and use that as parent hash.
+    // i.e., the timestamp the ledger wrote in the real block. This is required
+    // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
 
     // check retrieving a subset of the transactions
