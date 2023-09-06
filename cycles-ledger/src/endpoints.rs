@@ -178,7 +178,7 @@ pub struct ArchivedTransactions {
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct GetTransactionsResult {
     // Total number of transactions in the
-    // transaction log
+    // transaction log.
     pub log_length: Nat,
 
     // System certificate for the hash of the
