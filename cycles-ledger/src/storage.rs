@@ -495,7 +495,7 @@ const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH 
 // is lower than [crate::config::FEE].
 pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     log!(
-        P0,
+        P1,
         "[penalize]: account {:?} is being penalized at timestamp {}",
         from,
         now
@@ -506,7 +506,7 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
         let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
             log!(
-                P1,
+                P0,
                 "[penalize]: account {:?} cannot be penalized as its balance {} is too low.",
                 from,
                 balance
@@ -687,7 +687,7 @@ fn record_approval(
                 }
             }
             if amount == 0 {
-                log!(P1, "[record_approval]: amount was set to 0");
+                log!(P0, "[record_approval]: amount was set to 0");
                 return;
             }
             if expires_at > 0 {
