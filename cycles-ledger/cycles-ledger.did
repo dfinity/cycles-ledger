@@ -111,7 +111,7 @@ type GetTransactionsArgs = vec record { start : nat; length : nat };
 
 type GetTransactionsResult = record {
     // Total number of transactions in the
-    // transaction log
+    // transaction log.
     log_length : nat;
 
     // System certificate for the hash of the
