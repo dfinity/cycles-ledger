@@ -799,11 +799,11 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     for GetTransactionsArg { start, length } in args {
         let start = match start.0.to_u64() {
             Some(start) if start < log_length => start,
-            _ => continue, // TODO: log this error
+            _ => continue, // TODO(FI-924): log this error
         };
         let end_excluded = match length.0.to_u64() {
             Some(length) => log_length.min(start + length),
-            None => continue, // TODO: log this error
+            None => continue, // TODO(FI-924): log this error
         };
         read_state(|state| {
             for id in start..end_excluded {
