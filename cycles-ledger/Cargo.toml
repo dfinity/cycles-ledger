@@ -27,6 +27,10 @@ num-traits = "0.2"
 serde = "1"
 serde_bytes = "0.11"
 thiserror = "1.0"
+ic-canister-log = "0.2.0"
+ic-canisters-http-types = { git = "https://github.com/dfinity/ic", rev = "a033d30216116523dc495a4d0f3976b5aa47c2c8" }
+ic-metrics-encoder = "1.1"
+serde_json = "1.0.40"
 
 [dev-dependencies]
 depositor = { path = "../depositor" }

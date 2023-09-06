@@ -1,8 +1,12 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
+use cycles_ledger::logs::{Log, LogEntry, Priority};
+use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::memo::SendMemo;
 use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
+use ic_canister_log::export as export_logs;
+use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
@@ -469,6 +473,82 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     );
 
     Ok(Nat::from(txid))
+}
+
+#[candid_method(query)]
+#[query]
+fn http_request(req: HttpRequest) -> HttpResponse {
+    if req.path() == "/metrics" {
+        let mut writer =
+            ic_metrics_encoder::MetricsEncoder::new(vec![], ic_cdk::api::time() as i64 / 1_000_000);
+
+        match encode_metrics(&mut writer) {
+            Ok(()) => HttpResponseBuilder::ok()
+                .header("Content-Type", "text/plain; version=0.0.4")
+                .with_body_and_content_length(writer.into_inner())
+                .build(),
+            Err(err) => {
+                HttpResponseBuilder::server_error(format!("Failed to encode metrics: {}", err))
+                    .build()
+            }
+        }
+    } else if req.path() == "/logs" {
+        use serde_json;
+        let mut entries: Log = Default::default();
+        for entry in export_logs(&P0) {
+            entries.entries.push(LogEntry {
+                timestamp: entry.timestamp,
+                priority: Priority::P0,
+                file: entry.file.to_string(),
+                line: entry.line,
+                message: entry.message,
+            });
+        }
+        for entry in export_logs(&P1) {
+            entries.entries.push(LogEntry {
+                timestamp: entry.timestamp,
+                priority: Priority::P1,
+                file: entry.file.to_string(),
+                line: entry.line,
+                message: entry.message,
+            });
+        }
+        HttpResponseBuilder::ok()
+            .header("Content-Type", "application/json; charset=utf-8")
+            .with_body_and_content_length(serde_json::to_string(&entries).unwrap_or_default())
+            .build()
+    } else {
+        HttpResponseBuilder::not_found().build()
+    }
+}
+
+pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
+    w.encode_gauge(
+        "cycles_ledger_stable_memory_pages",
+        ic_cdk::api::stable::stable_size() as f64,
+        "Size of the stable memory allocated by this canister measured in 64K Wasm pages.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_stable_memory_bytes",
+        (ic_cdk::api::stable::stable_size() * 64 * 1024) as f64,
+        "Size of the stable memory allocated by this canister.",
+    )?;
+
+    let cycle_balance = ic_cdk::api::canister_balance128() as f64;
+    w.encode_gauge(
+        "cycles_ledger_cycle_balance",
+        cycle_balance,
+        "Cycle balance on this canister.",
+    )?;
+    w.gauge_vec("cycle_balance", "Cycle balance on this canister.")?
+        .value(&[("canister", "cycles-ledger")], cycle_balance)?;
+
+    w.encode_gauge(
+        "cycles_ledger_number_of_blocks",
+        read_state(|state| state.blocks.len()) as f64,
+        "Total number of blocks stored in the stable memory.",
+    )?;
+    Ok(())
 }
 
 fn main() {}
