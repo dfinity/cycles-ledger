@@ -1507,7 +1507,7 @@ fn test_total_supply_after_upgrade() {
 
 #[test]
 fn test_icrc3_get_transactions() {
-    // Utility to extract the id and the tx of all transactions in the result
+    // Utility to extract all IDs and the corresponding transactions from the given [GetTransactionsResult].
     let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Block)> {
         res.transactions
             .iter()
