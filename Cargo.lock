@@ -257,8 +257,11 @@ dependencies = [
  "depositor",
  "escargot",
  "futures",
+ "ic-canister-log",
+ "ic-canisters-http-types",
  "ic-cdk 0.6.10",
  "ic-cdk-macros",
+ "ic-metrics-encoder",
  "ic-stable-structures",
  "ic-test-state-machine-client",
  "icrc-ledger-types",
@@ -270,6 +273,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_bytes",
+ "serde_json",
  "thiserror",
 ]
 
@@ -541,6 +545,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "ic-canister-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb82c4f617ecff6e452fe65af0489626ec7330ffe3eedd9ea14e6178eea48d1a"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ic-canisters-http-types"
+version = "0.8.0"
+source = "git+https://github.com/dfinity/ic?rev=323bb2ceda477a6f7d13ab007c47935824b63150#323bb2ceda477a6f7d13ab007c47935824b63150"
+dependencies = [
+ "candid",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
 name = "ic-cdk"
 version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,6 +603,12 @@ dependencies = [
  "serde_tokenstream",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "ic-metrics-encoder"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cb321e571828d64d62319deeaaec4c8e68cdf93144dd6fe248e7a51ab2d3b5d"
 
 [[package]]
 name = "ic-stable-structures"

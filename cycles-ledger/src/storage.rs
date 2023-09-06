@@ -1,4 +1,5 @@
 use crate::generic_to_ciborium_value;
+use crate::logs::{P0, P1};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -6,6 +7,7 @@ use crate::{
 };
 use anyhow::Context;
 use candid::Nat;
+use ic_canister_log::log;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -492,11 +494,23 @@ const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
 // is lower than [crate::config::FEE].
 pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
+    log!(
+        P0,
+        "[penalize]: account {:?} is being penalized at timestamp {}",
+        from,
+        now
+    );
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
+            log!(
+                P1,
+                "[penalize]: account {:?} cannot be penalized as its balance {} is too low.",
+                from,
+                balance
+            );
             return None;
         }
 
@@ -668,9 +682,12 @@ fn record_approval(
     match s.approvals.get(&key) {
         None => {
             if let Some(expected_allowance) = expected_allowance {
-                assert_eq!(expected_allowance, 0);
+                if expected_allowance != 0 {
+                    ic_cdk::trap(&format!("No recording of any allowances for approval combination: from {:?} and spender {:?} and expected allowance is greater than 0: {}",from,spender,expected_allowance));
+                }
             }
             if amount == 0 {
+                log!(P1, "[record_approval]: amount was set to 0");
                 return;
             }
             if expires_at > 0 {
