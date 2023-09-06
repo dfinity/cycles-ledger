@@ -122,6 +122,8 @@ type GetTransactionsResult = record {
 
     transactions : vec record { id : nat; transaction: Value };
 
+    // The archived_transactions vector is always going to be empty
+    // for this ledger because there is no archive node.
     archived_transactions : vec record {
         args : GetTransactionsArgs;
         callback : func (GetTransactionsArgs) -> (GetTransactionsResult) query;
