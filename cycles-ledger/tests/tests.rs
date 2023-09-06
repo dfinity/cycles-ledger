@@ -1626,8 +1626,8 @@ fn test_icrc3_get_transactions() {
     ];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
     // Replace the dummy timestamp in the crafted block with the real one,
-    // i.e. the one the Ledger wrote in the real block. This is required
-    // so that we can hash the block and use that as parent hash.
+    // i.e., the timestamp the ledger wrote in the real block. This is required
+    // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
 
     // add a couple of blocks
