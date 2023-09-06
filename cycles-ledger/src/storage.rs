@@ -387,7 +387,7 @@ pub fn record_deposit(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: Some(0),
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
@@ -563,7 +563,7 @@ pub fn send(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(0),
+            effective_fee: Some(crate::config::FEE),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })

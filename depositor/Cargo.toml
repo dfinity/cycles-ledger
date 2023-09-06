@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 cycles-ledger = { path = "../cycles-ledger" }
-candid = "0.8.4"
-ic-cdk = { version = "0.6.0" }
+candid = "0.9.5"
+ic-cdk = { version = "0.10.0" }
 ic-cdk-macros = { version = "0.6.0" }
-icrc-ledger-types = "0.1.0"
+icrc-ledger-types = "0.1.1"
 serde = "1"
