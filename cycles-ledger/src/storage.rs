@@ -1,5 +1,16 @@
+use crate::logs::{P0, P1};
+use crate::{
+    ciborium_to_generic_value, compact_account,
+    config::{self, MAX_MEMO_LENGTH},
+    endpoints::{
+        DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        TransactionWithId,
+    },
+    generic_to_ciborium_value,
+};
 use anyhow::Context;
 use candid::Nat;
+use ic_canister_log::log;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -17,16 +28,6 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
-
-use crate::{
-    ciborium_to_generic_value, compact_account,
-    config::{self, MAX_MEMO_LENGTH},
-    endpoints::{
-        DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
-        TransactionWithId,
-    },
-    generic_to_ciborium_value,
-};
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -497,11 +498,23 @@ const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
 // is lower than [crate::config::FEE].
 pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
+    log!(
+        P1,
+        "[penalize]: account {:?} is being penalized at timestamp {}",
+        from,
+        now
+    );
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
+            log!(
+                P0,
+                "[penalize]: account {:?} cannot be penalized as its balance {} is too low.",
+                from,
+                balance
+            );
             return None;
         }
 
@@ -673,9 +686,12 @@ fn record_approval(
     match s.approvals.get(&key) {
         None => {
             if let Some(expected_allowance) = expected_allowance {
-                assert_eq!(expected_allowance, 0);
+                if expected_allowance != 0 {
+                    ic_cdk::trap(&format!("No recording of any allowances for approval combination: from {:?} and spender {:?} and expected allowance is greater than 0: {}",from,spender,expected_allowance));
+                }
             }
             if amount == 0 {
+                log!(P0, "[record_approval]: amount was set to 0");
                 return;
             }
             if expires_at > 0 {

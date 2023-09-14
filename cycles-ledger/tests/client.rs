@@ -141,6 +141,23 @@ pub fn approve(
     }
 }
 
+pub fn transfer(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    args: TransferArg,
+) -> Result<Nat, TransferError> {
+    let arg = Encode!(&args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .update_call(ledger_id, from.owner, "icrc1_transfer", arg)
+        .unwrap()
+    {
+        Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
+    } else {
+        panic!("transfer rejected")
+    }
+}
+
 pub fn transfer_from(
     env: &StateMachine,
     ledger_id: Principal,
@@ -170,23 +187,6 @@ pub fn transfer_from(
         Decode!(&res, Result<Nat, TransferFromError>).unwrap()
     } else {
         panic!("icrc2_transfer_from rejected")
-    }
-}
-
-pub fn transfer(
-    env: &StateMachine,
-    ledger_id: Principal,
-    from: Account,
-    args: TransferArg,
-) -> Result<Nat, TransferError> {
-    let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(ledger_id, from.owner, "icrc1_transfer", arg)
-        .unwrap()
-    {
-        Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
-    } else {
-        panic!("transfer rejected")
     }
 }
 

@@ -140,11 +140,7 @@ impl TryFrom<candid::Func> for GetTransactionsFn {
 
 impl CandidType for GetTransactionsFn {
     fn _ty() -> candid::types::Type {
-        candid::types::Type::Func(candid::types::Function {
-            modes: vec![candid::parser::types::FuncMode::Query],
-            args: vec![GetTransactionsArgs::_ty()],
-            rets: vec![GetTransactionsResult::_ty()],
-        })
+        candid::func!((GetTransactionsArgs) -> (GetTransactionsResult) query)
     }
 
     fn idl_serialize<S>(&self, serializer: S) -> Result<(), S::Error>
