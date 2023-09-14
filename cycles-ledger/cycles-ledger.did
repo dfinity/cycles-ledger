@@ -59,7 +59,7 @@ type SendErrorReason = variant {
   InsufficientFunds : record { balance : nat };
 };
 type SupportedStandard = record { url : text; name : text };
-type TransferArg = record {
+type TransferArgs = record {
   to : Account;
   fee : opt nat;
   memo : opt vec nat8;
@@ -141,7 +141,7 @@ service : {
   icrc1_supported_standards : () -> (vec SupportedStandard) query;
   icrc1_symbol : () -> (text) query;
   icrc1_total_supply : () -> (nat) query;
-  icrc1_transfer : (TransferArg) -> (variant { Ok : BlockIndex; Err : TransferError });
+  icrc1_transfer : (TransferArgs) -> (variant { Ok : BlockIndex; Err : TransferError });
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });

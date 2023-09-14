@@ -24,7 +24,8 @@ use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
     icrc1::{
         account::Account,
-        transfer::{Memo, TransferArg, TransferError},
+        transfer::TransferArg as TransferArgs,
+        transfer::{Memo, TransferError},
     },
     icrc2::approve::ApproveArgs,
 };
@@ -664,7 +665,7 @@ fn test_basic_transfer() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -692,7 +693,7 @@ fn test_basic_transfer() {
             env,
             ledger_id,
             user2,
-            TransferArg {
+            TransferArgs {
                 from_subaccount: None,
                 to: user2,
                 fee: None,
@@ -714,7 +715,7 @@ fn test_basic_transfer() {
             env,
             ledger_id,
             user1,
-            TransferArg {
+            TransferArgs {
                 from_subaccount: None,
                 to: user1,
                 fee: Some(Nat::from(0)),
@@ -749,7 +750,7 @@ fn test_deduplication() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -764,7 +765,7 @@ fn test_deduplication() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -787,7 +788,7 @@ fn test_deduplication() {
             env,
             ledger_id,
             user1,
-            TransferArg {
+            TransferArgs {
                 from_subaccount: None,
                 to: user1,
                 fee: None,
@@ -804,7 +805,7 @@ fn test_deduplication() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -822,7 +823,7 @@ fn test_deduplication() {
             env,
             ledger_id,
             user1,
-            TransferArg {
+            TransferArgs {
                 from_subaccount: None,
                 to: user2,
                 fee: None,
@@ -839,7 +840,7 @@ fn test_deduplication() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -863,7 +864,7 @@ fn test_deduplication() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -924,7 +925,7 @@ fn test_pruning_transactions() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: Principal::anonymous().into(),
             fee: None,
@@ -949,7 +950,7 @@ fn test_pruning_transactions() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: Principal::anonymous().into(),
             fee: None,
@@ -972,7 +973,7 @@ fn test_pruning_transactions() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: Principal::anonymous().into(),
             fee: None,
@@ -1005,7 +1006,7 @@ fn test_pruning_transactions() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: Principal::anonymous().into(),
             fee: None,
@@ -1038,7 +1039,7 @@ fn test_total_supply_after_upgrade() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
@@ -1199,7 +1200,7 @@ fn test_icrc3_get_transactions() {
         env,
         ledger_id,
         user1,
-        TransferArg {
+        TransferArgs {
             from_subaccount: None,
             to: user2,
             fee: None,
