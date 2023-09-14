@@ -1071,7 +1071,7 @@ fn test_total_supply_after_upgrade() {
 
 #[test]
 fn test_icrc3_get_transactions() {
-    // Utility to extract the id and the tx of all transactions in the result
+    // Utility to extract all IDs and the corresponding transactions from the given [GetTransactionsResult].
     let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Block)> {
         res.transactions
             .iter()
@@ -1120,8 +1120,8 @@ fn test_icrc3_get_transactions() {
     let expected_txs = vec![(0, block0.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
     // Replace the dummy timestamp in the crafted block with the real one,
-    // i.e. the one the Ledger wrote in the real block. This is required
-    // so that we can hash the block and use that as parent hash.
+    // i.e., the timestamp the ledger wrote in the real block. This is required
+    // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_txs[0].1.timestamp;
 
     // add a second mint block
@@ -1143,8 +1143,8 @@ fn test_icrc3_get_transactions() {
     let expected_txs = vec![(0, block0.clone()), (1, block1.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
     // Replace the dummy timestamp in the crafted block with the real one,
-    // i.e. the one the Ledger wrote in the real block. This is required
-    // so that we can hash the block and use that as parent hash.
+    // i.e., the timestamp the ledger wrote in the real block. This is required
+    // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
 
     // check retrieving a subset of the transactions
@@ -1190,8 +1190,8 @@ fn test_icrc3_get_transactions() {
     ];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
     // Replace the dummy timestamp in the crafted block with the real one,
-    // i.e. the one the Ledger wrote in the real block. This is required
-    // so that we can hash the block and use that as parent hash.
+    // i.e., the timestamp the ledger wrote in the real block. This is required
+    // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
 
     // add a couple of blocks
@@ -1315,7 +1315,7 @@ fn assert_blocks_eq_except_ts(left: &[(u64, Block)], right: &[(u64, Block)]) {
 }
 
 // Creates a block out of the given operation and metadata with `timestamp` set to [u64::MAX ] and `effective_fee`
-// based on the operation
+// based on the operation.
 fn block(
     operation: Operation,
     created_at_time: Option<u64>,
