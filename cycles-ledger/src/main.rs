@@ -1,8 +1,10 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
+use cycles_ledger::endpoints::{
+    DeduplicationError, GetTransactionsArgs, GetTransactionsResult, SendError, SendErrorReason,
+};
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
-use cycles_ledger::memo::SendMemo;
+use cycles_ledger::memo::encode_send_memo;
 use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
 use ic_canister_log::export as export_logs;
@@ -17,7 +19,6 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
-use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
 // candid::Principal has these two consts as private
@@ -281,6 +282,12 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
     )
 }
 
+#[query]
+#[candid_method(query)]
+fn icrc3_get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    storage::get_transactions(args)
+}
+
 fn send_error(from: &Account, reason: SendErrorReason) -> SendError {
     let now = ic_cdk::api::time();
     let fee_block = storage::penalize(from, now).map(|(fee_block, _block_hash)| fee_block);
@@ -335,13 +342,7 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
             },
         ));
     }
-    let memo = SendMemo {
-        receiver: target_canister.canister_id.as_slice(),
-    };
-    let mut encoder = Encoder::new(Vec::new());
-    encoder.encode(memo).expect("Encoding failed");
-    let encoded_memo = encoder.into_writer().into();
-    let memo = validate_memo(Some(encoded_memo));
+    let memo = validate_memo(Some(encode_send_memo(&target_canister.canister_id)));
 
     let transaction = Transaction {
         operation: Operation::Burn { from, amount },

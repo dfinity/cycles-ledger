@@ -1,9 +1,12 @@
-use crate::generic_to_ciborium_value;
 use crate::logs::{P0, P1};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
-    endpoints::DeduplicationError,
+    endpoints::{
+        DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        TransactionWithId,
+    },
+    generic_to_ciborium_value,
 };
 use anyhow::Context;
 use candid::Nat;
@@ -20,6 +23,7 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -131,7 +135,7 @@ pub enum Operation {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Block {
-    transaction: Transaction,
+    pub transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -802,6 +806,43 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
                 tx_hash
             ))
         }
+    }
+}
+
+pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    let log_length = read_state(|state| state.blocks.len());
+    let mut transactions = Vec::new();
+    for GetTransactionsArg { start, length } in args {
+        let start = match start.0.to_u64() {
+            Some(start) if start < log_length => start,
+            _ => continue, // TODO(FI-924): log this error
+        };
+        let end_excluded = match length.0.to_u64() {
+            Some(length) => log_length.min(start + length),
+            None => continue, // TODO(FI-924): log this error
+        };
+        read_state(|state| {
+            for id in start..end_excluded {
+                let transaction = state
+                    .blocks
+                    .get(id)
+                    .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
+                    .0
+                    .to_value()
+                    .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
+                let transaction_with_id = TransactionWithId {
+                    id: Nat::from(id),
+                    transaction,
+                };
+                transactions.push(transaction_with_id);
+            }
+        });
+    }
+    GetTransactionsResult {
+        log_length: Nat::from(log_length),
+        certificate: None, // TODO FI-766
+        transactions,
+        archived_transactions: vec![],
     }
 }
 

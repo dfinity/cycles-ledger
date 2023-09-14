@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{self, DepositResult, SendArgs},
+    endpoints::{
+        self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        SendArgs,
+    },
 };
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
@@ -14,6 +17,7 @@ use icrc_ledger_types::{
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},
+        transfer_from::{TransferFromArgs, TransferFromError},
     },
 };
 use num_traits::ToPrimitive;
@@ -154,6 +158,38 @@ pub fn transfer(
     }
 }
 
+pub fn transfer_from(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    to: Account,
+    spender: Account,
+    amount: u128,
+) -> Result<Nat, TransferFromError> {
+    let args = TransferFromArgs {
+        spender_subaccount: spender.subaccount,
+        from,
+        to,
+        amount: amount.into(),
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: None,
+    };
+    if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            spender.owner,
+            "icrc2_transfer_from",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, TransferFromError>).unwrap()
+    } else {
+        panic!("icrc2_transfer_from rejected")
+    }
+}
+
 pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
     let arg = Encode!(&()).unwrap();
     if let WasmResult::Reply(res) = env
@@ -161,6 +197,34 @@ pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
         .unwrap()
     {
         Decode!(&res, Nat).unwrap()
+    } else {
+        panic!("fee call rejected")
+    }
+}
+
+pub fn get_raw_transactions(
+    env: &StateMachine,
+    ledger_id: Principal,
+    start_lengths: Vec<(u64, u64)>,
+) -> GetTransactionsResult {
+    let get_transactions_args: GetTransactionsArgs = start_lengths
+        .iter()
+        .map(|(start, length)| GetTransactionsArg {
+            start: Nat::from(*start),
+            length: Nat::from(*length),
+        })
+        .collect();
+    let arg = Encode!(&get_transactions_args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "icrc3_get_transactions",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, GetTransactionsResult).unwrap()
     } else {
         panic!("fee call rejected")
     }
