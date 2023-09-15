@@ -13,7 +13,8 @@ use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc1::account::Account,
-    icrc1::transfer::{TransferArg, TransferError},
+    icrc1::transfer::TransferArg as TransferArgs,
+    icrc1::transfer::TransferError,
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},
@@ -145,7 +146,7 @@ pub fn transfer(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
-    args: TransferArg,
+    args: TransferArgs,
 ) -> Result<Nat, TransferError> {
     let arg = Encode!(&args).unwrap();
     if let WasmResult::Reply(res) = env

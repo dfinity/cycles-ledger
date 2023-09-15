@@ -15,7 +15,8 @@ use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{query, update};
 use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use icrc_ledger_types::icrc1::transfer::TransferArg as TransferArgs;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferError};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
@@ -240,7 +241,7 @@ fn execute_transfer(
 
 #[update]
 #[candid_method]
-fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
+fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
