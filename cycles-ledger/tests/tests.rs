@@ -11,7 +11,7 @@ use cycles_ledger::{
     endpoints::{GetTransactionsResult, SendArgs, SendErrorReason},
     memo::encode_send_memo,
     storage::{
-        Block,
+        populate_last_block_hash_and_hash_tree, Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
         Transaction,
     },
@@ -20,6 +20,7 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use futures::FutureExt;
 use ic_cdk::api::call::RejectionCode;
+use ic_certified_map::{AsHashTree, RbTree};
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
     icrc1::{
@@ -1070,6 +1071,15 @@ fn test_total_supply_after_upgrade() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
+fn compute_last_block_hash_and_hash_tree_root_hash(
+    last_block_index: u64,
+    last_block_hash: Hash,
+) -> ByteBuf {
+    let mut hash_tree = RbTree::new();
+    populate_last_block_hash_and_hash_tree(&mut hash_tree, last_block_index, last_block_hash);
+    ByteBuf::from(hash_tree.root_hash())
+}
+
 #[test]
 fn test_icrc3_get_transactions() {
     // Utility to extract all IDs and the corresponding transactions from the given [GetTransactionsResult].
@@ -1095,6 +1105,7 @@ fn test_icrc3_get_transactions() {
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 0);
     assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.certificate, None);
     assert_eq!(get_txs(&txs), vec![]);
 
     let depositor_id = install_depositor(env, ledger_id);
@@ -1124,6 +1135,13 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_txs[0].1.timestamp;
+    assert_eq!(
+        txs.certificate,
+        Some(compute_last_block_hash_and_hash_tree_root_hash(
+            0,
+            block0.hash()
+        ))
+    );
 
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
@@ -1147,6 +1165,13 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
+    assert_eq!(
+        txs.certificate,
+        Some(compute_last_block_hash_and_hash_tree_root_hash(
+            1,
+            block1.hash()
+        ))
+    );
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
@@ -1194,6 +1219,13 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
+    assert_eq!(
+        txs.certificate,
+        Some(compute_last_block_hash_and_hash_tree_root_hash(
+            2,
+            block2.hash()
+        ))
+    );
 
     // add a couple of blocks
     transfer(

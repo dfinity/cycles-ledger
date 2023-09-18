@@ -10,9 +10,9 @@ use crate::{
 };
 use anyhow::Context;
 use candid::Nat;
+use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{leaf_hash, AsHashTree, RbTree};
-use ic_canister_log::log;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -241,18 +241,6 @@ impl State {
         self.cache.hash_tree.root_hash()
     }
 
-    pub fn upgrade_hash_tree(
-        hash_tree: &mut RbTree<&'static str, Hash>,
-        last_block_index: u64,
-        last_block_hash: Hash,
-    ) {
-        hash_tree.insert(
-            "last_block_index",
-            leaf_hash(&last_block_index.to_be_bytes()),
-        );
-        hash_tree.insert("tip_hash", leaf_hash(&last_block_hash));
-    }
-
     pub fn compute_last_block_hash_and_hash_tree(
         blocks: &BlockLog,
     ) -> (Option<Hash>, RbTree<&'static str, Hash>) {
@@ -262,8 +250,7 @@ impl State {
             return (None, hash_tree);
         }
         let last_block_hash = blocks.get(n - 1).unwrap().hash();
-        hash_tree.insert("last_block_index", leaf_hash(&(n - 1).to_be_bytes()));
-        hash_tree.insert("tip_hash", leaf_hash(&last_block_hash));
+        populate_last_block_hash_and_hash_tree(&mut hash_tree, n - 1, last_block_hash);
         (Some(last_block_hash), hash_tree)
     }
 
@@ -278,10 +265,7 @@ impl State {
 
         // change the certified data to point to the new, i.e. last, block
         let block_idx = self.blocks.len() - 1;
-        self.cache
-            .hash_tree
-            .insert("last_block_index", leaf_hash(&block_idx.to_be_bytes()));
-        self.cache.hash_tree.insert("tip_hash", leaf_hash(&hash));
+        populate_last_block_hash_and_hash_tree(&mut self.cache.hash_tree, block_idx, hash);
         set_certified_data(&self.root_hash());
 
         if let Some(ts) = created_at_time {
@@ -356,6 +340,18 @@ fn check_invariants(s: &State) {
             s.approvals.len()
         ))
     }
+}
+
+pub fn populate_last_block_hash_and_hash_tree(
+    hash_tree: &mut RbTree<&'static str, Hash>,
+    last_block_index: u64,
+    last_block_hash: Hash,
+) {
+    hash_tree.insert(
+        "last_block_index",
+        leaf_hash(&last_block_index.to_be_bytes()),
+    );
+    hash_tree.insert("tip_hash", leaf_hash(&last_block_hash));
 }
 
 #[derive(Default)]
@@ -849,7 +845,12 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
 }
 
 pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
-    let log_length = read_state(|state| state.blocks.len());
+    let (log_length, root_hash) = read_state(|state| (state.blocks.len(), state.root_hash()));
+    let certificate = if log_length == 0 {
+        None
+    } else {
+        Some(ByteBuf::from(root_hash))
+    };
     let mut transactions = Vec::new();
     for GetTransactionsArg { start, length } in args {
         let start = match start.0.to_u64() {
@@ -879,7 +880,7 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     }
     GetTransactionsResult {
         log_length: Nat::from(log_length),
-        certificate: None, // TODO FI-766
+        certificate,
         transactions,
         archived_transactions: vec![],
     }
