@@ -1,13 +1,18 @@
-use crate::generic_to_ciborium_value;
+use crate::logs::{P0, P1};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
-    endpoints::DeduplicationError,
+    endpoints::{
+        DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        TransactionWithId,
+    },
+    generic_to_ciborium_value,
 };
 use anyhow::Context;
 use candid::Nat;
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{leaf_hash, AsHashTree, RbTree};
+use ic_canister_log::log;
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -20,6 +25,7 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -30,14 +36,17 @@ const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const BALANCES_MEMORY_ID: MemoryId = MemoryId::new(3);
 const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
-const TRANSACTION_MEMORY_ID: MemoryId = MemoryId::new(6);
+const TRANSACTION_HASH_MEMORY_ID: MemoryId = MemoryId::new(6);
+const TRANSACTION_TIMESTAMP_MEMORY_ID: MemoryId = MemoryId::new(7);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
 pub type AccountKey = (Blob<29>, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type TransactionLog = StableBTreeMap<Hash, u64, VMem>;
+pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
+pub type TransactionTimeStampKey = (u64, u64);
+pub type TransactionTimeStamps = StableBTreeMap<TransactionTimeStampKey, (), VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
@@ -130,7 +139,7 @@ pub enum Operation {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Block {
-    transaction: Transaction,
+    pub transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,7 +185,8 @@ pub struct State {
     balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
-    pub transactions: TransactionLog,
+    pub transaction_hashes: TransactionHashes,
+    pub transaction_timestamps: TransactionTimeStamps,
     // In-memory cache dropped on each upgrade.
     cache: Cache,
 }
@@ -261,17 +271,27 @@ impl State {
         let hash = b.hash();
         self.cache.phash = Some(hash);
         let tx_hash = b.transaction.hash();
+        let created_at_time = b.transaction.created_at_time;
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
-        // Add block index to the list of transactions and set the hash as its key
+
+        // change the certified data to point to the new, i.e. last, block
         let block_idx = self.blocks.len() - 1;
-        self.transactions.insert(tx_hash, block_idx);
         self.cache
             .hash_tree
             .insert("last_block_index", leaf_hash(&block_idx.to_be_bytes()));
         self.cache.hash_tree.insert("tip_hash", leaf_hash(&hash));
         set_certified_data(&self.root_hash());
+
+        if let Some(ts) = created_at_time {
+            // Add block index to the list of transactions and set the hash as its key
+            self.transaction_hashes
+                .insert(tx_hash, self.blocks.len() - 1);
+            self.transaction_timestamps
+                .insert((ts, self.blocks.len() - 1), ());
+        }
+
         hash
     }
 
@@ -307,7 +327,8 @@ thread_local! {
             blocks,
             balances,
             approvals: Approvals::init(mm.get(APPROVALS_MEMORY_ID)),
-            transactions: TransactionLog::init(mm.get(TRANSACTION_MEMORY_ID)),
+            transaction_hashes: TransactionHashes::init(mm.get(TRANSACTION_HASH_MEMORY_ID)),
+            transaction_timestamps: TransactionTimeStamps::init(mm.get(TRANSACTION_TIMESTAMP_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
         })
     });
@@ -317,24 +338,24 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|cell| f(&cell.borrow()))
 }
 
-const APPROVE_PRUNE_LIMIT: usize = 100;
-
 pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| {
         let result = f(&mut cell.borrow_mut());
-        prune(&mut cell.borrow_mut(), now, APPROVE_PRUNE_LIMIT);
+        prune_approvals(now, &mut cell.borrow_mut(), config::APPROVE_PRUNE_LIMIT);
+        prune_transactions(now, &mut cell.borrow_mut(), config::TRANSACTION_PRUNE_LIMIT);
         check_invariants(&cell.borrow());
         result
     })
 }
 
 fn check_invariants(s: &State) {
-    debug_assert!(
-        s.expiration_queue.len() <= s.approvals.len(),
-        "expiration_queue len ({}) larger than approvals len ({})",
-        s.expiration_queue.len(),
-        s.approvals.len()
-    );
+    if s.expiration_queue.len() > s.approvals.len() {
+        ic_cdk::trap(&format!(
+            "expiration_queue len ({}) larger than approvals len ({})",
+            s.expiration_queue.len(),
+            s.approvals.len()
+        ))
+    }
 }
 
 #[derive(Default)]
@@ -386,7 +407,13 @@ pub fn record_deposit(
     memo: Option<Memo>,
     now: u64,
 ) -> (u64, u128, Hash) {
-    assert!(amount >= crate::config::FEE);
+    if amount < crate::config::FEE {
+        ic_cdk::trap(&format!(
+            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
+            amount,
+            crate::config::FEE
+        ))
+    }
 
     let key = to_account_key(account);
     mutate_state(now, |s| {
@@ -403,7 +430,7 @@ pub fn record_deposit(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: Some(0),
         });
         (s.blocks.len() - 1, new_balance, block_hash)
     })
@@ -415,7 +442,6 @@ pub fn deduplicate(
     tx_hash: [u8; 32],
     now: u64,
 ) -> Result<(), DeduplicationError> {
-    // TODO: purge old transactions
     if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
         // If the created timestamp is outside of the permitted Transaction window
         if created_at_time
@@ -430,7 +456,7 @@ pub fn deduplicate(
             return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
         }
 
-        if let Some(block_height) = read_state(|state| state.transactions.get(&tx_hash)) {
+        if let Some(block_height) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
             return Err(DeduplicationError::Duplicate {
                 duplicate_of: Nat::from(block_height),
             });
@@ -493,14 +519,16 @@ fn check_transfer_preconditions(
     now: u64,
     created_at_time: Option<u64>,
 ) {
-    assert!(from_balance >= total_spent_amount);
+    if from_balance < total_spent_amount {
+        ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_spent_amount))
+    }
     if let Some(time) = created_at_time {
-        assert!(
-            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
-            "Transfer created in the future, created_at_time: {}, now: {}",
-            time,
-            now
-        );
+        if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
+            ic_cdk::trap(&format!(
+                "Transfer created in the future, created_at_time: {}, now: {}",
+                time, now
+            ))
+        }
     }
 }
 
@@ -509,11 +537,23 @@ const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
 // is lower than [crate::config::FEE].
 pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
+    log!(
+        P1,
+        "[penalize]: account {:?} is being penalized at timestamp {}",
+        from,
+        now
+    );
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
+            log!(
+                P0,
+                "[penalize]: account {:?} cannot be penalized as its balance {} is too low.",
+                from,
+                balance
+            );
             return None;
         }
 
@@ -549,7 +589,9 @@ pub fn send(
         let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
-        assert!(from_balance >= total_balance_deduction);
+        if from_balance < total_balance_deduction {
+            ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_balance_deduction))
+        }
 
         s.debit(from_key, total_balance_deduction);
         let phash = s.last_block_hash();
@@ -564,7 +606,7 @@ pub fn send(
             },
             timestamp: now,
             phash,
-            effective_fee: Some(0),
+            effective_fee: Some(crate::config::FEE),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -639,21 +681,30 @@ fn check_approve_preconditions(
     now: u64,
     created_at_time: Option<u64>,
 ) {
-    assert!(from_balance >= crate::config::FEE);
-    assert!(
-        from != spender,
-        "self approvals are not allowed, should be checked in the endpoint"
-    );
-    assert!(
-        expires_at.unwrap_or(REMOTE_FUTURE) > now,
-        "Approval expiration time ({}) should be later than now ({now})",
-        expires_at.unwrap_or(REMOTE_FUTURE),
-    );
+    if from_balance < crate::config::FEE {
+        ic_cdk::trap(&format!(
+            "The balance of the account {:?} is {}, which is lower than the cycles ledger fee: {}",
+            from,
+            from_balance,
+            crate::config::FEE
+        ))
+    }
+    if from == spender {
+        ic_cdk::trap("self approvals are not allowed, should be checked in the endpoint")
+    }
+    if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+        ic_cdk::trap(&format!(
+            "Approval expiration time ({}) should be later than now ({now})",
+            expires_at.unwrap_or(REMOTE_FUTURE)
+        ))
+    }
     if let Some(time) = created_at_time {
-        assert!(
-            time <= now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64),
-            "Approval created in the future, created_at_time: {time}, now: {now}"
-        );
+        if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
+            ic_cdk::trap(&format!(
+                "Approval created in the future, created_at_time: {}, now: {}",
+                time, now
+            ))
+        }
     }
 }
 
@@ -674,9 +725,12 @@ fn record_approval(
     match s.approvals.get(&key) {
         None => {
             if let Some(expected_allowance) = expected_allowance {
-                assert_eq!(expected_allowance, 0);
+                if expected_allowance != 0 {
+                    ic_cdk::trap(&format!("No recording of any allowances for approval combination: from {:?} and spender {:?} and expected allowance is greater than 0: {}",from,spender,expected_allowance));
+                }
             }
             if amount == 0 {
+                log!(P0, "[record_approval]: amount was set to 0");
                 return;
             }
             if expires_at > 0 {
@@ -711,25 +765,29 @@ fn record_approval(
 fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u128, now: u64) {
     let key = (to_account_key(account), to_account_key(spender));
 
-    assert!(amount > 0, "Cannot use amount 0 from allowance");
+    if amount == 0 {
+        ic_cdk::trap("Cannot deduct amount 0 from allowance")
+    }
     let (current_allowance, current_expiration) = s.approvals.get(&key).unwrap_or_else(|| {
-        panic!(
+        ic_cdk::trap(&format!(
             "Allowance does not exist, account {}, spender {}",
             account, spender
-        )
+        ));
     });
-    assert!(
-        current_expiration == 0 || current_expiration > now,
-        "Expired allowance, expiration {} is earlier than now {}",
-        current_expiration,
-        now
-    );
-    assert!(
-        current_allowance >= amount,
-        "Insufficient allowance, current_allowance {}, total spent amount {}",
-        current_allowance,
-        amount
-    );
+
+    if !(current_expiration == 0 || current_expiration > now) {
+        ic_cdk::trap(&format!(
+            "Expired allowance, expiration {} is earlier than now {}",
+            current_expiration, now
+        ))
+    }
+
+    if current_allowance < amount {
+        ic_cdk::trap(&format!(
+            "Insufficient allowance, current_allowance {}, total spent amount {}",
+            current_allowance, amount
+        ))
+    }
 
     let new_amount = current_allowance - amount;
     if new_amount == 0 {
@@ -742,25 +800,89 @@ fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u1
     }
 }
 
-fn prune(s: &mut State, now: u64, limit: usize) -> usize {
-    let mut pruned = 0;
-
+fn prune_approvals(now: u64, s: &mut State, limit: usize) {
     for _ in 0..limit {
         match s.expiration_queue.first_key_value() {
             Some((key, _value)) => {
                 if key.0 > now {
-                    return pruned;
+                    return;
                 }
                 s.approvals.remove(&key.1);
                 s.expiration_queue.remove(&key);
-                pruned += 1;
             }
-            None => {
-                return pruned;
-            }
+            None => return,
         }
     }
-    pruned
+}
+
+fn prune_transactions(now: u64, s: &mut State, limit: usize) {
+    let pruned = 0;
+    while let Some(((transaction_timestamp, block_idx), _)) =
+        s.transaction_timestamps.first_key_value()
+    {
+        if pruned >= limit {
+            return;
+        }
+        let block = s.blocks.get(block_idx).unwrap_or_else(|| {
+            ic_cdk::trap(&format!("Cannot find block with block id: {}", block_idx))
+        });
+        if transaction_timestamp
+            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+            >= now
+        {
+            return;
+        }
+        s.transaction_timestamps
+            .remove(&(transaction_timestamp, block_idx));
+        let tx_hash = block.transaction.hash();
+        // Transactions before and after the deduplication window never make it into storage as they are rejected by the deduplication method
+        // Therefore, two tx hashes cannot exists within the deduplication window. This means that two entries in the ´transaction_timestamp´ struct with the same ´created_at_timestamps´ but different ´block_index´ cannot point to two blocks with identical transaction hashes within the deduplication window.
+        // Example: if the ´transaction_timestamp´ storage has the entries [(time_a,block_a),(time_a,block_b)] then the hashes of the transactions in block_a and block_b cannot be identical
+        if s.transaction_hashes.remove(&tx_hash) != Some(block_idx) {
+            ic_cdk::trap(&format!(
+                "Transaction hash {:?} is stored in multiple blocks within the transaction window",
+                tx_hash
+            ))
+        }
+    }
+}
+
+pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    let log_length = read_state(|state| state.blocks.len());
+    let mut transactions = Vec::new();
+    for GetTransactionsArg { start, length } in args {
+        let start = match start.0.to_u64() {
+            Some(start) if start < log_length => start,
+            _ => continue, // TODO(FI-924): log this error
+        };
+        let end_excluded = match length.0.to_u64() {
+            Some(length) => log_length.min(start + length),
+            None => continue, // TODO(FI-924): log this error
+        };
+        read_state(|state| {
+            for id in start..end_excluded {
+                let transaction = state
+                    .blocks
+                    .get(id)
+                    .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
+                    .0
+                    .to_value()
+                    .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
+                let transaction_with_id = TransactionWithId {
+                    id: Nat::from(id),
+                    transaction,
+                };
+                transactions.push(transaction_with_id);
+            }
+        });
+    }
+    GetTransactionsResult {
+        log_length: Nat::from(log_length),
+        certificate: None, // TODO FI-766
+        transactions,
+        archived_transactions: vec![],
+    }
 }
 
 #[cfg(test)]

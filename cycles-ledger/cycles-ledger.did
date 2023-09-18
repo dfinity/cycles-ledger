@@ -37,13 +37,11 @@ type RejectionCode = variant {
   SysFatal;
   CanisterReject;
 };
-type SendArg = record {
-  to : principal;
-  fee : opt nat;
-  memo : opt vec nat8;
-  from_subaccount : opt vec nat8;
-  created_at_time : opt nat64;
-  amount : nat;
+type SendArgs = record {
+    amount : nat;
+    from_subaccount : opt vec nat8;
+    to : principal;
+    created_at_time : opt nat64;
 };
 type SendError = record { fee_block : opt nat; reason : SendErrorReason };
 type SendErrorReason = variant {
@@ -61,7 +59,7 @@ type SendErrorReason = variant {
   InsufficientFunds : record { balance : nat };
 };
 type SupportedStandard = record { url : text; name : text };
-type TransferArg = record {
+type TransferArgs = record {
   to : Account;
   fee : opt nat;
   memo : opt vec nat8;
@@ -108,6 +106,30 @@ type Value = variant {
   Text : text;
   Array : vec Value;
 };
+
+type GetTransactionsArgs = vec record { start : nat; length : nat };
+
+type GetTransactionsResult = record {
+    // Total number of transactions in the
+    // transaction log.
+    log_length : nat;
+
+    // System certificate for the hash of the
+    // latest transaction in the chain.
+    // Only present if `icrc3_get_transactions`
+    // is called in a non-replicated query context.
+    certificate : opt blob;
+
+    transactions : vec record { id : nat; transaction: Value };
+
+    // The archived_transactions vector is always going to be empty
+    // for this ledger because there is no archive node.
+    archived_transactions : vec record {
+        args : GetTransactionsArgs;
+        callback : func (GetTransactionsArgs) -> (GetTransactionsResult) query;
+    };
+};
+
 service : {
   deposit : (DepositArgs) -> (DepositResult);
   icrc1_balance_of : (Account) -> (nat) query;
@@ -119,9 +141,10 @@ service : {
   icrc1_supported_standards : () -> (vec SupportedStandard) query;
   icrc1_symbol : () -> (text) query;
   icrc1_total_supply : () -> (nat) query;
-  icrc1_transfer : (TransferArg) -> (variant { Ok : BlockIndex; Err : TransferError });
+  icrc1_transfer : (TransferArgs) -> (variant { Ok : BlockIndex; Err : TransferError });
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
-  send : (SendArg) -> (variant { Ok : nat; Err : SendError });
-}           
+  icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
+  send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
+}

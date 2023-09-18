@@ -1,15 +1,20 @@
 use core::panic;
+use std::collections::BTreeMap;
 
 use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{self, DepositResult, SendArg},
+    endpoints::{
+        self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
+        SendArgs,
+    },
 };
 use depositor::endpoints::DepositArg;
 use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc1::account::Account,
-    icrc1::transfer::{TransferArg, TransferError},
+    icrc1::transfer::TransferArg as TransferArgs,
+    icrc1::transfer::TransferError,
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},
@@ -68,7 +73,7 @@ pub fn send(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
-    args: SendArg,
+    args: SendArgs,
 ) -> Result<Nat, endpoints::SendError> {
     let arg = Encode!(&args).unwrap();
     if let WasmResult::Reply(res) = env.update_call(ledger_id, from.owner, "send", arg).unwrap() {
@@ -137,6 +142,23 @@ pub fn approve(
     }
 }
 
+pub fn transfer(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    args: TransferArgs,
+) -> Result<Nat, TransferError> {
+    let arg = Encode!(&args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .update_call(ledger_id, from.owner, "icrc1_transfer", arg)
+        .unwrap()
+    {
+        Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
+    } else {
+        panic!("transfer rejected")
+    }
+}
+
 pub fn transfer_from(
     env: &StateMachine,
     ledger_id: Principal,
@@ -169,23 +191,6 @@ pub fn transfer_from(
     }
 }
 
-pub fn transfer(
-    env: &StateMachine,
-    ledger_id: Principal,
-    from: Account,
-    args: TransferArg,
-) -> Result<Nat, TransferError> {
-    let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(ledger_id, from.owner, "icrc1_transfer", arg)
-        .unwrap()
-    {
-        Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
-    } else {
-        panic!("transfer rejected")
-    }
-}
-
 pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
     let arg = Encode!(&()).unwrap();
     if let WasmResult::Reply(res) = env
@@ -193,6 +198,71 @@ pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
         .unwrap()
     {
         Decode!(&res, Nat).unwrap()
+    } else {
+        panic!("fee call rejected")
+    }
+}
+
+pub fn get_raw_transactions(
+    env: &StateMachine,
+    ledger_id: Principal,
+    start_lengths: Vec<(u64, u64)>,
+) -> GetTransactionsResult {
+    let get_transactions_args: GetTransactionsArgs = start_lengths
+        .iter()
+        .map(|(start, length)| GetTransactionsArg {
+            start: Nat::from(*start),
+            length: Nat::from(*length),
+        })
+        .collect();
+    let arg = Encode!(&get_transactions_args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "icrc3_get_transactions",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, GetTransactionsResult).unwrap()
+    } else {
+        panic!("fee call rejected")
+    }
+}
+
+pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<[u8; 32], u64> {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "get_transaction_hashes",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, BTreeMap<[u8; 32],u64>).unwrap()
+    } else {
+        panic!("fee call rejected")
+    }
+}
+
+pub fn transaction_timestamps(
+    env: &StateMachine,
+    ledger_id: Principal,
+) -> BTreeMap<(u64, u64), ()> {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "get_transaction_timestamps",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, BTreeMap<(u64, u64),()>).unwrap()
     } else {
         panic!("fee call rejected")
     }

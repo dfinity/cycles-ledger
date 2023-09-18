@@ -1,19 +1,25 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{DeduplicationError, SendError, SendErrorReason};
-use cycles_ledger::memo::SendMemo;
+use cycles_ledger::endpoints::{
+    DeduplicationError, GetTransactionsArgs, GetTransactionsResult, SendError, SendErrorReason,
+};
+use cycles_ledger::logs::{Log, LogEntry, Priority};
+use cycles_ledger::logs::{P0, P1};
+use cycles_ledger::memo::encode_send_memo;
 use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
 use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
+use ic_canister_log::export as export_logs;
+use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{query, update};
-use icrc_ledger_types::icrc::generic_value::Value;
+use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use icrc_ledger_types::icrc1::transfer::TransferArg as TransferArgs;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferError};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
-use minicbor::Encoder;
 use num_traits::ToPrimitive;
 
 // candid::Principal has these two consts as private
@@ -77,18 +83,12 @@ fn icrc1_total_supply() -> Nat {
 
 #[query]
 #[candid_method(query)]
-fn icrc1_metadata() -> Vec<(String, Value)> {
+fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     vec![
-        (
-            "icrc1:decimals".to_string(),
-            Value::Nat(config::DECIMALS.into()),
-        ),
-        ("icrc1:fee".to_string(), Value::Nat(config::FEE.into())),
-        ("icrc1:name".to_string(), Value::text(config::TOKEN_NAME)),
-        (
-            "icrc1:symbol".to_string(),
-            Value::text(config::TOKEN_SYMBOL),
-        ),
+        MetadataValue::entry("icrc1:decimals", config::DECIMALS as u64),
+        MetadataValue::entry("icrc1:name", config::TOKEN_NAME),
+        MetadataValue::entry("icrc1:symbol", config::TOKEN_SYMBOL),
+        MetadataValue::entry("icrc1:fee", config::FEE),
     ]
 }
 
@@ -241,7 +241,7 @@ fn execute_transfer(
 
 #[update]
 #[candid_method]
-fn icrc1_transfer(args: TransferArg) -> Result<Nat, TransferError> {
+fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
@@ -283,6 +283,12 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
     )
 }
 
+#[query]
+#[candid_method(query)]
+fn icrc3_get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+    storage::get_transactions(args)
+}
+
 fn send_error(from: &Account, reason: SendErrorReason) -> SendError {
     let now = ic_cdk::api::time();
     let fee_block = storage::penalize(from, now).map(|(fee_block, _block_hash)| fee_block);
@@ -291,7 +297,7 @@ fn send_error(from: &Account, reason: SendErrorReason) -> SendError {
 
 #[update]
 #[candid_method]
-async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
+async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
@@ -327,28 +333,6 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             ));
         }
     };
-    if let Some(fee) = args.fee {
-        match fee.0.to_u128() {
-            Some(fee) => {
-                if fee != config::FEE {
-                    return Err(send_error(
-                        &from,
-                        SendErrorReason::BadFee {
-                            expected_fee: Nat::from(config::FEE),
-                        },
-                    ));
-                }
-            }
-            None => {
-                return Err(send_error(
-                    &from,
-                    SendErrorReason::BadFee {
-                        expected_fee: Nat::from(config::FEE),
-                    },
-                ));
-            }
-        }
-    }
 
     let total_send_cost = amount.saturating_add(config::FEE);
     if total_send_cost > balance {
@@ -359,13 +343,7 @@ async fn send(args: endpoints::SendArg) -> Result<Nat, SendError> {
             },
         ));
     }
-    let memo = SendMemo {
-        receiver: target_canister.canister_id.as_slice(),
-    };
-    let mut encoder = Encoder::new(Vec::new());
-    encoder.encode(memo).expect("Encoding failed");
-    let encoded_memo = encoder.into_writer().into();
-    let memo = validate_memo(Some(encoded_memo));
+    let memo = validate_memo(Some(encode_send_memo(&target_canister.canister_id)));
 
     let transaction = Transaction {
         operation: Operation::Burn { from, amount },
@@ -499,7 +477,109 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     Ok(Nat::from(txid))
 }
 
+#[candid_method(query)]
+#[query]
+fn http_request(req: HttpRequest) -> HttpResponse {
+    if req.path() == "/metrics" {
+        let mut writer =
+            ic_metrics_encoder::MetricsEncoder::new(vec![], ic_cdk::api::time() as i64 / 1_000_000);
+
+        match encode_metrics(&mut writer) {
+            Ok(()) => HttpResponseBuilder::ok()
+                .header("Content-Type", "text/plain; version=0.0.4")
+                .with_body_and_content_length(writer.into_inner())
+                .build(),
+            Err(err) => {
+                HttpResponseBuilder::server_error(format!("Failed to encode metrics: {}", err))
+                    .build()
+            }
+        }
+    } else if req.path() == "/logs" {
+        use serde_json;
+        let mut entries: Log = Default::default();
+        for entry in export_logs(&P0) {
+            entries.entries.push(LogEntry {
+                timestamp: entry.timestamp,
+                priority: Priority::P0,
+                file: entry.file.to_string(),
+                line: entry.line,
+                message: entry.message,
+            });
+        }
+        for entry in export_logs(&P1) {
+            entries.entries.push(LogEntry {
+                timestamp: entry.timestamp,
+                priority: Priority::P1,
+                file: entry.file.to_string(),
+                line: entry.line,
+                message: entry.message,
+            });
+        }
+        HttpResponseBuilder::ok()
+            .header("Content-Type", "application/json; charset=utf-8")
+            .with_body_and_content_length(serde_json::to_string(&entries).unwrap_or_default())
+            .build()
+    } else {
+        HttpResponseBuilder::not_found().build()
+    }
+}
+
+pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
+    w.encode_gauge(
+        "cycles_ledger_stable_memory_pages",
+        ic_cdk::api::stable::stable_size() as f64,
+        "Size of the stable memory allocated by this canister measured in 64K Wasm pages.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_stable_memory_bytes",
+        (ic_cdk::api::stable::stable_size() * 64 * 1024) as f64,
+        "Size of the stable memory allocated by this canister.",
+    )?;
+
+    let cycle_balance = ic_cdk::api::canister_balance128() as f64;
+    w.encode_gauge(
+        "cycles_ledger_cycle_balance",
+        cycle_balance,
+        "Cycle balance on this canister.",
+    )?;
+    w.gauge_vec("cycle_balance", "Cycle balance on this canister.")?
+        .value(&[("canister", "cycles-ledger")], cycle_balance)?;
+
+    w.encode_gauge(
+        "cycles_ledger_number_of_blocks",
+        read_state(|state| state.blocks.len()) as f64,
+        "Total number of blocks stored in the stable memory.",
+    )?;
+    Ok(())
+}
+
 fn main() {}
+
+#[cfg(feature = "testing")]
+#[query]
+#[candid_method(query)]
+fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
+    let mut res = std::collections::BTreeMap::new();
+    read_state(|state| {
+        for (key, value) in state.transaction_hashes.iter() {
+            res.insert(key, value);
+        }
+    });
+    res
+}
+
+#[cfg(feature = "testing")]
+#[query]
+#[candid_method(query)]
+fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
+    let mut res = std::collections::BTreeMap::new();
+    read_state(|state| {
+        for (key, value) in state.transaction_timestamps.iter() {
+            res.insert(key, value);
+        }
+    });
+    res
+}
 
 #[test]
 fn test_candid_interface_compatibility() {
