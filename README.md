@@ -30,3 +30,16 @@ TO DO
 ## Creating Canisters Using Cycles
 
 TO DO
+
+
+## Make a new Release
+
+The CI job [release-with-github.yml](https://github.com/dfinity/cycles-ledger/actions/workflows/release-with-github.yml) is responsible to create a new release. The release job uses [cargo-release](https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md). This project follows [Semantic Versioning 2.0.0](https://semver.org/) (aka semver).
+
+The release job can be triggered by using [`gh`](https://cli.github.com/) or [directly from github](https://github.com/dfinity/cycles-ledger/actions/workflows/release-with-github.yml):
+
+```
+gh workflow run --repo dfinity/cycles-ledger "release-with-github.yml" -f semverBump=(major|minor|patch)
+```
+
+The job will then bump the version based on the strategy passed via `semverBump`, make the release and make a PR with the version changes and the release linked to the PR. See [this](https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md#bump-level) for valid `semverBump` values and their effect.
