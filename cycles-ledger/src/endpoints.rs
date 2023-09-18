@@ -42,13 +42,7 @@ pub struct SendArgs {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct SendError {
-    pub fee_block: Option<Nat>,
-    pub reason: SendErrorReason,
-}
-
-#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum SendErrorReason {
+pub enum SendError {
     BadFee {
         expected_fee: NumCycles,
     },
@@ -64,6 +58,7 @@ pub enum SendErrorReason {
         duplicate_of: BlockIndex,
     },
     FailedToSend {
+        fee_block: Option<Nat>,
         rejection_code: RejectionCode,
         rejection_reason: String,
     },
@@ -82,16 +77,14 @@ pub enum DeduplicationError {
     Duplicate { duplicate_of: BlockIndex },
 }
 
-impl From<DeduplicationError> for SendErrorReason {
+impl From<DeduplicationError> for SendError {
     fn from(value: DeduplicationError) -> Self {
         match value {
-            DeduplicationError::TooOld => SendErrorReason::TooOld,
+            DeduplicationError::TooOld => SendError::TooOld,
             DeduplicationError::CreatedInFuture { ledger_time } => {
-                SendErrorReason::CreatedInFuture { ledger_time }
+                SendError::CreatedInFuture { ledger_time }
             }
-            DeduplicationError::Duplicate { duplicate_of } => {
-                SendErrorReason::Duplicate { duplicate_of }
-            }
+            DeduplicationError::Duplicate { duplicate_of } => SendError::Duplicate { duplicate_of },
         }
     }
 }
