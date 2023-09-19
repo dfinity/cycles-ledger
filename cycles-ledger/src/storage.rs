@@ -235,7 +235,7 @@ impl State {
     }
 
     /// Returns the root hash of the certified ledger state.
-    /// The canister code must call set_certified_data with the value this function returns after
+    /// The canister code must call [set_certified_data] with the value this function returns after
     /// each successful modification of the ledger.
     pub fn root_hash(&self) -> Hash {
         self.cache.hash_tree.root_hash()
