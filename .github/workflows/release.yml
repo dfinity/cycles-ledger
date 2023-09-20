@@ -86,14 +86,13 @@ jobs:
           ls .dfx/local/canisters/cycles-**
           (cd .dfx/local/canisters/cycles-ledger && shasum -a 256 cycles-ledger.wasm.gz > cycles-ledger.wasm.gz.sha256)
           (cd .dfx/local/canisters/cycles-depositor && shasum -a 256 cycles-depositor.wasm.gz > cycles-depositor.wasm.gz.sha256)
-          (cd .dfx/local/canisters/cycles-ledger && cp service.did cycles-ledger.did)
-          (cd .dfx/local/canisters/cycles-depositor && cp service.did cycles-depositor.did)
+          cp depositor/depositor.did .dfx/local/canisters/cycles-depositor/cycles-depositor.did
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-depositor/cycles-depositor.wasm.gz
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-depositor/cycles-depositor.wasm.gz.sha256
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-depositor/cycles-depositor.did
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz.sha256
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.did
+          gh release upload ${{ env.TAG }} cycles-ledger/cycles-ledger.did
           echo "uploaded!"
       - name: mark release as non-draft
         run: |
