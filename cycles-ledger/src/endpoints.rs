@@ -157,6 +157,12 @@ pub struct GetTransactionsArg {
     pub length: Nat,
 }
 
+impl GetTransactionsArg {
+    pub fn end(&self) -> Nat {
+        self.start.clone() + self.length.clone()
+    }
+}
+
 pub type GetTransactionsArgs = Vec<GetTransactionsArg>;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]

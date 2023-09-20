@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use assert_matches::assert_matches;
 use candid::{Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::{
@@ -19,7 +20,10 @@ use cycles_ledger::{
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use futures::FutureExt;
+use ic_cbor::CertificateToCbor;
 use ic_cdk::api::call::RejectionCode;
+use ic_certificate_verification::{VerifyCertificate, CertificateVerificationResult};
+use ic_certification::Certificate;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
@@ -1071,10 +1075,7 @@ fn test_total_supply_after_upgrade() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
-fn compute_last_block_hash_and_hash_tree_root_hash(
-    last_block_index: u64,
-    last_block_hash: Hash,
-) -> ByteBuf {
+fn compute_root_hash(last_block_index: u64, last_block_hash: Hash) -> ByteBuf {
     let mut hash_tree = RbTree::new();
     populate_last_block_hash_and_hash_tree(&mut hash_tree, last_block_index, last_block_hash);
     ByteBuf::from(hash_tree.root_hash())
@@ -1135,13 +1136,15 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_txs[0].1.timestamp;
-    assert_eq!(
-        txs.certificate,
-        Some(compute_last_block_hash_and_hash_tree_root_hash(
-            0,
-            block0.hash()
-        ))
-    );
+    let certificate = match txs.certificate {
+        Some(certificate) => certificate,
+        None => panic!("The certificate should be set when there is at least one block"),
+    };
+    let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
+    assert_matches!(certificate.verify(ledger_id.as_slice(), &env.root_key()), Ok(_));
+
+    let root_hash = compute_root_hash(0, block0.hash());
+    // assert_eq!(txs.certificate, Some(root_hash));
 
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
@@ -1165,13 +1168,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
-    assert_eq!(
-        txs.certificate,
-        Some(compute_last_block_hash_and_hash_tree_root_hash(
-            1,
-            block1.hash()
-        ))
-    );
+    assert_eq!(txs.certificate, Some(compute_root_hash(1, block1.hash())));
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
@@ -1219,13 +1216,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
-    assert_eq!(
-        txs.certificate,
-        Some(compute_last_block_hash_and_hash_tree_root_hash(
-            2,
-            block2.hash()
-        ))
-    );
+    assert_eq!(txs.certificate, Some(compute_root_hash(2, block2.hash())));
 
     // add a couple of blocks
     transfer(
