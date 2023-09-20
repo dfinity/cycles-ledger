@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "cycles-ledger"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "candid 0.9.6",
