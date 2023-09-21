@@ -126,8 +126,6 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let (txid, balance, _phash) =
         storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
 
-    // TODO(FI-766): set the certified variable.
-
     endpoints::DepositResult {
         txid: Nat::from(txid),
         balance: Nat::from(balance),
