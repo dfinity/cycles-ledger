@@ -43,11 +43,11 @@ type SendArgs = record {
     to : principal;
     created_at_time : opt nat64;
 };
-type SendError = record { fee_block : opt nat; reason : SendErrorReason };
-type SendErrorReason = variant {
+type SendError = variant {
   GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
   FailedToSend : record {
+    fee_block : opt nat;
     rejection_code : RejectionCode;
     rejection_reason : text;
   };

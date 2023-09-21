@@ -9,7 +9,7 @@ use candid::{Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{DataCertificate, GetTransactionsResult, SendArgs, SendErrorReason},
+    endpoints::{DataCertificate, GetTransactionsResult, SendArgs, SendError},
     memo::encode_send_memo,
     storage::{
         Block, Hash,
@@ -25,7 +25,7 @@ use ic_cdk::api::call::RejectionCode;
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
-    Certificate, HashTree,
+    Certificate, HashTree, LookupResult,
 };
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
@@ -303,14 +303,11 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result.reason,
-        SendErrorReason::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
+        send_result,
+        SendError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
     ));
-    assert_eq!(
-        balance_before_attempt - FEE,
-        balance_of(env, ledger_id, user)
-    );
-    let mut expected_total_supply = 1_000_000_000_000 - FEE;
+    assert_eq!(balance_before_attempt, balance_of(env, ledger_id, user));
+    let mut expected_total_supply = 1_000_000_000_000;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // send from empty subaccount
@@ -327,8 +324,8 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result.reason,
-        SendErrorReason::InsufficientFunds { balance } if balance == 0
+        send_result,
+        SendError::InsufficientFunds { balance } if balance == 0
     ));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
@@ -351,14 +348,10 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result.reason,
-        SendErrorReason::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+        send_result,
+        SendError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
     ));
-    assert_eq!(
-        balance_before_attempt - FEE,
-        balance_of(env, ledger_id, user)
-    );
-    expected_total_supply -= FEE;
+    assert_eq!(balance_before_attempt, balance_of(env, ledger_id, user));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
     // send cycles to deleted canister
@@ -379,8 +372,8 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result.reason,
-        SendErrorReason::FailedToSend {
+        send_result,
+        SendError::FailedToSend {
             rejection_code: RejectionCode::DestinationInvalid,
             ..
         }
@@ -410,7 +403,7 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    assert_eq!(1, balance_of(env, ledger_id, user_2));
+    assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
     send(
         env,
         ledger_id,
@@ -423,7 +416,7 @@ fn test_send_fails() {
         },
     )
     .unwrap_err();
-    assert_eq!(1, balance_of(env, ledger_id, user_2));
+    assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
 }
 
 fn system_time_to_nanos(t: SystemTime) -> u64 {
@@ -1100,8 +1093,21 @@ fn validate_certificate(
         Ok(_)
     );
 
+    let certified_data_path: [&[u8]; 3] = [
+        "canister".as_bytes(),
+        ledger_id.as_slice(),
+        "certified_data".as_bytes(),
+    ];
+
+    let certified_data_hash = match certificate.tree.lookup_path(&certified_data_path) {
+        LookupResult::Found(v) => v,
+        _ => panic!("Unable to find the certificate_data_hash for the ledger canister in the hash_tree (hash_tree: {:?}, path: {:?})", certificate.tree, certified_data_path),
+    };
+
     let hash_tree: HashTree = serde_cbor::de::from_slice(hash_tree.as_slice())
         .expect("Unable to deserialize CBOR encoded hash_tree");
+
+    assert_eq!(certified_data_hash, hash_tree.digest());
 
     let expected_last_block_hash = match hash_tree.lookup_subtree([b"last_block_hash"]) {
         SubtreeLookupResult::Found(tree) => match tree.as_ref() {
