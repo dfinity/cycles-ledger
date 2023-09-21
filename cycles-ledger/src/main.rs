@@ -98,18 +98,14 @@ fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
-fn validate_memo(memo: Option<Memo>) -> Option<Memo> {
-    match memo {
-        Some(memo) => {
-            if memo.0.len() as u64 > config::MAX_MEMO_LENGTH as u64 {
-                ic_cdk::trap(&format!(
-                    "memo length exceeds the maximum of {} bytes",
-                    config::MAX_MEMO_LENGTH,
-                ));
-            }
-            Some(memo)
+fn validate_memo(memo: &Option<Memo>) {
+    if let Some(memo) = memo {
+        if memo.0.len() as u64 > config::MAX_MEMO_LENGTH as u64 {
+            ic_cdk::trap(&format!(
+                "memo length exceeds the maximum of {} bytes",
+                config::MAX_MEMO_LENGTH,
+            ));
         }
-        None => None,
     }
 }
 
@@ -122,9 +118,9 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     if amount <= config::FEE {
         ic_cdk::trap("deposit amount is insufficient");
     }
-    let memo = validate_memo(arg.memo);
+    validate_memo(&arg.memo);
     let (txid, balance, _phash) =
-        storage::record_deposit(&arg.to, amount, memo, ic_cdk::api::time());
+        storage::record_deposit(&arg.to, amount, arg.memo, ic_cdk::api::time());
 
     // TODO(FI-766): set the certified variable.
 
@@ -173,7 +169,7 @@ fn execute_transfer(
         None => None,
     };
 
-    let memo = validate_memo(memo);
+    validate_memo(&memo);
 
     if balance < amount.saturating_add(config::FEE) {
         return Err(TransferFromError::InsufficientFunds {
@@ -328,7 +324,8 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
             balance: Nat::from(balance),
         });
     }
-    let memo = validate_memo(Some(encode_send_memo(&target_canister.canister_id)));
+    let memo = Some(encode_send_memo(&target_canister.canister_id));
+    validate_memo(&memo);
 
     let transaction = Transaction {
         operation: Operation::Burn { from, amount },
@@ -386,7 +383,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     if from_account.owner == args.spender.owner {
         ic_cdk::trap("self approval is not allowed")
     }
-    let memo = validate_memo(args.memo);
+    validate_memo(&args.memo);
     let amount = match args.amount.0.to_u128() {
         Some(value) => value,
         None => u128::MAX,
@@ -453,7 +450,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         args.expires_at,
         now,
         expected_allowance,
-        memo,
+        args.memo,
         args.created_at_time,
         suggested_fee,
     );
