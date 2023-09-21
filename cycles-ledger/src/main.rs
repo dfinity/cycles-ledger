@@ -98,27 +98,13 @@ fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
-fn validate_memo(memo: &Option<Memo>) {
-    if let Some(memo) = memo {
-        if memo.0.len() as u64 > config::MAX_MEMO_LENGTH {
-            ic_cdk::trap(&format!(
-                "memo length exceeds the maximum of {} bytes",
-                config::MAX_MEMO_LENGTH,
-            ));
-        }
-    }
-}
-
 #[update]
 #[candid_method]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
 
     let amount = msg_cycles_accept128(cycles_available);
-    if amount <= config::FEE {
-        ic_cdk::trap("deposit amount is insufficient");
-    }
-    validate_memo(&arg.memo);
+
     let (txid, balance, _phash) =
         storage::record_deposit(&arg.to, amount, arg.memo, ic_cdk::api::time());
 

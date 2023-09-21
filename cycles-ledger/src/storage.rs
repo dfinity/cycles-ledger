@@ -1,4 +1,5 @@
 use crate::logs::{P0, P1};
+use crate::memo::validate_memo;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -375,6 +376,8 @@ pub fn record_deposit(
             crate::config::FEE
         ))
     }
+
+    validate_memo(&arg.memo);
 
     let key = to_account_key(account);
     mutate_state(now, |s| {
