@@ -131,7 +131,6 @@ type DataCertificate = record {
 
 service : {
   deposit : (DepositArgs) -> (DepositResult);
-  get_data_certificate : () -> (DataCertificate) query;
   icrc1_balance_of : (Account) -> (nat) query;
   icrc1_decimals : () -> (nat8) query;
   icrc1_fee : () -> (nat) query;
@@ -145,6 +144,7 @@ service : {
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
+  icrc3_get_data_certificate : () -> (DataCertificate) query;
   icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
   send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
 }

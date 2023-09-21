@@ -274,13 +274,13 @@ pub fn get_data_certificate(env: &StateMachine, ledger_id: Principal) -> DataCer
         .query_call(
             ledger_id,
             Principal::anonymous(),
-            "get_data_certificate",
+            "icrc3_get_data_certificate",
             arg,
         )
         .unwrap()
     {
         Decode!(&res, DataCertificate).unwrap()
     } else {
-        panic!("get_data_certificate call rejected")
+        panic!("icrc3_get_data_certificate call rejected")
     }
 }

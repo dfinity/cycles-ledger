@@ -537,7 +537,7 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
 
 #[query]
 #[candid_method(query)]
-fn get_data_certificate() -> DataCertificate {
+fn icrc3_get_data_certificate() -> DataCertificate {
     read_state(|state| state.get_data_certificate())
 }
 
