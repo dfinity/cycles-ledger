@@ -4,7 +4,7 @@ pub const FEE: u128 = 100_000_000;
 pub const DECIMALS: u8 = 0;
 pub const TOKEN_NAME: &str = "Cycles";
 pub const TOKEN_SYMBOL: &str = "CYCLES";
-pub const MAX_MEMO_LENGTH: u32 = 32;
+pub const MAX_MEMO_LENGTH: u64 = 32;
 pub const PERMITTED_DRIFT: Duration = Duration::from_secs(60);
 pub const TRANSACTION_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 // The maximum number of transactions in the transaction-to-hash and block-timestamp-to-block-index mappings to be pruned in a single prune process
