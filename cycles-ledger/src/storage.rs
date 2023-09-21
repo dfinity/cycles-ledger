@@ -1,3 +1,4 @@
+use crate::endpoints::DataCertificate;
 use crate::logs::{P0, P1};
 use crate::{
     ciborium_to_generic_value, compact_account,
@@ -12,7 +13,7 @@ use anyhow::Context;
 use candid::Nat;
 use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
-use ic_certified_map::{leaf_hash, AsHashTree, RbTree};
+use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -60,7 +61,7 @@ pub struct Cache {
     // The total supply of cycles.
     pub total_supply: u128,
     // The hash tree
-    pub hash_tree: RbTree<&'static str, Hash>,
+    pub hash_tree: RbTree<&'static str, Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -234,6 +235,22 @@ impl State {
         new_balance
     }
 
+    pub fn get_data_certificate(&self) -> DataCertificate {
+        let witness = serde_cbor::to_vec(
+            &self
+                .cache
+                .hash_tree
+                .value_range(b"last_block_hash", b"last_block_index"),
+        )
+        .expect(
+            "Bug: unable to write last_block_hash and last_block_index values in the hash_tree",
+        );
+        DataCertificate {
+            certificate: ic_cdk::api::data_certificate().map(ByteBuf::from),
+            hash_tree: ByteBuf::from(witness),
+        }
+    }
+
     /// Returns the root hash of the certified ledger state.
     /// The canister code must call [set_certified_data] with the value this function returns after
     /// each successful modification of the ledger.
@@ -243,7 +260,7 @@ impl State {
 
     pub fn compute_last_block_hash_and_hash_tree(
         blocks: &BlockLog,
-    ) -> (Option<Hash>, RbTree<&'static str, Hash>) {
+    ) -> (Option<Hash>, RbTree<&'static str, Vec<u8>>) {
         let mut hash_tree = RbTree::new();
         let n = blocks.len();
         if n == 0 {
@@ -343,15 +360,12 @@ fn check_invariants(s: &State) {
 }
 
 pub fn populate_last_block_hash_and_hash_tree(
-    hash_tree: &mut RbTree<&'static str, Hash>,
+    hash_tree: &mut RbTree<&'static str, Vec<u8>>,
     last_block_index: u64,
     last_block_hash: Hash,
 ) {
-    hash_tree.insert(
-        "last_block_index",
-        leaf_hash(&last_block_index.to_be_bytes()),
-    );
-    hash_tree.insert("tip_hash", leaf_hash(&last_block_hash));
+    hash_tree.insert("last_block_index", last_block_index.to_be_bytes().to_vec());
+    hash_tree.insert("last_block_hash", last_block_hash.to_vec());
 }
 
 #[derive(Default)]

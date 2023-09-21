@@ -157,12 +157,6 @@ pub struct GetTransactionsArg {
     pub length: Nat,
 }
 
-impl GetTransactionsArg {
-    pub fn end(&self) -> Nat {
-        self.start.clone() + self.length.clone()
-    }
-}
-
 pub type GetTransactionsArgs = Vec<GetTransactionsArg>;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -192,4 +186,12 @@ pub struct GetTransactionsResult {
     pub transactions: Vec<TransactionWithId>,
 
     pub archived_transactions: Vec<ArchivedTransactions>,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+pub struct DataCertificate {
+    pub certificate: Option<serde_bytes::ByteBuf>,
+
+    // CBOR encoded hash_tree
+    pub hash_tree: serde_bytes::ByteBuf,
 }

@@ -1,6 +1,7 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
-    DeduplicationError, GetTransactionsArgs, GetTransactionsResult, SendError, SendErrorReason,
+    DataCertificate, DeduplicationError, GetTransactionsArgs, GetTransactionsResult, SendError,
+    SendErrorReason,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -551,6 +552,12 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
         "Total number of blocks stored in the stable memory.",
     )?;
     Ok(())
+}
+
+#[query]
+#[candid_method(query)]
+fn get_data_certificate() -> DataCertificate {
+    read_state(|state| state.get_data_certificate())
 }
 
 fn main() {}
