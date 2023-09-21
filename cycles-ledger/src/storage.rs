@@ -860,12 +860,6 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
 
 pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     let log_length = read_state(|state| state.blocks.len());
-    let certificate = if log_length == 0 {
-        None
-    } else {
-        // data_certificate is None when called in replicated mode
-        ic_cdk::api::data_certificate().map(ByteBuf::from)
-    };
     let mut transactions = Vec::new();
     for GetTransactionsArg { start, length } in args {
         let start = match start.0.to_u64() {
@@ -895,7 +889,6 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     }
     GetTransactionsResult {
         log_length: Nat::from(log_length),
-        certificate,
         transactions,
         archived_transactions: vec![],
     }

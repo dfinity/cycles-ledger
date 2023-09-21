@@ -1077,7 +1077,6 @@ fn test_total_supply_after_upgrade() {
 fn validate_certificate(
     env: &StateMachine,
     ledger_id: Principal,
-    response_certificate: Option<ByteBuf>,
     last_block_index: u64,
     last_block_hash: Hash,
 ) {
@@ -1085,7 +1084,6 @@ fn validate_certificate(
         certificate,
         hash_tree,
     } = get_data_certificate(env, ledger_id);
-    assert_eq!(response_certificate, certificate);
     let certificate = certificate.expect("The certificate should be set");
     let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
     assert_matches!(
@@ -1155,7 +1153,6 @@ fn test_icrc3_get_transactions() {
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 0);
     assert_eq!(txs.archived_transactions.len(), 0);
-    assert_eq!(txs.certificate, None);
     assert_eq!(get_txs(&txs), vec![]);
 
     let depositor_id = install_depositor(env, ledger_id);
@@ -1185,7 +1182,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_txs[0].1.timestamp;
-    validate_certificate(env, ledger_id, txs.certificate, 0, block0.hash());
+    validate_certificate(env, ledger_id, 0, block0.hash());
 
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
@@ -1209,7 +1206,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
-    validate_certificate(env, ledger_id, txs.certificate, 1, block1.hash());
+    validate_certificate(env, ledger_id, 1, block1.hash());
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
@@ -1257,7 +1254,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
-    validate_certificate(env, ledger_id, txs.certificate, 2, block2.hash());
+    validate_certificate(env, ledger_id, 2, block2.hash());
 
     // add a couple of blocks
     transfer(
@@ -1348,7 +1345,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block5.timestamp = actual_txs[5].1.timestamp;
-    validate_certificate(env, ledger_id, txs.certificate, 5, block5.hash());
+    validate_certificate(env, ledger_id, 5, block5.hash());
 }
 
 // Checks two lists of blocks are the same.
