@@ -60,7 +60,9 @@ pub struct Cache {
     pub phash: Option<Hash>,
     // The total supply of cycles.
     pub total_supply: u128,
-    // The hash tree
+    // The hash tree that is used to certify the chain.
+    // It will contain the hash and the index of the
+    // last block on the chain.
     pub hash_tree: RbTree<&'static str, Vec<u8>>,
 }
 
