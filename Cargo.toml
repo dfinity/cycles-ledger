@@ -27,7 +27,7 @@ serde = "1"
 # list of replacements to be made after issuing `cargo release SEMVER`
 pre-release-replacements = [
   # cargo release expects to find CHANGELOG.md file inside the package that's supposed to be released (e.g. cycles-ledger),
-  # therefore we need to go `..` one dir back, so it will search for changelog in root of repo
+  # therefore we need to go one directory level up, so it will search for the change log in the root of the repository
   {file="../CHANGELOG.md", search="Unreleased", replace="{{version}}"},
   {file="../CHANGELOG.md", search="\\.\\.\\.HEAD", replace="...{{tag_name}}", exactly=1},
   {file="../CHANGELOG.md", search="ReleaseDate", replace="{{date}}"},
