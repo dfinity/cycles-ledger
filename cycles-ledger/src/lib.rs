@@ -143,8 +143,9 @@ mod known_tags {
     pub const BIGNUM: u64 = 2;
 }
 
-pub fn try_convert_transfer_error(e: TransferFromError) -> Result<TransferError, String> {
-    Ok(match e {
+// Traps if the error is InsufficientAllowance
+pub fn transfer_from_error_to_transfer_error(e: TransferFromError) -> TransferError {
+    match e {
         TransferFromError::BadFee { expected_fee } => TransferError::BadFee { expected_fee },
         TransferFromError::BadBurn { min_burn_amount } => {
             TransferError::BadBurn { min_burn_amount }
@@ -153,7 +154,7 @@ pub fn try_convert_transfer_error(e: TransferFromError) -> Result<TransferError,
             TransferError::InsufficientFunds { balance }
         }
         TransferFromError::InsufficientAllowance { .. } => {
-            return Err("InsufficientAllowance error should not happen for transfer".to_string())
+            ic_cdk::trap("InsufficientAllowance error should not happen for transfer")
         }
         TransferFromError::TooOld => TransferError::TooOld,
         TransferFromError::CreatedInFuture { ledger_time } => {
@@ -168,7 +169,7 @@ pub fn try_convert_transfer_error(e: TransferFromError) -> Result<TransferError,
             error_code,
             message,
         },
-    })
+    }
 }
 
 #[cfg(test)]

@@ -1,12 +1,12 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{
-    DeduplicationError, GetTransactionsArgs, GetTransactionsResult, SendError,
-};
+use cycles_ledger::endpoints::{GetTransactionsArgs, GetTransactionsResult, SendError};
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
-use cycles_ledger::memo::encode_send_memo;
-use cycles_ledger::storage::{deduplicate, mutate_state, read_state, Operation, Transaction};
-use cycles_ledger::{config, endpoints, storage, try_convert_transfer_error};
+use cycles_ledger::memo::{encode_send_memo, validate_memo};
+use cycles_ledger::storage::{
+    mutate_state, read_state, validate_created_at_time, Operation, Transaction,
+};
+use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
@@ -102,8 +102,17 @@ fn icrc1_balance_of(account: Account) -> Nat {
 #[candid_method]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
-
     let amount = msg_cycles_accept128(cycles_available);
+
+    if amount < crate::config::FEE {
+        ic_cdk::trap(&format!(
+            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
+            amount,
+            crate::config::FEE
+        ))
+    }
+
+    validate_memo(&arg.memo);
 
     let (txid, balance, _phash) =
         storage::record_deposit(&arg.to, amount, arg.memo, ic_cdk::api::time());
@@ -125,87 +134,65 @@ fn execute_transfer(
     memo: Option<Memo>,
     created_at_time: Option<u64>,
 ) -> Result<Nat, TransferFromError> {
-    let now = ic_cdk::api::time();
     let balance = storage::balance_of(from);
 
-    let amount = match amount.0.to_u128() {
-        Some(value) => value,
-        None => {
-            return Err(TransferFromError::InsufficientFunds {
-                balance: balance.into(),
-            });
-        }
+    let Some(amount) = amount.0.to_u128() else {
+        return Err(TransferFromError::InsufficientFunds {
+            balance: Nat::from(balance),
+        });
     };
+
     let suggested_fee = match fee {
         Some(fee) => match fee.0.to_u128() {
-            Some(fee) => {
-                if fee != config::FEE {
-                    return Err(TransferFromError::BadFee {
-                        expected_fee: config::FEE.into(),
-                    });
-                }
-                Some(fee)
-            }
-            None => {
+            Some(fee) if fee == config::FEE => Some(fee),
+            _ => {
                 return Err(TransferFromError::BadFee {
-                    expected_fee: config::FEE.into(),
+                    expected_fee: Nat::from(config::FEE),
                 });
             }
         },
         None => None,
     };
 
-    validate_memo(&memo);
-
     if balance < amount.saturating_add(config::FEE) {
         return Err(TransferFromError::InsufficientFunds {
-            balance: balance.into(),
+            balance: Nat::from(balance),
         });
     }
+
+    validate_memo(&memo);
+
+    let now = ic_cdk::api::time();
+    validate_created_at_time(&created_at_time, now)?;
 
     if let Some(spender) = spender {
         if spender != *from {
             let current_allowance = storage::allowance(from, &spender, now).0;
             if current_allowance < amount.saturating_add(config::FEE) {
                 return Err(TransferFromError::InsufficientAllowance {
-                    allowance: current_allowance.into(),
+                    allowance: Nat::from(current_allowance),
                 });
             }
         }
     }
 
-    // Transaction cannot be created in the future
-    if let Some(time) = created_at_time {
-        if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
-            return Err(TransferFromError::CreatedInFuture { ledger_time: now });
-        }
-    }
-
-    deduplicate(
+    let tx_hash = Transaction {
+        operation: Operation::Transfer {
+            from: *from,
+            to: *to,
+            amount,
+            spender,
+            fee: suggested_fee,
+        },
+        memo: memo.clone(),
         created_at_time,
-        Transaction {
-            operation: Operation::Transfer {
-                from: *from,
-                to: *to,
-                amount,
-                spender,
-                fee: suggested_fee,
-            },
-            memo: memo.clone(),
-            created_at_time,
-        }
-        .hash(),
-        now,
-    )
-    .map_err(|err| match err {
-        DeduplicationError::TooOld => TransferFromError::TooOld,
-        DeduplicationError::CreatedInFuture { ledger_time } => {
-            TransferFromError::CreatedInFuture { ledger_time }
-        }
-        DeduplicationError::Duplicate { duplicate_of } => {
-            TransferFromError::Duplicate { duplicate_of }
-        }
-    })?;
+    }
+    .hash();
+    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
+        return Err(TransferFromError::Duplicate {
+            duplicate_of: Nat::from(block_index),
+        });
+    }
 
     let (txid, _hash) = storage::transfer(
         from,
@@ -238,13 +225,7 @@ fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
         args.memo,
         args.created_at_time,
     )
-    .map_err(|err| {
-        let err: TransferError = match try_convert_transfer_error(err) {
-            Ok(err) => err,
-            Err(err) => ic_cdk::trap(&err),
-        };
-        err
-    })
+    .map_err(transfer_from_error_to_transfer_error)
 }
 
 #[update]
@@ -295,17 +276,14 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         canister_id: args.to,
     };
 
-    let amount = match args.amount.0.to_u128() {
-        Some(value) => value,
-        None => {
-            return Err(SendError::InsufficientFunds {
-                balance: Nat::from(balance),
-            });
-        }
+    let Some(amount) = args.amount.0.to_u128() else {
+        return Err(SendError::InsufficientFunds {
+            balance: Nat::from(balance),
+        });
     };
 
     let total_send_cost = amount.saturating_add(config::FEE);
-    if total_send_cost > balance {
+    if balance < total_send_cost {
         return Err(SendError::InsufficientFunds {
             balance: Nat::from(balance),
         });
@@ -313,14 +291,20 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     let memo = Some(encode_send_memo(&target_canister.canister_id));
     validate_memo(&memo);
 
-    let transaction = Transaction {
+    let now = ic_cdk::api::time();
+    validate_created_at_time(&args.created_at_time, now)?;
+
+    let tx_hash = Transaction {
         operation: Operation::Burn { from, amount },
         memo: memo.clone(),
         created_at_time: args.created_at_time,
-    };
-
-    let now = ic_cdk::api::time();
-    deduplicate(args.created_at_time, transaction.hash(), now)?;
+    }
+    .hash();
+    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
+        return Err(SendError::Duplicate {
+            duplicate_of: Nat::from(block_index),
+        });
+    }
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
     mutate_state(now, |s| s.debit(from_key, total_send_cost));
@@ -330,7 +314,6 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     mutate_state(now, |s| s.credit(from_key, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        let now = ic_cdk::api::time();
         let fee_block = storage::penalize(&from, now).map(|(fee_block, _block_hash)| fee_block);
         Err(SendError::FailedToSend {
             fee_block,
@@ -347,10 +330,11 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
 #[candid_method(query)]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     let allowance = storage::allowance(&args.account, &args.spender, ic_cdk::api::time());
-    let mut expires_at = None;
-    if allowance.1 > 0 {
-        expires_at = Some(allowance.1);
-    }
+    let expires_at = if allowance.1 > 0 {
+        Some(allowance.1)
+    } else {
+        None
+    };
     Allowance {
         allowance: Nat::from(allowance.0),
         expires_at,
@@ -360,8 +344,6 @@ fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
 #[update]
 #[candid_method]
 fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
-    let now = ic_cdk::api::time();
-
     let from_account = Account {
         owner: ic_cdk::api::caller(),
         subaccount: args.from_subaccount,
@@ -370,24 +352,18 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         ic_cdk::trap("self approval is not allowed")
     }
     validate_memo(&args.memo);
-    let amount = match args.amount.0.to_u128() {
-        Some(value) => value,
-        None => u128::MAX,
-    };
+
+    let now = ic_cdk::api::time();
+    validate_created_at_time(&args.created_at_time, now)?;
+
+    let amount = args.amount.0.to_u128().unwrap_or(u128::MAX);
     let current_allowance = storage::allowance(&from_account, &args.spender, now).0;
     let expected_allowance = match args.expected_allowance {
         Some(n) => match n.0.to_u128() {
-            Some(n) => {
-                if n != current_allowance {
-                    return Err(ApproveError::AllowanceChanged {
-                        current_allowance: current_allowance.into(),
-                    });
-                }
-                Some(n)
-            }
-            None => {
+            Some(n) if n == current_allowance => Some(n),
+            _ => {
                 return Err(ApproveError::AllowanceChanged {
-                    current_allowance: current_allowance.into(),
+                    current_allowance: Nat::from(current_allowance),
                 });
             }
         },
@@ -395,15 +371,8 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     };
     let suggested_fee = match args.fee {
         Some(fee) => match fee.0.to_u128() {
-            Some(fee) => {
-                if fee != config::FEE {
-                    return Err(ApproveError::BadFee {
-                        expected_fee: Nat::from(config::FEE),
-                    });
-                }
-                Some(fee)
-            }
-            None => {
+            Some(fee) if fee == config::FEE => Some(fee),
+            _ => {
                 return Err(ApproveError::BadFee {
                     expected_fee: Nat::from(config::FEE),
                 });
@@ -417,13 +386,6 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         return Err(ApproveError::InsufficientFunds {
             balance: Nat::from(balance),
         });
-    }
-
-    // Approvals cannot be created in the future
-    if let Some(time) = args.created_at_time {
-        if time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
-            return Err(ApproveError::CreatedInFuture { ledger_time: now });
-        }
     }
 
     if args.expires_at.unwrap_or(REMOTE_FUTURE) <= now {

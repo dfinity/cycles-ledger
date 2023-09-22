@@ -1,8 +1,8 @@
+use crate::config::MAX_MEMO_LENGTH;
 use candid::Principal;
 use ic_cdk::api::management_canister::provisional::CanisterId;
 use icrc_ledger_types::icrc1::transfer::Memo;
 use minicbor::{Decode, Encode, Encoder};
-use crate::config::MAX_MEMO_LENGTH;
 
 #[derive(Decode, Encode, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendMemo<'a> {
