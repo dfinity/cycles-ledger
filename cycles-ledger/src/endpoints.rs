@@ -176,7 +176,7 @@ pub struct GetTransactionsResult {
 
 #[derive(CandidType, Deserialize, Debug)]
 pub struct DataCertificate {
-    pub certificate: Option<serde_bytes::ByteBuf>,
+    pub certificate: serde_bytes::ByteBuf,
 
     // CBOR encoded hash_tree
     pub hash_tree: serde_bytes::ByteBuf,

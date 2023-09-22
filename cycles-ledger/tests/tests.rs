@@ -1084,7 +1084,6 @@ fn validate_certificate(
         certificate,
         hash_tree,
     } = get_data_certificate(env, ledger_id);
-    let certificate = certificate.expect("The certificate should be set");
     let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
     assert_matches!(
         certificate.verify(ledger_id.as_slice(), &env.root_key()),

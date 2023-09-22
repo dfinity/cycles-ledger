@@ -279,7 +279,9 @@ pub fn get_data_certificate(env: &StateMachine, ledger_id: Principal) -> DataCer
         )
         .unwrap()
     {
-        Decode!(&res, DataCertificate).unwrap()
+        Decode!(&res, Option<DataCertificate>)
+            .unwrap()
+            .expect("icrc3_get_data_certificate should return a non-null result for query calls")
     } else {
         panic!("icrc3_get_data_certificate call rejected")
     }
