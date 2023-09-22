@@ -61,7 +61,7 @@ pub struct Cache {
     // The total supply of cycles.
     pub total_supply: u128,
     // The hash tree that is used to certify the chain.
-    // It will contain the hash and the index of the
+    // It contains the hash and the index of the
     // last block on the chain.
     pub hash_tree: RbTree<&'static str, Vec<u8>>,
 }
@@ -288,7 +288,7 @@ impl State {
             .append(&Cbor(b))
             .expect("failed to append a block");
 
-        // Change the certified data to point to the new, i.e. last, block
+        // Change the certified data to point to the new block at the end of the list of blocks
         let block_idx = self.blocks.len() - 1;
         populate_last_block_hash_and_hash_tree(&mut self.cache.hash_tree, block_idx, hash);
         set_certified_data(&self.root_hash());

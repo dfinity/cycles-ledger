@@ -1071,7 +1071,7 @@ fn test_total_supply_after_upgrade() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
-// validate that the given [response_certificate], [last_block_index] and [last_block_hash]
+// Validate that the given [response_certificate], [last_block_index], and [last_block_hash]
 // match the certified data from the ledger
 #[track_caller]
 fn validate_certificate(
