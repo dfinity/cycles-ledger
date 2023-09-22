@@ -144,7 +144,7 @@ service : {
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
-  icrc3_get_data_certificate : () -> (opt DataCertificate) query;
+  icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
   icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
   send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
 }

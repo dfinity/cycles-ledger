@@ -268,21 +268,21 @@ pub fn transaction_timestamps(
     }
 }
 
-pub fn get_data_certificate(env: &StateMachine, ledger_id: Principal) -> DataCertificate {
+pub fn get_tip_certificate(env: &StateMachine, ledger_id: Principal) -> DataCertificate {
     let arg = Encode!(&()).unwrap();
     if let WasmResult::Reply(res) = env
         .query_call(
             ledger_id,
             Principal::anonymous(),
-            "icrc3_get_data_certificate",
+            "icrc3_get_tip_certificate",
             arg,
         )
         .unwrap()
     {
         Decode!(&res, Option<DataCertificate>)
             .unwrap()
-            .expect("icrc3_get_data_certificate should return a non-null result for query calls")
+            .expect("icrc3_get_tip_certificate should return a non-null result for query calls")
     } else {
-        panic!("icrc3_get_data_certificate call rejected")
+        panic!("icrc3_get_tip_certificate call rejected")
     }
 }

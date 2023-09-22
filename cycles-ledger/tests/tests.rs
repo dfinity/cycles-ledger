@@ -41,7 +41,7 @@ use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
 use crate::client::{
-    approve, balance_of, fee, get_allowance, get_data_certificate, send, total_supply,
+    approve, balance_of, fee, get_allowance, get_tip_certificate, send, total_supply,
     transaction_timestamps,
 };
 
@@ -1083,7 +1083,7 @@ fn validate_certificate(
     let DataCertificate {
         certificate,
         hash_tree,
-    } = get_data_certificate(env, ledger_id);
+    } = get_tip_certificate(env, ledger_id);
     let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
     assert_matches!(
         certificate.verify(ledger_id.as_slice(), &env.root_key()),

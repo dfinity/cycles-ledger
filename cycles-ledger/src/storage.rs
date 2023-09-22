@@ -237,7 +237,7 @@ impl State {
         new_balance
     }
 
-    pub fn get_data_certificate(&self) -> Option<DataCertificate> {
+    pub fn get_tip_certificate(&self) -> Option<DataCertificate> {
         let certificate = match ic_cdk::api::data_certificate() {
             Some(certificate) => ByteBuf::from(certificate),
             None => return None,
