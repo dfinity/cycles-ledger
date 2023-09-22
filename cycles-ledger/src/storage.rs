@@ -594,7 +594,7 @@ pub fn approve(
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        record_approval(s, from, spender, amount, expires_at, expected_allowance);
+        record_approval(s, from, spender, amount, expires_at);
 
         s.debit(from_key, crate::config::FEE);
 
@@ -626,7 +626,6 @@ fn record_approval(
     spender: &Account,
     amount: u128,
     expires_at: Option<u64>,
-    expected_allowance: Option<u128>,
 ) {
     let key = (to_account_key(from), to_account_key(spender));
 
@@ -634,11 +633,6 @@ fn record_approval(
 
     match s.approvals.get(&key) {
         None => {
-            if let Some(expected_allowance) = expected_allowance {
-                if expected_allowance != 0 {
-                    ic_cdk::trap(&format!("No recording of any allowances for approval combination: from {:?} and spender {:?} and expected allowance is greater than 0: {}",from,spender,expected_allowance));
-                }
-            }
             if amount == 0 {
                 log!(P0, "[record_approval]: amount was set to 0");
                 return;
@@ -648,10 +642,7 @@ fn record_approval(
             }
             s.approvals.insert(key, (amount, expires_at));
         }
-        Some((current_allowance, current_expiration)) => {
-            if let Some(expected_allowance) = expected_allowance {
-                assert_eq!(expected_allowance, current_allowance);
-            }
+        Some((_, current_expiration)) => {
             if amount == 0 {
                 if current_expiration > 0 {
                     s.expiration_queue.remove(&(current_expiration, key));
