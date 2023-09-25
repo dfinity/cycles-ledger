@@ -1125,7 +1125,7 @@ fn validate_certificate(
     let expected_last_block_hash = match hash_tree.lookup_subtree([b"last_block_hash"]) {
         SubtreeLookupResult::Found(tree) => match tree.as_ref() {
             HashTreeNode::Leaf(last_block_hash) => last_block_hash.clone(),
-            _ => panic!("last_block_hash value in the hash_tree should be a Leaf"),
+            _ => panic!("last_block_hash value in the hash_tree should be a leaf"),
         },
         _ => panic!("last_block_hash not found in the response hash_tree"),
     };
