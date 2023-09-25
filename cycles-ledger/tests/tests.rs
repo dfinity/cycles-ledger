@@ -4,14 +4,15 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use assert_matches::assert_matches;
 use candid::{Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::{
     config::{self, FEE},
-    endpoints::{GetTransactionsResult, SendArgs, SendError},
+    endpoints::{DataCertificate, GetTransactionsResult, SendArgs, SendError},
     memo::encode_send_memo,
     storage::{
-        Block,
+        Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
         Transaction,
     },
@@ -19,7 +20,13 @@ use cycles_ledger::{
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use futures::FutureExt;
+use ic_cbor::CertificateToCbor;
 use ic_cdk::api::call::RejectionCode;
+use ic_certificate_verification::VerifyCertificate;
+use ic_certification::{
+    hash_tree::{HashTreeNode, SubtreeLookupResult},
+    Certificate, HashTree, LookupResult,
+};
 use ic_test_state_machine_client::{ErrorCode, StateMachine};
 use icrc_ledger_types::{
     icrc1::{
@@ -34,7 +41,8 @@ use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
 use crate::client::{
-    approve, balance_of, fee, get_allowance, send, total_supply, transaction_timestamps,
+    approve, balance_of, fee, get_allowance, get_tip_certificate, send, total_supply,
+    transaction_timestamps,
 };
 
 mod client;
@@ -1079,6 +1087,62 @@ fn test_total_supply_after_upgrade() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
+// Validate that the given [response_certificate], [last_block_index], and [last_block_hash]
+// match the certified data from the ledger
+#[track_caller]
+fn validate_certificate(
+    env: &StateMachine,
+    ledger_id: Principal,
+    last_block_index: u64,
+    last_block_hash: Hash,
+) {
+    let DataCertificate {
+        certificate,
+        hash_tree,
+    } = get_tip_certificate(env, ledger_id);
+    let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
+    assert_matches!(
+        certificate.verify(ledger_id.as_slice(), &env.root_key()),
+        Ok(_)
+    );
+
+    let certified_data_path: [&[u8]; 3] = [
+        "canister".as_bytes(),
+        ledger_id.as_slice(),
+        "certified_data".as_bytes(),
+    ];
+
+    let certified_data_hash = match certificate.tree.lookup_path(&certified_data_path) {
+        LookupResult::Found(v) => v,
+        _ => panic!("Unable to find the certificate_data_hash for the ledger canister in the hash_tree (hash_tree: {:?}, path: {:?})", certificate.tree, certified_data_path),
+    };
+
+    let hash_tree: HashTree = serde_cbor::de::from_slice(hash_tree.as_slice())
+        .expect("Unable to deserialize CBOR encoded hash_tree");
+
+    assert_eq!(certified_data_hash, hash_tree.digest());
+
+    let expected_last_block_hash = match hash_tree.lookup_subtree([b"last_block_hash"]) {
+        SubtreeLookupResult::Found(tree) => match tree.as_ref() {
+            HashTreeNode::Leaf(last_block_hash) => last_block_hash.clone(),
+            _ => panic!("last_block_hash value in the hash_tree should be a leaf"),
+        },
+        _ => panic!("last_block_hash not found in the response hash_tree"),
+    };
+    assert_eq!(last_block_hash.to_vec(), expected_last_block_hash);
+
+    let expected_last_block_index = match hash_tree.lookup_subtree([b"last_block_index"]) {
+        SubtreeLookupResult::Found(tree) => match tree.as_ref() {
+            HashTreeNode::Leaf(last_block_index_bytes) => {
+                u64::from_be_bytes(last_block_index_bytes.clone().try_into().unwrap())
+            }
+            _ => panic!("last_block_index value in the hash_tree should be a Leaf"),
+        },
+        _ => panic!("last_block_hash not found in the response hash_tree"),
+    };
+    assert_eq!(last_block_index, expected_last_block_index);
+}
+
 #[test]
 fn test_icrc3_get_transactions() {
     // Utility to extract all IDs and the corresponding transactions from the given [GetTransactionsResult].
@@ -1133,6 +1197,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_txs[0].1.timestamp;
+    validate_certificate(env, ledger_id, 0, block0.hash());
 
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
@@ -1156,6 +1221,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
+    validate_certificate(env, ledger_id, 1, block1.hash());
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
@@ -1203,6 +1269,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
+    validate_certificate(env, ledger_id, 2, block2.hash());
 
     // add a couple of blocks
     transfer(
@@ -1268,7 +1335,7 @@ fn test_icrc3_get_transactions() {
         None,
         Some(actual_txs[3].1.hash()),
     );
-    let block5 = block(
+    let mut block5 = block(
         Transfer {
             from: user1,
             to: user3,
@@ -1289,6 +1356,11 @@ fn test_icrc3_get_transactions() {
         (5, block5.clone()),
     ];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
+    // Replace the dummy timestamp in the crafted block with the real one,
+    // i.e., the timestamp the ledger wrote in the real block. This is required
+    // so that we can use the hash of the block as the parent hash.
+    block5.timestamp = actual_txs[5].1.timestamp;
+    validate_certificate(env, ledger_id, 5, block5.hash());
 }
 
 // Checks two lists of blocks are the same.

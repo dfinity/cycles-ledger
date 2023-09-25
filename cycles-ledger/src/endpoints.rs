@@ -9,7 +9,6 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
-use serde_bytes::ByteBuf;
 
 pub type NumCycles = Nat;
 
@@ -152,13 +151,15 @@ pub struct GetTransactionsResult {
     // transaction log.
     pub log_length: Nat,
 
-    // System certificate for the hash of the
-    // latest transaction in the chain.
-    // Only present if `icrc3_get_transactions`
-    // is called in a non-replicated query context.
-    pub certificate: Option<ByteBuf>,
-
     pub transactions: Vec<TransactionWithId>,
 
     pub archived_transactions: Vec<ArchivedTransactions>,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+pub struct DataCertificate {
+    pub certificate: serde_bytes::ByteBuf,
+
+    // CBOR encoded hash_tree
+    pub hash_tree: serde_bytes::ByteBuf,
 }

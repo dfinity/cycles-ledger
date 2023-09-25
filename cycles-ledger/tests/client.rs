@@ -5,8 +5,8 @@ use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
     endpoints::{
-        self, DepositResult, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
-        SendArgs,
+        self, DataCertificate, DepositResult, GetTransactionsArg, GetTransactionsArgs,
+        GetTransactionsResult, SendArgs,
     },
 };
 use depositor::endpoints::DepositArg;
@@ -265,5 +265,24 @@ pub fn transaction_timestamps(
         Decode!(&res, BTreeMap<(u64, u64),()>).unwrap()
     } else {
         panic!("fee call rejected")
+    }
+}
+
+pub fn get_tip_certificate(env: &StateMachine, ledger_id: Principal) -> DataCertificate {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(
+            ledger_id,
+            Principal::anonymous(),
+            "icrc3_get_tip_certificate",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, Option<DataCertificate>)
+            .unwrap()
+            .expect("icrc3_get_tip_certificate should return a non-null result for query calls")
+    } else {
+        panic!("icrc3_get_tip_certificate call rejected")
     }
 }

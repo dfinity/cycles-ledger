@@ -114,12 +114,6 @@ type GetTransactionsResult = record {
     // transaction log.
     log_length : nat;
 
-    // System certificate for the hash of the
-    // latest transaction in the chain.
-    // Only present if `icrc3_get_transactions`
-    // is called in a non-replicated query context.
-    certificate : opt blob;
-
     transactions : vec record { id : nat; transaction: Value };
 
     // The archived_transactions vector is always going to be empty
@@ -128,6 +122,14 @@ type GetTransactionsResult = record {
         args : GetTransactionsArgs;
         callback : func (GetTransactionsArgs) -> (GetTransactionsResult) query;
     };
+};
+
+type DataCertificate = record {
+  // See https://internetcomputer.org/docs/current/references/ic-interface-spec#certification
+  certificate : blob;
+
+  // CBOR encoded hash_tree
+  hash_tree : blob;
 };
 
 service : {
@@ -145,6 +147,7 @@ service : {
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
+  icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
   icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
   send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
 }

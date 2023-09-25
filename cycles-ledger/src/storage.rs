@@ -1,4 +1,4 @@
-use crate::endpoints::SendError;
+use crate::endpoints::{DataCertificate, SendError};
 use crate::logs::{P0, P1};
 use crate::{
     ciborium_to_generic_value, compact_account,
@@ -11,6 +11,8 @@ use crate::{
 use anyhow::Context;
 use candid::Nat;
 use ic_canister_log::log;
+use ic_cdk::api::set_certified_data;
+use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
@@ -59,6 +61,10 @@ pub struct Cache {
     pub phash: Option<Hash>,
     // The total supply of cycles.
     pub total_supply: u128,
+    // The hash tree that is used to certify the chain.
+    // It contains the hash and the index of the
+    // last block on the chain.
+    pub hash_tree: RbTree<&'static str, Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -232,6 +238,48 @@ impl State {
         new_balance
     }
 
+    pub fn get_tip_certificate(&self) -> Option<DataCertificate> {
+        let certificate = match ic_cdk::api::data_certificate() {
+            Some(certificate) => ByteBuf::from(certificate),
+            None => return None,
+        };
+        let hash_tree = ByteBuf::from(
+            serde_cbor::to_vec(
+                &self
+                    .cache
+                    .hash_tree
+                    .value_range(b"last_block_hash", b"last_block_index"),
+            )
+            .expect(
+                "Bug: unable to write last_block_hash and last_block_index values in the hash_tree",
+            ),
+        );
+        Some(DataCertificate {
+            certificate,
+            hash_tree,
+        })
+    }
+
+    /// Returns the root hash of the certified ledger state.
+    /// The canister code must call [set_certified_data] with the value this function returns after
+    /// each successful modification of the ledger.
+    pub fn root_hash(&self) -> Hash {
+        self.cache.hash_tree.root_hash()
+    }
+
+    pub fn compute_last_block_hash_and_hash_tree(
+        blocks: &BlockLog,
+    ) -> (Option<Hash>, RbTree<&'static str, Vec<u8>>) {
+        let mut hash_tree = RbTree::new();
+        let n = blocks.len();
+        if n == 0 {
+            return (None, hash_tree);
+        }
+        let last_block_hash = blocks.get(n - 1).unwrap().hash();
+        populate_last_block_hash_and_hash_tree(&mut hash_tree, n - 1, last_block_hash);
+        (Some(last_block_hash), hash_tree)
+    }
+
     pub fn emit_block(&mut self, b: Block) -> Hash {
         let hash = b.hash();
         self.cache.phash = Some(hash);
@@ -240,6 +288,12 @@ impl State {
         self.blocks
             .append(&Cbor(b))
             .expect("failed to append a block");
+
+        // Change the certified data to point to the new block at the end of the list of blocks
+        let block_idx = self.blocks.len() - 1;
+        populate_last_block_hash_and_hash_tree(&mut self.cache.hash_tree, block_idx, hash);
+        set_certified_data(&self.root_hash());
+
         if let Some(ts) = created_at_time {
             // Add block index to the list of transactions and set the hash as its key
             self.transaction_hashes
@@ -249,15 +303,6 @@ impl State {
         }
 
         hash
-    }
-
-    fn compute_last_block_hash(blocks: &BlockLog) -> Option<Hash> {
-        let n = blocks.len();
-        if n == 0 {
-            return None;
-        }
-        let last_block = blocks.get(n - 1).unwrap();
-        Some(last_block.hash())
     }
 
     fn compute_total_supply(balances: &Balances) -> u128 {
@@ -281,10 +326,12 @@ thread_local! {
                 mm.get(BLOCK_LOG_DATA_MEMORY_ID)
             ).expect("failed to initialize the block log");
         let balances = Balances::init(mm.get(BALANCES_MEMORY_ID));
+        let (phash, hash_tree) = State::compute_last_block_hash_and_hash_tree(&blocks);
 
         RefCell::new(State {
             cache: Cache {
-                phash: State::compute_last_block_hash(&blocks),
+                phash,
+                hash_tree,
                 total_supply: State::compute_total_supply(&balances),
             },
             blocks,
@@ -319,6 +366,15 @@ fn check_invariants(s: &State) {
             s.approvals.len()
         ))
     }
+}
+
+pub fn populate_last_block_hash_and_hash_tree(
+    hash_tree: &mut RbTree<&'static str, Vec<u8>>,
+    last_block_index: u64,
+    last_block_hash: Hash,
+) {
+    hash_tree.insert("last_block_index", last_block_index.to_be_bytes().to_vec());
+    hash_tree.insert("last_block_hash", last_block_hash.to_vec());
 }
 
 #[derive(Default)]
@@ -780,7 +836,6 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     }
     GetTransactionsResult {
         log_length: Nat::from(log_length),
-        certificate: None, // TODO FI-766
         transactions,
         archived_transactions: vec![],
     }

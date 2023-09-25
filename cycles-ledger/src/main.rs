@@ -1,5 +1,7 @@
 use candid::{candid_method, Nat};
-use cycles_ledger::endpoints::{GetTransactionsArgs, GetTransactionsResult, SendError};
+use cycles_ledger::endpoints::{
+    DataCertificate, GetTransactionsArgs, GetTransactionsResult, SendError,
+};
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::memo::{encode_send_memo, validate_memo};
@@ -116,8 +118,6 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 
     let (txid, balance, _phash) =
         storage::record_deposit(&arg.to, amount, arg.memo, ic_cdk::api::time());
-
-    // TODO(FI-766): set the certified variable.
 
     endpoints::DepositResult {
         txid: Nat::from(txid),
@@ -480,6 +480,12 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
         "Total number of blocks stored in the stable memory.",
     )?;
     Ok(())
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc3_get_tip_certificate() -> Option<DataCertificate> {
+    read_state(|state| state.get_tip_certificate())
 }
 
 fn main() {}
