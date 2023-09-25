@@ -70,24 +70,6 @@ pub enum SendError {
     },
 }
 
-pub enum DeduplicationError {
-    TooOld,
-    CreatedInFuture { ledger_time: u64 },
-    Duplicate { duplicate_of: BlockIndex },
-}
-
-impl From<DeduplicationError> for SendError {
-    fn from(value: DeduplicationError) -> Self {
-        match value {
-            DeduplicationError::TooOld => SendError::TooOld,
-            DeduplicationError::CreatedInFuture { ledger_time } => {
-                SendError::CreatedInFuture { ledger_time }
-            }
-            DeduplicationError::Duplicate { duplicate_of } => SendError::Duplicate { duplicate_of },
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(try_from = "candid::types::reference::Func")]
 pub struct GetTransactionsFn {

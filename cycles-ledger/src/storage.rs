@@ -1,11 +1,10 @@
-use crate::endpoints::DataCertificate;
+use crate::endpoints::{DataCertificate, SendError};
 use crate::logs::{P0, P1};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
     endpoints::{
-        DeduplicationError, GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult,
-        TransactionWithId,
+        GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult, TransactionWithId,
     },
     generic_to_ciborium_value,
 };
@@ -19,6 +18,8 @@ use ic_stable_structures::{
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
+use icrc_ledger_types::icrc2::approve::ApproveError;
+use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
 use icrc_ledger_types::{
     icrc::generic_value::Value,
     icrc1::{
@@ -425,14 +426,6 @@ pub fn record_deposit(
     memo: Option<Memo>,
     now: u64,
 ) -> (u64, u128, Hash) {
-    if amount < crate::config::FEE {
-        ic_cdk::trap(&format!(
-            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
-            amount,
-            crate::config::FEE
-        ))
-    }
-
     let key = to_account_key(account);
     mutate_state(now, |s| {
         let new_balance = s.credit(key, amount);
@@ -454,31 +447,59 @@ pub fn record_deposit(
     })
 }
 
-// This method implements deduplication accorind to the ICRC-1 standard: https://github.com/dfinity/ICRC-1
-pub fn deduplicate(
-    created_at_timestamp: Option<u64>,
-    tx_hash: [u8; 32],
+pub enum CreatedAtTimeValidation {
+    TooOld,
+    InTheFuture { ledger_time: u64 },
+}
+
+impl From<CreatedAtTimeValidation> for TransferFromError {
+    fn from(value: CreatedAtTimeValidation) -> Self {
+        match value {
+            CreatedAtTimeValidation::TooOld => Self::TooOld,
+            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+                Self::CreatedInFuture { ledger_time }
+            }
+        }
+    }
+}
+
+impl From<CreatedAtTimeValidation> for SendError {
+    fn from(value: CreatedAtTimeValidation) -> Self {
+        match value {
+            CreatedAtTimeValidation::TooOld => Self::TooOld,
+            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+                Self::CreatedInFuture { ledger_time }
+            }
+        }
+    }
+}
+
+impl From<CreatedAtTimeValidation> for ApproveError {
+    fn from(value: CreatedAtTimeValidation) -> Self {
+        match value {
+            CreatedAtTimeValidation::TooOld => Self::TooOld,
+            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+                Self::CreatedInFuture { ledger_time }
+            }
+        }
+    }
+}
+
+pub fn validate_created_at_time(
+    created_at_time: &Option<u64>,
     now: u64,
-) -> Result<(), DeduplicationError> {
-    if let (Some(created_at_time), tx_hash) = (created_at_timestamp, tx_hash) {
-        // If the created timestamp is outside of the permitted Transaction window
-        if created_at_time
-            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
-            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
-            < now
-        {
-            return Err(DeduplicationError::TooOld);
-        }
+) -> Result<(), CreatedAtTimeValidation> {
+    let Some(created_at_time) = created_at_time else { return Ok(())};
+    if created_at_time
+        .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+        .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+        < now
+    {
+        return Err(CreatedAtTimeValidation::TooOld);
+    }
 
-        if created_at_time > now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
-            return Err(DeduplicationError::CreatedInFuture { ledger_time: now });
-        }
-
-        if let Some(block_height) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
-            return Err(DeduplicationError::Duplicate {
-                duplicate_of: Nat::from(block_height),
-            });
-        }
+    if created_at_time > &now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
+        return Err(CreatedAtTimeValidation::InTheFuture { ledger_time: now });
     }
     Ok(())
 }
@@ -497,8 +518,6 @@ pub fn transfer(
     let from_key = to_account_key(from);
     let to_key = to_account_key(to);
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
-    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
-    check_transfer_preconditions(from_balance, total_spent_amount, now, created_at_time);
 
     mutate_state(now, |s| {
         if let Some(spender) = spender {
@@ -529,25 +548,6 @@ pub fn transfer(
         });
         (s.blocks.len() - 1, block_hash)
     })
-}
-
-fn check_transfer_preconditions(
-    from_balance: u128,
-    total_spent_amount: u128,
-    now: u64,
-    created_at_time: Option<u64>,
-) {
-    if from_balance < total_spent_amount {
-        ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_spent_amount))
-    }
-    if let Some(time) = created_at_time {
-        if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
-            ic_cdk::trap(&format!(
-                "Transfer created in the future, created_at_time: {}, now: {}",
-                time, now
-            ))
-        }
-    }
 }
 
 const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
@@ -604,12 +604,7 @@ pub fn send(
     let from_key = to_account_key(from);
 
     mutate_state(now, |s| {
-        let from_balance = s.balances.get(&from_key).unwrap_or_default();
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
-
-        if from_balance < total_balance_deduction {
-            ic_cdk::trap(&format!("The balance of the account sending cycles ({}) is lower than the total number of cycles needed to make the transfer ({})",from_balance,total_balance_deduction))
-        }
 
         s.debit(from_key, total_balance_deduction);
         let phash = s.last_block_hash();
@@ -653,19 +648,9 @@ pub fn approve(
     let from = from_spender.0;
     let spender = from_spender.1;
     let from_key = to_account_key(from);
-    let from_balance = read_state(|s| s.balances.get(&from_key).unwrap_or_default());
-
-    check_approve_preconditions(
-        from,
-        from_balance,
-        spender,
-        expires_at,
-        now,
-        created_at_time,
-    );
 
     mutate_state(now, |s| {
-        record_approval(s, from, spender, amount, expires_at, expected_allowance);
+        record_approval(s, from, spender, amount, expires_at);
 
         s.debit(from_key, crate::config::FEE);
 
@@ -691,50 +676,12 @@ pub fn approve(
     })
 }
 
-fn check_approve_preconditions(
-    from: &Account,
-    from_balance: u128,
-    spender: &Account,
-    expires_at: Option<u64>,
-    now: u64,
-    created_at_time: Option<u64>,
-) {
-    if from_balance < crate::config::FEE {
-        ic_cdk::trap(&format!(
-            "The balance of the account {:?} is {}, which is lower than the cycles ledger fee: {}",
-            from,
-            from_balance,
-            crate::config::FEE
-        ))
-    }
-    if from == spender {
-        ic_cdk::trap("self approvals are not allowed, should be checked in the endpoint")
-    }
-    if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
-        ic_cdk::trap(&format!(
-            "Approval expiration time ({}) should be later than now ({now})",
-            expires_at.unwrap_or(REMOTE_FUTURE)
-        ))
-    }
-    if let Some(time) = created_at_time {
-        if time > now.saturating_add(crate::config::PERMITTED_DRIFT.as_nanos() as u64) {
-            ic_cdk::trap(&format!(
-                "Approval created in the future, created_at_time: {}, now: {}",
-                time, now
-            ))
-        }
-    }
-}
-
-const REMOTE_FUTURE: u64 = u64::MAX;
-
 fn record_approval(
     s: &mut State,
     from: &Account,
     spender: &Account,
     amount: u128,
     expires_at: Option<u64>,
-    expected_allowance: Option<u128>,
 ) {
     let key = (to_account_key(from), to_account_key(spender));
 
@@ -742,11 +689,6 @@ fn record_approval(
 
     match s.approvals.get(&key) {
         None => {
-            if let Some(expected_allowance) = expected_allowance {
-                if expected_allowance != 0 {
-                    ic_cdk::trap(&format!("No recording of any allowances for approval combination: from {:?} and spender {:?} and expected allowance is greater than 0: {}",from,spender,expected_allowance));
-                }
-            }
             if amount == 0 {
                 log!(P0, "[record_approval]: amount was set to 0");
                 return;
@@ -756,10 +698,7 @@ fn record_approval(
             }
             s.approvals.insert(key, (amount, expires_at));
         }
-        Some((current_allowance, current_expiration)) => {
-            if let Some(expected_allowance) = expected_allowance {
-                assert_eq!(expected_allowance, current_allowance);
-            }
+        Some((_, current_expiration)) => {
             if amount == 0 {
                 if current_expiration > 0 {
                     s.expiration_queue.remove(&(current_expiration, key));

@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use assert_matches::assert_matches;
@@ -417,6 +417,22 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
+
+    // test send deduplication
+    deposit(env, depositor_id, user_2, FEE * 3);
+    let created_at_time = env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+    let args = SendArgs {
+        from_subaccount: None,
+        to: depositor_id,
+        created_at_time: Some(created_at_time),
+        amount: Nat::from(FEE),
+    };
+    let duplicate_of = send(env, ledger_id, user_2, args.clone()).unwrap();
+    // the same send should fail because created_at_time is set and the args are the same
+    assert_eq!(
+        send(env, ledger_id, user_2, args),
+        Err(SendError::Duplicate { duplicate_of })
+    );
 }
 
 fn system_time_to_nanos(t: SystemTime) -> u64 {
