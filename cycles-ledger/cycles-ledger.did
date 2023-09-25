@@ -125,7 +125,10 @@ type GetTransactionsResult = record {
 };
 
 type DataCertificate = record {
+  // See https://internetcomputer.org/docs/current/references/ic-interface-spec#certification
   certificate : blob;
+
+  // CBOR encoded hash_tree
   hash_tree : blob;
 };
 
