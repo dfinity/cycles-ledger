@@ -8,8 +8,8 @@ use assert_matches::assert_matches;
 use candid::{Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::{
-    config::{self, FEE},
-    endpoints::{DataCertificate, GetTransactionsResult, SendArgs, SendError},
+    config::{self, FEE, Config},
+    endpoints::{DataCertificate, GetTransactionsResult, SendArgs, SendError, LedgerArgs},
     memo::encode_send_memo,
     storage::{
         Block, Hash,
@@ -83,7 +83,8 @@ fn get_wasm(name: &str) -> Vec<u8> {
 
 fn install_ledger(env: &StateMachine) -> Principal {
     let canister = env.create_canister(None);
-    env.install_canister(canister, get_wasm("cycles-ledger"), vec![], None);
+    let init_args = Encode!(&LedgerArgs::Init(Config::default())).unwrap();
+    env.install_canister(canister, get_wasm("cycles-ledger"), init_args, None);
     canister
 }
 
@@ -1082,7 +1083,8 @@ fn test_total_supply_after_upgrade() {
     // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and send
     let expected_total_supply = 5_000_000_000 - 1_000_000_000 - 2 * fee.0.to_u128().unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
-    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), vec![], None)
+    let upgrade_args = Encode!(&None::<LedgerArgs>).unwrap();
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), upgrade_args, None)
         .unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }

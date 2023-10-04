@@ -1,4 +1,7 @@
-use std::time::Duration;
+use candid::{Deserialize, CandidType};
+use ic_stable_structures::Storable;
+use serde::Serialize;
+use std::{time::Duration, borrow::Cow};
 
 pub const FEE: u128 = 100_000_000;
 pub const DECIMALS: u8 = 0;
@@ -11,3 +14,40 @@ pub const TRANSACTION_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 pub const TRANSACTION_PRUNE_LIMIT: usize = 100_000;
 // The maximum number of entries in the approval list and expiration queue to be pruned in a single prune process
 pub const APPROVE_PRUNE_LIMIT: usize = 100;
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Config {
+    /// The maximum number of transactions
+    /// returned by the [icrc3_get_transactions]
+    /// endpoint
+    pub max_transactions_per_request: u64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { max_transactions_per_request: 1000 }
+    }
+}
+
+impl Storable for Config {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        let mut bytes = vec![];
+        ciborium::into_writer(self, &mut bytes)
+            .expect("Unable to serialize the config as CBOR");
+        Cow::Owned(bytes)
+    }
+
+    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
+        ciborium::from_reader::<Self, _>(bytes.as_ref())
+            .expect("Unable to deserialize the config from its CBOR form")
+    }
+}
+
+#[test]
+fn test_config_ser_de() {
+    // do not use default
+    let config = Config {
+        max_transactions_per_request: 10,
+    };
+    assert_eq!(Config::from_bytes(config.to_bytes()), config);
+}
