@@ -1,7 +1,7 @@
-use candid::{Deserialize, CandidType};
+use candid::{CandidType, Deserialize};
 use ic_stable_structures::Storable;
 use serde::Serialize;
-use std::{time::Duration, borrow::Cow};
+use std::{borrow::Cow, time::Duration};
 
 pub const FEE: u128 = 100_000_000;
 pub const DECIMALS: u8 = 0;
@@ -25,15 +25,16 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { max_transactions_per_request: 1000 }
+        Self {
+            max_transactions_per_request: 1000,
+        }
     }
 }
 
 impl Storable for Config {
     fn to_bytes(&self) -> Cow<[u8]> {
         let mut bytes = vec![];
-        ciborium::into_writer(self, &mut bytes)
-            .expect("Unable to serialize the config as CBOR");
+        ciborium::into_writer(self, &mut bytes).expect("Unable to serialize the config as CBOR");
         Cow::Owned(bytes)
     }
 

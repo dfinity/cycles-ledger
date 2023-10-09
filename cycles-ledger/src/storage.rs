@@ -15,9 +15,9 @@ use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
+    cell::Cell as StableCell,
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
-    cell::Cell as StableCell,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use icrc_ledger_types::icrc2::approve::ApproveError;
@@ -816,8 +816,7 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
 pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     let log_length = read_state(|state| state.blocks.len());
     let mut transactions = Vec::new();
-    let mut max_length =
-        read_state(|state| state.config.get().max_transactions_per_request);
+    let mut max_length = read_state(|state| state.config.get().max_transactions_per_request);
     for GetTransactionsArg { start, length } in args {
         if max_length == 0 {
             break;
