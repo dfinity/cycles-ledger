@@ -818,10 +818,10 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     let max_length = read_state(|state| state.config.get().max_transactions_per_request);
     let mut transactions = Vec::new();
     for GetTransactionsArg { start, length } in args {
-        if transactions.len() as u64 >= max_length {
+        let remaining_length = max_length.saturating_sub(transactions.len() as u64);
+        if remaining_length == 0 {
             break;
         }
-        let remaining_length = max_length - transactions.len() as u64;
         let start = match start.0.to_u64() {
             Some(start) if start < log_length => start,
             _ => continue, // TODO(FI-924): log this error
