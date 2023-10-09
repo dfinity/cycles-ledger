@@ -815,18 +815,19 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
 
 pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     let log_length = read_state(|state| state.blocks.len());
+    let max_length = read_state(|state| state.config.get().max_transactions_per_request);
     let mut transactions = Vec::new();
-    let mut max_length = read_state(|state| state.config.get().max_transactions_per_request);
     for GetTransactionsArg { start, length } in args {
-        if max_length == 0 {
+        if transactions.len() as u64 >= max_length {
             break;
         }
+        let remaining_length = max_length - transactions.len() as u64;
         let start = match start.0.to_u64() {
             Some(start) if start < log_length => start,
             _ => continue, // TODO(FI-924): log this error
         };
         let end_excluded = match length.0.to_u64() {
-            Some(length) => log_length.min(start + max_length.min(length)),
+            Some(length) => log_length.min(start + remaining_length.min(length)),
             None => continue, // TODO(FI-924): log this error
         };
         read_state(|state| {
@@ -843,7 +844,6 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
                     transaction,
                 };
                 transactions.push(transaction_with_id);
-                max_length -= 1;
             }
         });
     }
