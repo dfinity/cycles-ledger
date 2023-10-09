@@ -1493,9 +1493,9 @@ fn test_set_max_transactions_per_request_in_upgrade() {
     assert_eq!(5, res.transactions.len() as u64);
 
     let max_transactions_per_request = 2;
-    let arg = Encode!(&LedgerArgs::Upgrade(UpgradeArgs {
+    let arg = Encode!(&Some(LedgerArgs::Upgrade(UpgradeArgs {
         max_transactions_per_request: Some(max_transactions_per_request)
-    }))
+    })))
     .unwrap();
     env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
         .unwrap();
