@@ -1444,7 +1444,7 @@ fn block(
 
 #[test]
 fn test_get_transactions_max_length() {
-    // check that the Ledger doesn't return more blocks
+    // Check that the ledger doesn't return more blocks
     // than configured. We set the max number of transactions
     // per request to 2 instead of the default because
     // it's much faster to test.
