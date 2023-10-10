@@ -8,8 +8,10 @@ use assert_matches::assert_matches;
 use candid::{Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::{
-    config::{self, FEE},
-    endpoints::{DataCertificate, GetTransactionsResult, SendArgs, SendError},
+    config::{self, Config as LedgerConfig, FEE},
+    endpoints::{
+        DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError, UpgradeArgs,
+    },
     memo::encode_send_memo,
     storage::{
         Block, Hash,
@@ -82,8 +84,13 @@ fn get_wasm(name: &str) -> Vec<u8> {
 }
 
 fn install_ledger(env: &StateMachine) -> Principal {
+    install_ledger_with_conf(env, LedgerConfig::default())
+}
+
+fn install_ledger_with_conf(env: &StateMachine, config: LedgerConfig) -> Principal {
     let canister = env.create_canister(None);
-    env.install_canister(canister, get_wasm("cycles-ledger"), vec![], None);
+    let init_args = Encode!(&LedgerArgs::Init(config)).unwrap();
+    env.install_canister(canister, get_wasm("cycles-ledger"), init_args, None);
     canister
 }
 
@@ -1082,7 +1089,8 @@ fn test_total_supply_after_upgrade() {
     // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and send
     let expected_total_supply = 5_000_000_000 - 1_000_000_000 - 2 * fee.0.to_u128().unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
-    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), vec![], None)
+    let upgrade_args = Encode!(&None::<LedgerArgs>).unwrap();
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), upgrade_args, None)
         .unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
@@ -1432,6 +1440,74 @@ fn block(
         phash,
         effective_fee,
     }
+}
+
+#[test]
+fn test_get_transactions_max_length() {
+    // Check that the ledger doesn't return more blocks
+    // than configured. We set the max number of transactions
+    // per request to 2 instead of the default because
+    // it's much faster to test.
+
+    let env = new_state_machine();
+    let max_transactions_per_request = 2;
+    let ledger_id = install_ledger_with_conf(
+        &env,
+        LedgerConfig {
+            max_transactions_per_request,
+        },
+    );
+    let depositor_id = install_depositor(&env, ledger_id);
+
+    let user = Account::from(Principal::from_slice(&[10]));
+    let _ = deposit(&env, depositor_id, user, 1_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 2_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 3_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 4_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 5_000_000_000);
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(3, u64::MAX)]);
+    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
+    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+}
+
+#[test]
+fn test_set_max_transactions_per_request_in_upgrade() {
+    let env = new_state_machine();
+    let ledger_id = install_ledger_with_conf(&env, LedgerConfig::default());
+    let depositor_id = install_depositor(&env, ledger_id);
+
+    let user = Account::from(Principal::from_slice(&[10]));
+    let _ = deposit(&env, depositor_id, user, 1_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 2_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 3_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 4_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 5_000_000_000);
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(5, res.transactions.len() as u64);
+
+    let max_transactions_per_request = 2;
+    let arg = Encode!(&Some(LedgerArgs::Upgrade(UpgradeArgs {
+        max_transactions_per_request: Some(max_transactions_per_request)
+    })))
+    .unwrap();
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
+        .unwrap();
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(3, u64::MAX)]);
+    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+
+    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
+    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
 }
 
 #[test]

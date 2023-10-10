@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::endpoints::{DataCertificate, SendError};
 use crate::logs::{P0, P1};
 use crate::{
@@ -14,6 +15,7 @@ use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
+    cell::Cell as StableCell,
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
     storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
@@ -40,6 +42,7 @@ const APPROVALS_MEMORY_ID: MemoryId = MemoryId::new(4);
 const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
 const TRANSACTION_HASH_MEMORY_ID: MemoryId = MemoryId::new(6);
 const TRANSACTION_TIMESTAMP_MEMORY_ID: MemoryId = MemoryId::new(7);
+const CONFIG_MEMORY_ID: MemoryId = MemoryId::new(8);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
@@ -49,6 +52,7 @@ pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
 pub type TransactionTimeStampKey = (u64, u64);
 pub type TransactionTimeStamps = StableBTreeMap<TransactionTimeStampKey, (), VMem>;
+pub type ConfigCell = StableCell<Config, VMem>;
 
 pub type ApprovalKey = (AccountKey, AccountKey);
 pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
@@ -191,6 +195,7 @@ pub struct State {
     pub expiration_queue: ExpirationQueue,
     pub transaction_hashes: TransactionHashes,
     pub transaction_timestamps: TransactionTimeStamps,
+    pub config: ConfigCell,
     // In-memory cache dropped on each upgrade.
     cache: Cache,
 }
@@ -327,6 +332,8 @@ thread_local! {
             ).expect("failed to initialize the block log");
         let balances = Balances::init(mm.get(BALANCES_MEMORY_ID));
         let (phash, hash_tree) = State::compute_last_block_hash_and_hash_tree(&blocks);
+        let config = ConfigCell::init(mm.get(CONFIG_MEMORY_ID), Config::default())
+            .expect("failed to initialize the config cell");
 
         RefCell::new(State {
             cache: Cache {
@@ -340,6 +347,7 @@ thread_local! {
             transaction_hashes: TransactionHashes::init(mm.get(TRANSACTION_HASH_MEMORY_ID)),
             transaction_timestamps: TransactionTimeStamps::init(mm.get(TRANSACTION_TIMESTAMP_MEMORY_ID)),
             expiration_queue: ExpirationQueue::init(mm.get(EXPIRATION_QUEUE_MEMORY_ID)),
+            config,
         })
     });
 }
@@ -807,14 +815,19 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
 
 pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
     let log_length = read_state(|state| state.blocks.len());
+    let max_length = read_state(|state| state.config.get().max_transactions_per_request);
     let mut transactions = Vec::new();
     for GetTransactionsArg { start, length } in args {
+        let remaining_length = max_length.saturating_sub(transactions.len() as u64);
+        if remaining_length == 0 {
+            break;
+        }
         let start = match start.0.to_u64() {
             Some(start) if start < log_length => start,
             _ => continue, // TODO(FI-924): log this error
         };
         let end_excluded = match length.0.to_u64() {
-            Some(length) => log_length.min(start + length),
+            Some(length) => log_length.min(start + remaining_length.min(length)),
             None => continue, // TODO(FI-924): log this error
         };
         read_state(|state| {

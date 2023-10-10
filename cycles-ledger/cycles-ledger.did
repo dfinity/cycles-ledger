@@ -132,7 +132,21 @@ type DataCertificate = record {
   hash_tree : blob;
 };
 
-service : {
+type InitArgs = record {
+  max_transactions_per_request : nat64;
+
+};
+
+type UpgradeArgs = record {
+  max_transactions_per_request : opt nat64;
+};
+
+type LedgerArgs = variant {
+  Init : InitArgs;
+  Upgrade : opt UpgradeArgs;
+};
+
+service : (ledger_args : LedgerArgs) -> {
   deposit : (DepositArgs) -> (DepositResult);
   icrc1_balance_of : (Account) -> (nat) query;
   icrc1_decimals : () -> (nat8) query;

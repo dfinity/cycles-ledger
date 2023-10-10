@@ -1,6 +1,6 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
-    DataCertificate, GetTransactionsArgs, GetTransactionsResult, SendError,
+    DataCertificate, GetTransactionsArgs, GetTransactionsResult, LedgerArgs, SendError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -14,7 +14,7 @@ use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
 use ic_cdk::api::management_canister;
 use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
-use ic_cdk_macros::{query, update};
+use ic_cdk_macros::{init, post_upgrade, query, update};
 use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::TransferArg as TransferArgs;
@@ -29,6 +29,40 @@ pub const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
 pub const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
 
 const REMOTE_FUTURE: u64 = u64::MAX;
+
+#[init]
+#[candid_method(init)]
+fn init(ledger_args: LedgerArgs) {
+    match ledger_args {
+        LedgerArgs::Init(config) => {
+            mutate_state(ic_cdk::api::time(), |state| {
+                state.config.set(config)
+                    .expect("Failed to change configuration");
+            })
+        }
+        LedgerArgs::Upgrade(_) =>
+            ic_cdk::trap("Cannot initialize the canister with an Upgrade argument. Please provide an Init argument."),
+    }
+}
+
+#[post_upgrade]
+fn post_upgrade(ledger_args: Option<LedgerArgs>) {
+    match ledger_args {
+        Some(LedgerArgs::Upgrade(upgrade_args)) => {
+            if let Some(max_transactions_per_request) = upgrade_args.max_transactions_per_request {
+                mutate_state(ic_cdk::api::time(), |state| {
+                    let mut config = state.config.get().to_owned();
+                    config.max_transactions_per_request = max_transactions_per_request;
+                    state.config.set(config)
+                        .expect("Failed to change configuration");
+                })
+            }
+        }
+        None => {},
+        _ =>
+            ic_cdk::trap("Cannot upgrade the canister with an Init argument. Please provide an Upgrade argument."),
+    }
+}
 
 #[query]
 #[candid_method(query)]

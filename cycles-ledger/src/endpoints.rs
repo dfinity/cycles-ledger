@@ -10,6 +10,19 @@ use icrc_ledger_types::{
     },
 };
 
+use crate::config::Config;
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct UpgradeArgs {
+    pub max_transactions_per_request: Option<u64>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum LedgerArgs {
+    Init(Config),
+    Upgrade(UpgradeArgs),
+}
+
 pub type NumCycles = Nat;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
