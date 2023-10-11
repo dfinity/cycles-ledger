@@ -169,22 +169,25 @@ impl Block {
         ))
     }
 
-    pub fn to_value(&self) -> anyhow::Result<Value> {
-        let value = ciborium::Value::serialized(self).context(format!(
-            "Bug: unable to convert Block to Ciborium Value. Block: {:?}",
-            self
-        ))?;
-        ciborium_to_generic_value(&value, 0).context(format!(
-            "Bug: unable to convert Ciborium Value to Value. Block: {:?}, Value: {:?}",
-            self, value
-        ))
+    /// Panics if the serialization fails.
+    pub fn to_value(&self) -> Value {
+        let value = ciborium::Value::serialized(self)
+            .context(format!(
+                "Bug: unable to convert Block to Ciborium Value. Block: {:?}",
+                self
+            ))
+            .unwrap();
+        ciborium_to_generic_value(&value, 0)
+            .context(format!(
+                "Bug: unable to convert Ciborium Value to Value. Block: {:?}, Value: {:?}",
+                self, value
+            ))
+            .unwrap()
     }
 
+    /// Panics if [to_value] fails.
     pub fn hash(&self) -> Hash {
-        match self.to_value() {
-            Ok(value) => value.hash(),
-            Err(err) => panic!("{}", err),
-        }
+        self.to_value().hash()
     }
 }
 
@@ -876,8 +879,7 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
                     .get(id)
                     .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
                     .0
-                    .to_value()
-                    .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
+                    .to_value();
                 let transaction_with_id = TransactionWithId {
                     id: Nat::from(id),
                     transaction,
@@ -922,28 +924,6 @@ mod tests {
         prune_transactions, Approvals, Balances, Block, BlockLog, Cache, ConfigCell,
         ExpirationQueue, State, TransactionHashes, TransactionTimeStamps,
     };
-
-    #[test]
-    fn test_block_hash() {
-        let block = Block {
-            transaction: Transaction {
-                operation: Operation::Transfer {
-                    from: Account::from(Principal::anonymous()),
-                    to: Account::from(Principal::anonymous()),
-                    spender: None,
-                    amount: u128::MAX,
-                    fee: Some(10_000),
-                },
-                memo: Some(Memo::default()),
-                created_at_time: None,
-            },
-            timestamp: 1691065957,
-            phash: None,
-            effective_fee: None,
-        };
-        // check that it doesn't panic and that it doesn't return a fake hash
-        assert_ne!(block.hash(), [0u8; 32]);
-    }
 
     #[test]
     fn test_u128_encoding() {
@@ -1051,9 +1031,10 @@ mod tests {
         fn block_strategy()
                          (transaction in transaction_strategy(),
                           timestamp in any::<u64>(),
-                          effective_fee in proptest::option::of(any::<u128>()))
+                          effective_fee in proptest::option::of(any::<u128>()),
+                          phash in proptest::option::of(any::<[u8;32]>()))
                          -> Block {
-            Block { transaction, timestamp, phash: None, effective_fee}
+            Block { transaction, timestamp, phash, effective_fee}
         }
     }
 
@@ -1061,8 +1042,7 @@ mod tests {
 
         #[test]
         fn test_block_to_value(block in block_strategy()) {
-            let value = block.to_value()
-                .expect("Unable to convert block to value");
+            let value = block.to_value();
             let actual_block = Block::from_value(value)
                 .expect("Unable to convert value to block");
             assert_eq!(block, actual_block)
@@ -1201,5 +1181,19 @@ mod tests {
                 hash_tree: RbTree::default(),
             },
         }
+    }
+
+    // Use proptest to genereate blocks and call hash on them.
+    // The test succeeeds if hash never panics, which means
+    // that `Block::to_value` is always safe to call.
+    #[test]
+    fn test_block_hash_doesnt_panic() {
+        let test_conf = proptest::test_runner::Config {
+            // Increase the cases so that more blocks are tested.
+            // 2048 cases take around 0.89s to run.
+            cases: 2048,
+            ..Default::default()
+        };
+        proptest!(test_conf, |(block in block_strategy())| { block.hash(); });
     }
 }
