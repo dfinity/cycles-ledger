@@ -9,7 +9,7 @@ use crate::{
     },
     generic_to_ciborium_value,
 };
-use anyhow::Context;
+use anyhow::{Context, Error};
 use candid::Nat;
 use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
@@ -209,39 +209,40 @@ impl State {
     }
 
     /// Increases the balance of an account of the given amount.
-    /// Panics if there is an overflow or the new balance cannot be inserted.
-    pub fn credit(&mut self, account: &Account, amount: u128) -> u128 {
+    /// Returns an error is either the account balance or the
+    /// total supply overflow.
+    pub fn credit(&mut self, account: &Account, amount: u128) -> anyhow::Result<u128> {
         let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_add(amount)
-            .expect("Overflow while changing the account balance");
-        self.balances.insert(account_key, new_balance);
+            .context("Overflow while changing the account balance")?;
         self.cache.total_supply = self
             .total_supply()
             .checked_add(amount)
-            .expect("Overflow while changing the total supply");
-        new_balance
+            .context("Overflow while changing the total supply")?;
+        self.balances.insert(account_key, new_balance);
+        Ok(new_balance)
     }
 
     /// Decreases the balance of an account of the given amount.
     /// Panics if there is an overflow or the new balance cannot be inserted.
-    pub fn debit(&mut self, account: &Account, amount: u128) -> u128 {
+    pub fn debit(&mut self, account: &Account, amount: u128) -> anyhow::Result<u128> {
         let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_sub(amount)
-            .expect("Underflow while changing the account balance");
+            .context("Underflow while changing the account balance")?;
+        self.cache.total_supply = self
+            .total_supply()
+            .checked_sub(amount)
+            .context("Underflow while changing the total supply")?;
         if new_balance == 0 {
             self.balances.remove(&account_key);
         } else {
             self.balances.insert(account_key, new_balance);
         }
-        self.cache.total_supply = self
-            .total_supply()
-            .checked_sub(amount)
-            .expect("Underflow while changing the total supply");
-        new_balance
+        Ok(new_balance)
     }
 
     pub fn get_tip_certificate(&self) -> Option<DataCertificate> {
@@ -440,9 +441,9 @@ pub fn record_deposit(
     amount: u128,
     memo: Option<Memo>,
     now: u64,
-) -> (u64, u128, Hash) {
+) -> anyhow::Result<(u64, u128, Hash)> {
     mutate_state(|s| {
-        let new_balance = s.credit(account, amount);
+        let new_balance = s.credit(account, amount)?;
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -457,7 +458,7 @@ pub fn record_deposit(
             phash,
             effective_fee: Some(0),
         });
-        (s.blocks.len() - 1, new_balance, block_hash)
+        Ok((s.blocks.len() - 1, new_balance, block_hash))
     })
 }
 
@@ -531,18 +532,9 @@ pub fn transfer(
 ) -> (u64, Hash) {
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
 
-    mutate_state(|s| {
-        if let Some(spender) = spender {
-            if spender != *from {
-                use_allowance(s, from, &spender, total_spent_amount, now);
-            }
-        }
-
-        s.debit(from, total_spent_amount);
-        s.credit(to, amount);
-
+    let block = read_state(|s| {
         let phash = s.last_block_hash();
-        let block_hash = s.emit_block(Block {
+        Block {
             transaction: Transaction {
                 operation: Operation::Transfer {
                     from: *from,
@@ -557,9 +549,35 @@ pub fn transfer(
             timestamp: now,
             phash,
             effective_fee: suggested_fee.is_none().then_some(config::FEE),
-        });
+        }
+    });
+
+    mutate_state(|s| {
+        if let Some(spender) = spender {
+            if spender != *from {
+                use_allowance(s, from, &spender, total_spent_amount, now);
+            }
+        }
+
+        if let Err(err) = s.debit(from, total_spent_amount) {
+            log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", block)))
+        };
+        // panic to rollback the previous debit.
+        if let Err(err) = s.credit(to, amount) {
+            log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", block)))
+        };
+
+        let block_hash = s.emit_block(block);
         (s.blocks.len() - 1, block_hash)
     })
+}
+
+/// Add a log entry with high priority for the error and trap.
+pub fn log_error_and_trap(err: &Error) -> ! {
+    // The alternate selector {:#} prints the causes too, see
+    // https://docs.rs/anyhow/latest/anyhow/struct.Error.html#display-representations.
+    log!(P0, "{:#}", err);
+    ic_cdk::trap(&format!("{}", err))
 }
 
 const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
@@ -587,7 +605,9 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
             return None;
         }
 
-        s.debit(from, crate::config::FEE);
+        if let Err(err) = s.debit(from, crate::config::FEE) {
+            log_error_and_trap(&err.context(format!("Unable to penalize account {:?}", from)))
+        }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -616,7 +636,9 @@ pub fn send(
     mutate_state(|s| {
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
-        s.debit(from, total_balance_deduction);
+        if let Err(err) = s.debit(from, total_balance_deduction) {
+            log_error_and_trap(&err.context("Unable to perform send"))
+        }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -661,7 +683,9 @@ pub fn approve(
     mutate_state(|s| {
         record_approval(s, from, spender, amount, expires_at);
 
-        s.debit(from, crate::config::FEE);
+        if let Err(err) = s.debit(from, crate::config::FEE) {
+            log_error_and_trap(&err.context("Unable to approve"))
+        }
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
