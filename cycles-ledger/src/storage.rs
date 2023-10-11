@@ -1111,7 +1111,7 @@ mod tests {
             prop_assert_eq!(state.approvals.len() + 6, from_spenders.len() as u64);
             prop_assert_eq!(state.expiration_queue.len() + 6, from_spenders.len() as u64);
 
-            // do not prune anything else because the last 4 approvals have created_at_time == expired
+            // do not prune anything else because the last 4 approvals have created_at_time == curr
             prune_approvals(expired, &mut state, usize::MAX);
             prop_assert_eq!(state.approvals.len() + 6, from_spenders.len() as u64);
             prop_assert_eq!(state.expiration_queue.len() + 6, from_spenders.len() as u64);
