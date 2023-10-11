@@ -84,18 +84,17 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn hash(&self) -> Hash {
-        let value = ciborium::Value::serialized(self).unwrap_or_else(|e| {
-            panic!(
-                "Bug: unable to convert Operation to Ciborium Value. Error: {}, Block: {:?}",
-                e, self
-            )
-        });
-        match ciborium_to_generic_value(&value.clone(), 0) {
-            Ok(value) => value.hash(),
-            Err(err) =>
-                panic!("Bug: unable to convert Ciborium Value to Value. Error: {}, Block: {:?}, Value: {:?}", err, self, value),
-        }
+    pub fn hash(&self) -> anyhow::Result<Hash> {
+        let value = ciborium::Value::serialized(self).context(format!(
+            "Bug: unable to convert Transaction to Ciborium Value. Transaction: {:?}",
+            self
+        ))?;
+        ciborium_to_generic_value(&value.clone(), 0)
+            .map(|v| v.hash())
+            .context(format!(
+                "Bug: unable to convert Ciborium Value to Value. Transaction: {:?}, Value: {:?}",
+                self, value
+            ))
     }
 }
 
@@ -180,11 +179,11 @@ impl Block {
         ))
     }
 
-    pub fn hash(&self) -> Hash {
-        match self.to_value() {
-            Ok(value) => value.hash(),
-            Err(err) => panic!("{}", err),
-        }
+    /// Panics if [to_value] fails.
+    pub fn hash(&self) -> anyhow::Result<Hash> {
+        self.to_value()
+            .map(|v| v.hash())
+            .context("Bug: Unable to calculate block hash")
     }
 }
 
@@ -211,7 +210,8 @@ impl State {
 
     /// Increases the balance of an account of the given amount.
     /// Panics if there is an overflow or the new balance cannot be inserted.
-    pub fn credit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+    pub fn credit(&mut self, account: &Account, amount: u128) -> u128 {
+        let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_add(amount)
@@ -226,7 +226,8 @@ impl State {
 
     /// Decreases the balance of an account of the given amount.
     /// Panics if there is an overflow or the new balance cannot be inserted.
-    pub fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+    pub fn debit(&mut self, account: &Account, amount: u128) -> u128 {
+        let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_sub(amount)
@@ -280,15 +281,15 @@ impl State {
         if n == 0 {
             return (None, hash_tree);
         }
-        let last_block_hash = blocks.get(n - 1).unwrap().hash();
+        let last_block_hash = blocks.get(n - 1).unwrap().hash().unwrap();
         populate_last_block_hash_and_hash_tree(&mut hash_tree, n - 1, last_block_hash);
         (Some(last_block_hash), hash_tree)
     }
 
     pub fn emit_block(&mut self, b: Block) -> Hash {
-        let hash = b.hash();
+        let hash = b.hash().unwrap();
         self.cache.phash = Some(hash);
-        let tx_hash = b.transaction.hash();
+        let tx_hash = b.transaction.hash().unwrap();
         let created_at_time = b.transaction.created_at_time;
         self.blocks
             .append(&Cbor(b))
@@ -440,9 +441,8 @@ pub fn record_deposit(
     memo: Option<Memo>,
     now: u64,
 ) -> (u64, u128, Hash) {
-    let key = to_account_key(account);
     mutate_state(|s| {
-        let new_balance = s.credit(key, amount);
+        let new_balance = s.credit(account, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -529,8 +529,6 @@ pub fn transfer(
     created_at_time: Option<u64>,
     suggested_fee: Option<u128>,
 ) -> (u64, Hash) {
-    let from_key = to_account_key(from);
-    let to_key = to_account_key(to);
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
 
     mutate_state(|s| {
@@ -540,8 +538,8 @@ pub fn transfer(
             }
         }
 
-        s.debit(from_key, total_spent_amount);
-        s.credit(to_key, amount);
+        s.debit(from, total_spent_amount);
+        s.credit(to, amount);
 
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -575,10 +573,10 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
         from,
         now
     );
-    let from_key = to_account_key(from);
+
+    let balance = balance_of(from);
 
     mutate_state(|s| {
-        let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
             log!(
                 P1,
@@ -589,7 +587,7 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
             return None;
         }
 
-        s.debit(from_key, crate::config::FEE);
+        s.debit(from, crate::config::FEE);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -615,12 +613,10 @@ pub fn send(
     now: u64,
     created_at_time: Option<u64>,
 ) -> (BlockIndex, Hash) {
-    let from_key = to_account_key(from);
-
     mutate_state(|s| {
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
-        s.debit(from_key, total_balance_deduction);
+        s.debit(from, total_balance_deduction);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -661,12 +657,11 @@ pub fn approve(
 ) -> u64 {
     let from = from_spender.0;
     let spender = from_spender.1;
-    let from_key = to_account_key(from);
 
     mutate_state(|s| {
         record_approval(s, from, spender, amount, expires_at);
 
-        s.debit(from_key, crate::config::FEE);
+        s.debit(from, crate::config::FEE);
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
@@ -816,10 +811,22 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
                 with the timestamp: {} and was selected for pruning from \
                 the timestamp and hashes pools",
                 block_idx,
-                timestamp);
+                timestamp
+            );
             continue;
         };
-        let tx_hash = block.transaction.hash();
+        let tx_hash = match block.transaction.hash() {
+            Ok(tx_hash) => tx_hash,
+            Err(err) => {
+                log!(
+                    P0,
+                    "Cannot calculate hash of transaction for block id: {}. Error: {}",
+                    block_idx,
+                    err,
+                );
+                continue;
+            }
+        };
         match s.transaction_hashes.remove(&tx_hash) {
             None => {
                 log!(P0,
@@ -909,7 +916,8 @@ mod tests {
     };
     use num_bigint::BigUint;
     use proptest::{
-        prelude::any, prop_assert_eq, prop_compose, prop_oneof, proptest, strategy::Strategy,
+        prelude::any, prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
+        strategy::Strategy,
     };
 
     use crate::{
@@ -922,28 +930,6 @@ mod tests {
         prune_transactions, Approvals, Balances, Block, BlockLog, Cache, ConfigCell,
         ExpirationQueue, State, TransactionHashes, TransactionTimeStamps,
     };
-
-    #[test]
-    fn test_block_hash() {
-        let block = Block {
-            transaction: Transaction {
-                operation: Operation::Transfer {
-                    from: Account::from(Principal::anonymous()),
-                    to: Account::from(Principal::anonymous()),
-                    spender: None,
-                    amount: u128::MAX,
-                    fee: Some(10_000),
-                },
-                memo: Some(Memo::default()),
-                created_at_time: None,
-            },
-            timestamp: 1691065957,
-            phash: None,
-            effective_fee: None,
-        };
-        // check that it doesn't panic and that it doesn't return a fake hash
-        assert_ne!(block.hash(), [0u8; 32]);
-    }
 
     #[test]
     fn test_u128_encoding() {
@@ -1057,16 +1043,25 @@ mod tests {
         }
     }
 
-    proptest! {
-
-        #[test]
-        fn test_block_to_value(block in block_strategy()) {
+    // Use proptest to genereate blocks and call hash on them.
+    // The test succeeeds if hash never panics, which means
+    // that `Block::to_value` is always safe to call.
+    #[test]
+    fn test_block_to_value_and_hash() {
+        let test_conf = proptest::test_runner::Config {
+            // Increase the cases so that more blocks are tested.
+            // 2048 cases take around 0.89s to run.
+            cases: 2048,
+            ..Default::default()
+        };
+        proptest!(test_conf, |(block in block_strategy())| {
             let value = block.to_value()
-                .expect("Unable to convert block to value");
+                .expect("Unable to convert value to block");
             let actual_block = Block::from_value(value)
                 .expect("Unable to convert value to block");
-            assert_eq!(block, actual_block)
-        }
+            prop_assert_eq!(&block, &actual_block);
+            prop_assert!(block.hash().is_ok())
+        });
     }
 
     #[test]
@@ -1137,7 +1132,7 @@ mod tests {
 
             // set the phash to create a real chain
             for i in 1..blocks.len() {
-                blocks[i].phash = Some(blocks[i-1].hash())
+                blocks[i].phash = Some(blocks[i-1].hash().unwrap())
             }
 
             for (i, block) in blocks.iter_mut().enumerate() {
@@ -1145,7 +1140,7 @@ mod tests {
                 // the fist 6 blocks are old and will be pruned, the last 4 are in the tx window
                 block.transaction.created_at_time = Some(if i < 6 { old } else { curr });
                 state.blocks.append(&crate::storage::Cbor(block.clone())).unwrap();
-                state.transaction_hashes.insert(block.transaction.hash(), i as u64);
+                state.transaction_hashes.insert(block.transaction.hash().unwrap(), i as u64);
                 if let Some(created_at_time) = block.transaction.created_at_time {
                     state.transaction_timestamps.insert((created_at_time, i as u64), ());
                 }

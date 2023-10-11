@@ -222,7 +222,8 @@ fn execute_transfer(
         memo: memo.clone(),
         created_at_time,
     }
-    .hash();
+    .hash()
+    .unwrap();
     if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
         return Err(TransferFromError::Duplicate {
             duplicate_of: Nat::from(block_index),
@@ -306,7 +307,6 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         // if it is not an opaque principal ID, the user is trying to send to a non-canister target
         return Err(SendError::InvalidReceiver { receiver: args.to });
     }
-    let from_key = storage::to_account_key(&from);
     let balance = storage::balance_of(&from);
 
     let target_canister = CanisterIdRecord {
@@ -336,7 +336,8 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         memo: memo.clone(),
         created_at_time: args.created_at_time,
     }
-    .hash();
+    .hash()
+    .unwrap();
     if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
         return Err(SendError::Duplicate {
             duplicate_of: Nat::from(block_index),
@@ -346,11 +347,11 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     prune(now);
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(|s| s.debit(from_key, total_send_cost));
+    mutate_state(|s| s.debit(&from, total_send_cost));
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    mutate_state(|s| s.credit(from_key, total_send_cost));
+    mutate_state(|s| s.credit(&from, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         let fee_block = storage::penalize(&from, now).map(|(fee_block, _block_hash)| fee_block);
