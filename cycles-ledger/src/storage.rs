@@ -791,7 +791,7 @@ fn prune_approvals(now: u64, s: &mut State, limit: usize) {
     }
 }
 
-// returns true if the [timestamp] is before the transaction
+// Returns true if the [timestamp] is before the transaction
 // window. Transactions with created_at_time before the transaction
 // window are eligible for pruning.
 fn is_before_transaction_window(timestamp: u64, now: u64) -> bool {
