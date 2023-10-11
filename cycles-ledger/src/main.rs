@@ -156,7 +156,7 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     prune(now);
     let (txid, balance, _phash) = match storage::record_deposit(&arg.to, amount, arg.memo, now) {
         Ok(r) => r,
-        Err(err) => ic_cdk::trap(&format!("Unable to record the deposit, error: {}", err,)),
+        Err(err) => log_error_and_trap(&err.context("Unable to record the deposit")),
     };
 
     endpoints::DepositResult {
