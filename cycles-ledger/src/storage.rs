@@ -1096,7 +1096,7 @@ mod tests {
                 state.expiration_queue.insert((expires_at, key), ());
             }
 
-            // prune no approve if now == 0
+            // prune no approvals if now == 0
             prune_approvals(expired - 1, &mut state, usize::MAX);
             prop_assert_eq!(state.approvals.len(), from_spenders.len() as u64);
             prop_assert_eq!(state.expiration_queue.len(), from_spenders.len() as u64);
