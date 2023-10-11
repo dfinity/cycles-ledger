@@ -356,23 +356,29 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
     STATE.with(|cell| f(&cell.borrow()))
 }
 
-pub fn mutate_state<R>(now: u64, f: impl FnOnce(&mut State) -> R) -> R {
-    STATE.with(|cell| {
-        let result = f(&mut cell.borrow_mut());
-        prune_approvals(now, &mut cell.borrow_mut(), config::APPROVE_PRUNE_LIMIT);
-        prune_transactions(now, &mut cell.borrow_mut(), config::TRANSACTION_PRUNE_LIMIT);
-        check_invariants(&cell.borrow());
-        result
-    })
+pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    STATE.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+// Prune old approval and transactions
+// and performs a sanity check on the
+// current state of the ledger.
+pub fn prune(now: u64) {
+    mutate_state(|state| {
+        prune_approvals(now, state, config::APPROVE_PRUNE_LIMIT);
+        prune_transactions(now, state, config::TRANSACTION_PRUNE_LIMIT);
+    });
+    read_state(check_invariants);
 }
 
 fn check_invariants(s: &State) {
     if s.expiration_queue.len() > s.approvals.len() {
-        ic_cdk::trap(&format!(
+        log!(
+            P0,
             "expiration_queue len ({}) larger than approvals len ({})",
             s.expiration_queue.len(),
             s.approvals.len()
-        ))
+        )
     }
 }
 
@@ -435,7 +441,7 @@ pub fn record_deposit(
     now: u64,
 ) -> (u64, u128, Hash) {
     let key = to_account_key(account);
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         let new_balance = s.credit(key, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -527,7 +533,7 @@ pub fn transfer(
     let to_key = to_account_key(to);
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         if let Some(spender) = spender {
             if spender != *from {
                 use_allowance(s, from, &spender, total_spent_amount, now);
@@ -571,11 +577,11 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     );
     let from_key = to_account_key(from);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
             log!(
-                P0,
+                P1,
                 "[penalize]: account {:?} cannot be penalized as its balance {} is too low.",
                 from,
                 balance
@@ -611,7 +617,7 @@ pub fn send(
 ) -> (BlockIndex, Hash) {
     let from_key = to_account_key(from);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
         s.debit(from_key, total_balance_deduction);
@@ -657,7 +663,7 @@ pub fn approve(
     let spender = from_spender.1;
     let from_key = to_account_key(from);
 
-    mutate_state(now, |s| {
+    mutate_state(|s| {
         record_approval(s, from, spender, amount, expires_at);
 
         s.debit(from_key, crate::config::FEE);
@@ -766,49 +772,82 @@ fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u1
 }
 
 fn prune_approvals(now: u64, s: &mut State, limit: usize) {
+    let mut pruned = 0;
     for _ in 0..limit {
         match s.expiration_queue.first_key_value() {
+            None => break,
+            Some((key, _)) if key.0 > now => break,
             Some((key, _value)) => {
-                if key.0 > now {
-                    return;
+                if s.approvals.remove(&key.1).is_none() {
+                    log!(P0, "Unable to find the approval for {:?}", key.1,)
                 }
-                s.approvals.remove(&key.1);
                 s.expiration_queue.remove(&key);
+                pruned += 1;
             }
-            None => return,
         }
+    }
+    if pruned > 0 {
+        log!(P1, "Pruned {} approvals", pruned);
     }
 }
 
+// Returns true if the [timestamp] is before the transaction
+// window. Transactions with created_at_time before the transaction
+// window are eligible for pruning.
+fn is_before_transaction_window(timestamp: u64, now: u64) -> bool {
+    timestamp
+        .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
+        .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
+        < now
+}
+
 fn prune_transactions(now: u64, s: &mut State, limit: usize) {
-    let pruned = 0;
-    while let Some(((transaction_timestamp, block_idx), _)) =
-        s.transaction_timestamps.first_key_value()
-    {
-        if pruned >= limit {
+    let mut pruned = 0;
+    while let Some(((timestamp, block_idx), _)) = s.transaction_timestamps.first_key_value() {
+        if pruned >= limit || !is_before_transaction_window(timestamp, now) {
             return;
         }
-        let block = s.blocks.get(block_idx).unwrap_or_else(|| {
-            ic_cdk::trap(&format!("Cannot find block with block id: {}", block_idx))
-        });
-        if transaction_timestamp
-            .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
-            .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
-            >= now
-        {
-            return;
-        }
-        s.transaction_timestamps
-            .remove(&(transaction_timestamp, block_idx));
+        s.transaction_timestamps.remove(&(timestamp, block_idx));
+        pruned += 1;
+
+        let Some(block) = s.blocks.get(block_idx) else {
+            log!(P0,
+                "Cannot find block with id: {}. The block id was associated \
+                with the timestamp: {} and was selected for pruning from \
+                the timestamp and hashes pools",
+                block_idx,
+                timestamp);
+            continue;
+        };
         let tx_hash = block.transaction.hash();
-        // Transactions before and after the deduplication window never make it into storage as they are rejected by the deduplication method
-        // Therefore, two tx hashes cannot exists within the deduplication window. This means that two entries in the ´transaction_timestamp´ struct with the same ´created_at_timestamps´ but different ´block_index´ cannot point to two blocks with identical transaction hashes within the deduplication window.
-        // Example: if the ´transaction_timestamp´ storage has the entries [(time_a,block_a),(time_a,block_b)] then the hashes of the transactions in block_a and block_b cannot be identical
-        if s.transaction_hashes.remove(&tx_hash) != Some(block_idx) {
-            ic_cdk::trap(&format!(
-                "Transaction hash {:?} is stored in multiple blocks within the transaction window",
-                tx_hash
-            ))
+        match s.transaction_hashes.remove(&tx_hash) {
+            None => {
+                log!(P0,
+                    "Transaction hash: {} for block id: {} was not found in the transaction hashes pool",
+                    hex::encode(tx_hash),
+                    block_idx
+                );
+            }
+            // Transactions before and after the deduplication window never make it into storage as they are
+            // rejected by the deduplication method.
+            // Therefore, two tx hashes cannot exists within the deduplication window. This means that two
+            // entries in the ´transaction_timestamp´ struct with the same ´created_at_timestamps´ but different
+            // ´block_index´ cannot point to two blocks with identical transaction hashes within the deduplication window.
+            // Example: if the ´transaction_timestamp´ storage has the entries [(time_a,block_a),(time_a,block_b)] then
+            // the hashes of the transactions in block_a and block_b cannot be identical
+            Some(found_block_idx) if found_block_idx != block_idx => {
+                log!(
+                    P0,
+                    "Block id: {} associated with the transaction hash: {} in the \
+                     transaction hashes pool is different from the expected block id: {}. \
+                     This is likely because there are multiple blocks with the same \
+                     transaction within the transaction window.",
+                    found_block_idx,
+                    hex::encode(tx_hash),
+                    block_idx,
+                );
+            }
+            Some(_) => {}
         }
     }
 }
@@ -859,20 +898,30 @@ mod tests {
     use std::str::FromStr;
 
     use candid::Principal;
+    use ic_certified_map::RbTree;
+    use ic_stable_structures::{
+        memory_manager::{MemoryId, MemoryManager},
+        VectorMemory,
+    };
     use icrc_ledger_types::{
         icrc::generic_value::Value,
         icrc1::{account::Account, transfer::Memo},
     };
     use num_bigint::BigUint;
-    use proptest::{prelude::any, prop_compose, prop_oneof, proptest, strategy::Strategy};
+    use proptest::{
+        prelude::any, prop_assert_eq, prop_compose, prop_oneof, proptest, strategy::Strategy,
+    };
 
     use crate::{
         ciborium_to_generic_value,
-        config::MAX_MEMO_LENGTH,
-        storage::{Operation, Transaction},
+        config::{self, MAX_MEMO_LENGTH},
+        storage::{prune_approvals, to_account_key, Operation, Transaction},
     };
 
-    use super::Block;
+    use super::{
+        prune_transactions, Approvals, Balances, Block, BlockLog, Cache, ConfigCell,
+        ExpirationQueue, State, TransactionHashes, TransactionTimeStamps,
+    };
 
     #[test]
     fn test_block_hash() {
@@ -1017,6 +1066,140 @@ mod tests {
             let actual_block = Block::from_value(value)
                 .expect("Unable to convert value to block");
             assert_eq!(block, actual_block)
+        }
+    }
+
+    #[test]
+    fn test_prune_approvals() {
+        let test_conf = proptest::test_runner::Config {
+            // creating the state is quite slow and therefore
+            // we limit the test cases to 1 with no shrinking
+            cases: 1,
+            max_shrink_iters: 0,
+            ..Default::default()
+        };
+        let from_spenders_strategy: Vec<_> = (0..10)
+            .map(|_| (account_strategy(), account_strategy()))
+            .collect();
+        proptest!(test_conf, move |(from_spenders in from_spenders_strategy)| {
+            let mut state = new_test_state();
+            let curr = 2;
+            let expired = 1;
+
+            // 6 expired approvals to be pruned and 4 not
+            for (block_idx, (from, spender)) in from_spenders.iter().enumerate() {
+                let from_key = to_account_key(from);
+                let spender_key = to_account_key(spender);
+                let key = (from_key, spender_key);
+                state.approvals.insert(key, (1, block_idx as u64));
+                let expires_at = if block_idx < 6 { expired } else { curr };
+                state.expiration_queue.insert((expires_at, key), ());
+            }
+
+            // prune no approvals if now == 0
+            prune_approvals(expired - 1, &mut state, usize::MAX);
+            prop_assert_eq!(state.approvals.len(), from_spenders.len() as u64);
+            prop_assert_eq!(state.expiration_queue.len(), from_spenders.len() as u64);
+
+            // prune only 2 approvals if now == expired but limit == 2
+            prune_approvals(expired, &mut state, 2);
+            prop_assert_eq!(state.approvals.len() + 2, from_spenders.len() as u64);
+            prop_assert_eq!(state.expiration_queue.len() + 2, from_spenders.len() as u64);
+
+            // prune only 4 approvals if now == expired
+            prune_approvals(expired, &mut state, usize::MAX);
+            prop_assert_eq!(state.approvals.len() + 6, from_spenders.len() as u64);
+            prop_assert_eq!(state.expiration_queue.len() + 6, from_spenders.len() as u64);
+
+            // do not prune anything else because the last 4 approvals have created_at_time == curr
+            prune_approvals(expired, &mut state, usize::MAX);
+            prop_assert_eq!(state.approvals.len() + 6, from_spenders.len() as u64);
+            prop_assert_eq!(state.expiration_queue.len() + 6, from_spenders.len() as u64);
+        })
+    }
+
+    #[test]
+    fn test_prune_transaction() {
+        let test_conf = proptest::test_runner::Config {
+            // creating the state is quite slow and therefore
+            // we limit the test cases to 1 with no shrinking
+            cases: 1,
+            max_shrink_iters: 0,
+            ..Default::default()
+        };
+        let blocks_strategy: Vec<_> = (0..10).map(|_| block_strategy()).collect();
+        proptest!(test_conf, move |(mut blocks in blocks_strategy)| {
+            let mut state = new_test_state();
+            let window_plus_drift = config::TRANSACTION_WINDOW.as_nanos() as u64 +
+                                    config::PERMITTED_DRIFT.as_nanos() as u64;
+            let curr = 3 * window_plus_drift;
+            let old = 0;
+
+            // set the phash to create a real chain
+            for i in 1..blocks.len() {
+                blocks[i].phash = Some(blocks[i-1].hash())
+            }
+
+            for (i, block) in blocks.iter_mut().enumerate() {
+                // set created_at_time for deduplication
+                // the fist 6 blocks are old and will be pruned, the last 4 are in the tx window
+                block.transaction.created_at_time = Some(if i < 6 { old } else { curr });
+                state.blocks.append(&crate::storage::Cbor(block.clone())).unwrap();
+                state.transaction_hashes.insert(block.transaction.hash(), i as u64);
+                if let Some(created_at_time) = block.transaction.created_at_time {
+                    state.transaction_timestamps.insert((created_at_time, i as u64), ());
+                }
+            }
+
+            // prune no transaction if now == old
+            prune_transactions(old, &mut state, usize::MAX);
+            prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
+            prop_assert_eq!(state.transaction_hashes.len(), blocks.len() as u64);
+            prop_assert_eq!(state.transaction_timestamps.len(), blocks.len() as u64);
+
+            // prune only 2 txs if now == curr but limit == 2
+            prune_transactions(curr, &mut state, 2);
+            prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
+            prop_assert_eq!(state.transaction_hashes.len() + 2, blocks.len() as u64);
+            prop_assert_eq!(state.transaction_timestamps.len() + 2, blocks.len() as u64);
+
+            // prune only 4 txs if now == curr
+            prune_transactions(curr, &mut state, usize::MAX);
+            prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
+            prop_assert_eq!(state.transaction_hashes.len() + 6, blocks.len() as u64);
+            prop_assert_eq!(state.transaction_timestamps.len() + 6, blocks.len() as u64);
+
+            // do not prune anything else because the last 4 txs have created_at_time == curr
+            prune_transactions(curr, &mut state, usize::MAX);
+            prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
+            prop_assert_eq!(state.transaction_hashes.len() + 6, blocks.len() as u64);
+            prop_assert_eq!(state.transaction_timestamps.len() + 6, blocks.len() as u64);
+        })
+    }
+
+    fn new_test_state() -> State {
+        let memory_manager = MemoryManager::init(VectorMemory::default());
+        let block_log_index_memory = memory_manager.get(MemoryId::new(1));
+        let block_log_data_memory = memory_manager.get(MemoryId::new(2));
+        let balances_memory = memory_manager.get(MemoryId::new(3));
+        let approvals_memory = memory_manager.get(MemoryId::new(4));
+        let expiration_queue_memory = memory_manager.get(MemoryId::new(5));
+        let transaction_hashes_memory = memory_manager.get(MemoryId::new(6));
+        let transaction_timestamps_memory = memory_manager.get(MemoryId::new(7));
+        let config_memory = memory_manager.get(MemoryId::new(8));
+        State {
+            blocks: BlockLog::new(block_log_index_memory, block_log_data_memory),
+            balances: Balances::new(balances_memory),
+            approvals: Approvals::new(approvals_memory),
+            expiration_queue: ExpirationQueue::new(expiration_queue_memory),
+            transaction_hashes: TransactionHashes::new(transaction_hashes_memory),
+            transaction_timestamps: TransactionTimeStamps::new(transaction_timestamps_memory),
+            config: ConfigCell::new(config_memory, crate::config::Config::default()).unwrap(),
+            cache: Cache {
+                phash: None,
+                total_supply: 0,
+                hash_tree: RbTree::default(),
+            },
         }
     }
 }

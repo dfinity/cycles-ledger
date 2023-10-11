@@ -316,6 +316,7 @@ dependencies = [
  "depositor",
  "escargot",
  "futures",
+ "hex",
  "ic-canister-log",
  "ic-canisters-http-types",
  "ic-cbor",

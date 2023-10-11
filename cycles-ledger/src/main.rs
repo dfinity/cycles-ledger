@@ -6,7 +6,7 @@ use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::memo::{encode_send_memo, validate_memo};
 use cycles_ledger::storage::{
-    mutate_state, read_state, validate_created_at_time, Operation, Transaction,
+    mutate_state, prune, read_state, validate_created_at_time, Operation, Transaction,
 };
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
@@ -35,7 +35,7 @@ const REMOTE_FUTURE: u64 = u64::MAX;
 fn init(ledger_args: LedgerArgs) {
     match ledger_args {
         LedgerArgs::Init(config) => {
-            mutate_state(ic_cdk::api::time(), |state| {
+            mutate_state(|state| {
                 state.config.set(config)
                     .expect("Failed to change configuration");
             })
@@ -50,7 +50,7 @@ fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     match ledger_args {
         Some(LedgerArgs::Upgrade(upgrade_args)) => {
             if let Some(max_transactions_per_request) = upgrade_args.max_transactions_per_request {
-                mutate_state(ic_cdk::api::time(), |state| {
+                mutate_state(|state| {
                     let mut config = state.config.get().to_owned();
                     config.max_transactions_per_request = max_transactions_per_request;
                     state.config.set(config)
@@ -150,8 +150,9 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 
     validate_memo(&arg.memo);
 
-    let (txid, balance, _phash) =
-        storage::record_deposit(&arg.to, amount, arg.memo, ic_cdk::api::time());
+    let now = ic_cdk::api::time();
+    prune(now);
+    let (txid, balance, _phash) = storage::record_deposit(&arg.to, amount, arg.memo, now);
 
     endpoints::DepositResult {
         txid: Nat::from(txid),
@@ -227,6 +228,8 @@ fn execute_transfer(
             duplicate_of: Nat::from(block_index),
         });
     }
+
+    prune(now);
 
     let (txid, _hash) = storage::transfer(
         from,
@@ -340,12 +343,14 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         });
     }
 
+    prune(now);
+
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(now, |s| s.debit(from_key, total_send_cost));
+    mutate_state(|s| s.debit(from_key, total_send_cost));
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    mutate_state(now, |s| s.credit(from_key, total_send_cost));
+    mutate_state(|s| s.credit(from_key, total_send_cost));
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         let fee_block = storage::penalize(&from, now).map(|(fee_block, _block_hash)| fee_block);
@@ -426,6 +431,8 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
         return Err(ApproveError::Expired { ledger_time: now });
     }
 
+    prune(now);
+
     let txid = storage::approve(
         (&from_account, &args.spender),
         amount,
@@ -440,8 +447,8 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     Ok(Nat::from(txid))
 }
 
-#[candid_method(query)]
 #[query]
+#[candid_method(query)]
 fn http_request(req: HttpRequest) -> HttpResponse {
     if req.path() == "/metrics" {
         let mut writer =
