@@ -360,9 +360,9 @@ pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| f(&mut cell.borrow_mut()))
 }
 
-// prune old approval and transactions
+// Prune old approval and transactions
 // and performs a sanity check on the
-// current state of the Ledger
+// current state of the ledger.
 pub fn prune(now: u64) {
     mutate_state(|state| {
         prune_approvals(now, state, config::APPROVE_PRUNE_LIMIT);
