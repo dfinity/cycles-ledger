@@ -210,7 +210,8 @@ impl State {
 
     /// Increases the balance of an account of the given amount.
     /// Panics if there is an overflow or the new balance cannot be inserted.
-    pub fn credit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+    pub fn credit(&mut self, account: &Account, amount: u128) -> u128 {
+        let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_add(amount)
@@ -225,7 +226,8 @@ impl State {
 
     /// Decreases the balance of an account of the given amount.
     /// Panics if there is an overflow or the new balance cannot be inserted.
-    pub fn debit(&mut self, account_key: AccountKey, amount: u128) -> u128 {
+    pub fn debit(&mut self, account: &Account, amount: u128) -> u128 {
+        let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
         let new_balance = old_balance
             .checked_sub(amount)
@@ -439,9 +441,8 @@ pub fn record_deposit(
     memo: Option<Memo>,
     now: u64,
 ) -> (u64, u128, Hash) {
-    let key = to_account_key(account);
     mutate_state(|s| {
-        let new_balance = s.credit(key, amount);
+        let new_balance = s.credit(account, amount);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -528,8 +529,6 @@ pub fn transfer(
     created_at_time: Option<u64>,
     suggested_fee: Option<u128>,
 ) -> (u64, Hash) {
-    let from_key = to_account_key(from);
-    let to_key = to_account_key(to);
     let total_spent_amount = amount.saturating_add(crate::config::FEE);
 
     mutate_state(|s| {
@@ -539,8 +538,8 @@ pub fn transfer(
             }
         }
 
-        s.debit(from_key, total_spent_amount);
-        s.credit(to_key, amount);
+        s.debit(from, total_spent_amount);
+        s.credit(to, amount);
 
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -574,10 +573,10 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
         from,
         now
     );
-    let from_key = to_account_key(from);
+
+    let balance = balance_of(from);
 
     mutate_state(|s| {
-        let balance = s.balances.get(&from_key).unwrap_or_default();
         if balance < crate::config::FEE {
             log!(
                 P1,
@@ -588,7 +587,7 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
             return None;
         }
 
-        s.debit(from_key, crate::config::FEE);
+        s.debit(from, crate::config::FEE);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -614,12 +613,10 @@ pub fn send(
     now: u64,
     created_at_time: Option<u64>,
 ) -> (BlockIndex, Hash) {
-    let from_key = to_account_key(from);
-
     mutate_state(|s| {
         let total_balance_deduction = amount.saturating_add(crate::config::FEE);
 
-        s.debit(from_key, total_balance_deduction);
+        s.debit(from, total_balance_deduction);
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
             transaction: Transaction {
@@ -660,12 +657,11 @@ pub fn approve(
 ) -> u64 {
     let from = from_spender.0;
     let spender = from_spender.1;
-    let from_key = to_account_key(from);
 
     mutate_state(|s| {
         record_approval(s, from, spender, amount, expires_at);
 
-        s.debit(from_key, crate::config::FEE);
+        s.debit(from, crate::config::FEE);
 
         let phash = s.last_block_hash();
         s.emit_block(Block {
@@ -815,7 +811,8 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
                 with the timestamp: {} and was selected for pruning from \
                 the timestamp and hashes pools",
                 block_idx,
-                timestamp);
+                timestamp
+            );
             continue;
         };
         let tx_hash = match block.transaction.hash() {
