@@ -222,7 +222,8 @@ fn execute_transfer(
         memo: memo.clone(),
         created_at_time,
     }
-    .hash();
+    .hash()
+    .unwrap();
     if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
         return Err(TransferFromError::Duplicate {
             duplicate_of: Nat::from(block_index),
@@ -336,7 +337,8 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         memo: memo.clone(),
         created_at_time: args.created_at_time,
     }
-    .hash();
+    .hash()
+    .unwrap();
     if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
         return Err(SendError::Duplicate {
             duplicate_of: Nat::from(block_index),

@@ -1205,7 +1205,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_txs[0].1.timestamp;
-    validate_certificate(env, ledger_id, 0, block0.hash());
+    validate_certificate(env, ledger_id, 0, block0.hash().unwrap());
 
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
@@ -1220,7 +1220,7 @@ fn test_icrc3_get_transactions() {
         },
         None,
         None,
-        Some(block0.hash()),
+        Some(block0.hash().unwrap()),
     );
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone()), (1, block1.clone())];
@@ -1229,7 +1229,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_txs[1].1.timestamp;
-    validate_certificate(env, ledger_id, 1, block1.hash());
+    validate_certificate(env, ledger_id, 1, block1.hash().unwrap());
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
@@ -1264,7 +1264,7 @@ fn test_icrc3_get_transactions() {
         },
         None,
         Some(send_memo),
-        Some(block1.hash()),
+        Some(block1.hash().unwrap()),
     );
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![
@@ -1277,7 +1277,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_txs[2].1.timestamp;
-    validate_certificate(env, ledger_id, 2, block2.hash());
+    validate_certificate(env, ledger_id, 2, block2.hash().unwrap());
 
     // add a couple of blocks
     transfer(
@@ -1328,7 +1328,7 @@ fn test_icrc3_get_transactions() {
         },
         None,
         None,
-        Some(block2.hash()),
+        Some(block2.hash().unwrap()),
     );
     let block4 = block(
         Approve {
@@ -1341,7 +1341,7 @@ fn test_icrc3_get_transactions() {
         },
         None,
         None,
-        Some(actual_txs[3].1.hash()),
+        Some(actual_txs[3].1.hash().unwrap()),
     );
     let mut block5 = block(
         Transfer {
@@ -1353,7 +1353,7 @@ fn test_icrc3_get_transactions() {
         },
         None,
         None,
-        Some(actual_txs[4].1.hash()),
+        Some(actual_txs[4].1.hash().unwrap()),
     );
     let expected_txs = vec![
         (0, block0.clone()),
@@ -1368,7 +1368,7 @@ fn test_icrc3_get_transactions() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block5.timestamp = actual_txs[5].1.timestamp;
-    validate_certificate(env, ledger_id, 5, block5.hash());
+    validate_certificate(env, ledger_id, 5, block5.hash().unwrap());
 }
 
 // Checks two lists of blocks are the same.
