@@ -1087,13 +1087,12 @@ mod tests {
             let expired = 1;
 
             // 6 expired approved to be pruned and 4 not
-            for i in 0..from_spenders.len() {
-                let (from, spender) = from_spenders[i];
-                let from_key = to_account_key(&from);
-                let spender_key = to_account_key(&spender);
+            for (block_idx, (from, spender)) in from_spenders.iter().enumerate() {
+                let from_key = to_account_key(from);
+                let spender_key = to_account_key(spender);
                 let key = (from_key, spender_key);
-                state.approvals.insert(key, (1, i as u64));
-                let expires_at = if i < 6 { expired } else { curr };
+                state.approvals.insert(key, (1, block_idx as u64));
+                let expires_at = if block_idx < 6 { expired } else { curr };
                 state.expiration_queue.insert((expires_at, key), ());
             }
 
@@ -1141,8 +1140,7 @@ mod tests {
                 blocks[i].phash = Some(blocks[i-1].hash())
             }
 
-            for i in 0..blocks.len() {
-                let block = &mut blocks[i];
+            for (i, block) in blocks.iter_mut().enumerate() {
                 // set created_at_time for deduplication
                 // the fist 6 blocks are old and will be pruned, the last 4 are in the tx window
                 block.transaction.created_at_time = Some(if i < 6 { old } else { curr });
