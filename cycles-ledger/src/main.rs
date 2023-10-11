@@ -125,6 +125,7 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
         MetadataValue::entry("icrc1:name", config::TOKEN_NAME),
         MetadataValue::entry("icrc1:symbol", config::TOKEN_SYMBOL),
         MetadataValue::entry("icrc1:fee", config::FEE),
+        MetadataValue::entry("icrc1:max_memo_length", config::MAX_MEMO_LENGTH),
     ]
 }
 
