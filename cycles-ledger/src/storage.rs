@@ -1086,7 +1086,7 @@ mod tests {
             let curr = 2;
             let expired = 1;
 
-            // 6 expired approved to be pruned and 4 not
+            // 6 expired approvals to be pruned and 4 not
             for (block_idx, (from, spender)) in from_spenders.iter().enumerate() {
                 let from_key = to_account_key(from);
                 let spender_key = to_account_key(spender);
