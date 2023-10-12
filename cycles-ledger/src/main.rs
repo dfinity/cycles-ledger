@@ -6,7 +6,8 @@ use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::memo::{encode_send_memo, validate_memo};
 use cycles_ledger::storage::{
-    mutate_state, prune, read_state, validate_created_at_time, Operation, Transaction,
+    log_error_and_trap, mutate_state, prune, read_state, validate_created_at_time, Operation,
+    Transaction,
 };
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
@@ -153,7 +154,10 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 
     let now = ic_cdk::api::time();
     prune(now);
-    let (txid, balance, _phash) = storage::record_deposit(&arg.to, amount, arg.memo, now);
+    let (txid, balance, _phash) = match storage::record_deposit(&arg.to, amount, arg.memo, now) {
+        Ok(r) => r,
+        Err(err) => log_error_and_trap(&err.context("Unable to record the deposit")),
+    };
 
     endpoints::DepositResult {
         txid: Nat::from(txid),
@@ -348,11 +352,15 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     prune(now);
 
     // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    mutate_state(|s| s.debit(&from, total_send_cost));
+    if let Err(err) = mutate_state(|s| s.debit(&from, total_send_cost)) {
+        log_error_and_trap(&err.context("Unable to debit before depositing cycles"));
+    }
     let deposit_cycles_result =
         management_canister::main::deposit_cycles(target_canister, amount).await;
     // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    mutate_state(|s| s.credit(&from, total_send_cost));
+    if let Err(err) = mutate_state(|s| s.credit(&from, total_send_cost)) {
+        log_error_and_trap(&err.context("Unable to credit after depositing cycles"));
+    }
 
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
         let fee_block = storage::penalize(&from, now).map(|(fee_block, _block_hash)| fee_block);
