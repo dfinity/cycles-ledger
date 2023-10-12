@@ -1,6 +1,7 @@
-use crate::config::Config;
+use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{DataCertificate, SendError};
 use crate::logs::{P0, P1};
+use crate::memo::validate_memo;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -9,7 +10,7 @@ use crate::{
     },
     generic_to_ciborium_value,
 };
-use anyhow::{Context, Error};
+use anyhow::{anyhow, Context, Error};
 use candid::Nat;
 use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
@@ -199,6 +200,66 @@ pub struct State {
     cache: Cache,
 }
 
+#[derive(Debug)]
+pub enum ProcessTransactionError {
+    AllowanceChanged { current_allowance: Nat },
+    ApproveChanged { ledger_time: u64 },
+    AnyhowError(anyhow::Error),
+    BadFee { expected_fee: Nat },
+    CreatedAtTimeValidationError(CreatedAtTimeValidationError),
+    Duplicate { duplicate_of: Nat },
+    InsufficientAllowance { current_allowance: Nat },
+    InsufficientFunds { balance: Nat },
+}
+
+impl ProcessTransactionError {
+    fn allowance_changed(current_allowance: u128) -> Self {
+        Self::AllowanceChanged {
+            current_allowance: Nat::from(current_allowance),
+        }
+    }
+
+    fn bad_fee(expected_fee: u128) -> Self {
+        Self::BadFee {
+            expected_fee: Nat::from(expected_fee),
+        }
+    }
+
+    fn duplicate_of(block_index: u64) -> Self {
+        ProcessTransactionError::Duplicate {
+            duplicate_of: Nat::from(block_index),
+        }
+    }
+
+    fn insufficient_funds(balance: u128) -> Self {
+        Self::InsufficientFunds {
+            balance: Nat::from(balance),
+        }
+    }
+
+    fn insufficient_allowance(current_allowance: u128) -> Self {
+        Self::InsufficientAllowance {
+            current_allowance: Nat::from(current_allowance),
+        }
+    }
+}
+
+impl From<anyhow::Error> for ProcessTransactionError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::AnyhowError(value)
+    }
+}
+
+impl From<CreatedAtTimeValidationError> for ProcessTransactionError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
+        Self::CreatedAtTimeValidationError(value)
+    }
+}
+
+fn effective_fee_from_suggested_fee(suggested_fee: Option<u128>) -> Option<u128> {
+    suggested_fee.is_none().then_some(config::FEE)
+}
+
 impl State {
     pub fn last_block_hash(&self) -> Option<Hash> {
         self.cache.phash
@@ -206,6 +267,21 @@ impl State {
 
     pub fn total_supply(&self) -> u128 {
         self.cache.total_supply
+    }
+
+    pub fn balance_of(&self, account: &Account) -> u128 {
+        self.balances
+            .get(&to_account_key(account))
+            .unwrap_or_default()
+    }
+
+    pub fn allowance(&self, account: &Account, spender: &Account, now: u64) -> (u128, u64) {
+        let key = (to_account_key(account), to_account_key(spender));
+        let allowance = self.approvals.get(&key).unwrap_or_default();
+        if allowance.1 > 0 && allowance.1 < now {
+            return (0, 0);
+        }
+        allowance
     }
 
     /// Increases the balance of an account of the given amount.
@@ -309,6 +385,302 @@ impl State {
         }
 
         hash
+    }
+
+    // Validate the `operation` inside the given `transaction`` and return the `effective_fee`
+    fn validate_operation(
+        &self,
+        transaction: &Transaction,
+        now: u64,
+    ) -> Result<Option<u128>, ProcessTransactionError> {
+        match &transaction.operation {
+            Operation::Approve {
+                from,
+                spender,
+                expected_allowance,
+                expires_at,
+                fee,
+                ..
+            } => {
+                let current_allowance = self.allowance(from, spender, now).0;
+
+                // check the `fee`
+                if fee.is_some() && fee != &Some(config::FEE) {
+                    return Err(ProcessTransactionError::bad_fee(config::FEE));
+                }
+
+                // check that the `expected_allowance` matches `current_allowance`
+                if expected_allowance.is_some() && expected_allowance != &Some(current_allowance) {
+                    return Err(ProcessTransactionError::allowance_changed(
+                        current_allowance,
+                    ));
+                }
+
+                // check that `from` has enough to pay the fee
+                let from_balance = self.balance_of(from);
+                if from_balance < config::FEE {
+                    return Err(ProcessTransactionError::insufficient_funds(from_balance));
+                }
+
+                // check that `expires_at` is in the future
+                if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+                    return Err(ProcessTransactionError::ApproveChanged { ledger_time: now });
+                }
+
+                // sanity check that total supply won't overflow
+                if self.cache.total_supply.checked_add(config::FEE).is_none() {
+                    return Err(anyhow!(
+                        "Cannot apply the transaction {:?} \
+                                        because it would overflow the total supply",
+                        transaction
+                    )
+                    .into());
+                }
+
+                Ok(effective_fee_from_suggested_fee(*fee))
+            }
+            Operation::Burn { from, amount } => {
+                let balance = self.balance_of(from);
+
+                // check that `from` has enough balance to burn
+                if amount > &balance {
+                    return Err(ProcessTransactionError::insufficient_funds(balance));
+                }
+
+                // sanity check that total supply won't underflow
+                if self.cache.total_supply.checked_sub(*amount).is_none() {
+                    return Err(anyhow!(
+                        "Cannot apply the transaction {:?} \
+                                        because it would underflow the total supply",
+                        transaction
+                    )
+                    .into());
+                }
+
+                Ok(Some(0)) // effective_fee
+            }
+            Operation::Mint { to, amount } => {
+                let balance = self.balance_of(to);
+
+                // sanity check that `to` balance won't overflow
+                if balance.checked_add(*amount).is_none() {
+                    return Err(anyhow!(
+                        "Cannot apply the transaction {:?} \
+                                        because it would overflow the user balance",
+                        transaction
+                    )
+                    .into());
+                }
+
+                // sanity check that total supply won't overflow
+                if self.cache.total_supply.checked_add(*amount).is_none() {
+                    return Err(anyhow!(
+                        "Cannot apply the transaction {:?} \
+                                        because it would overflow the total supply",
+                        transaction
+                    )
+                    .into());
+                }
+
+                Ok(Some(0)) // effective_fee
+            }
+            Operation::Transfer {
+                from,
+                to,
+                spender,
+                amount,
+                fee,
+            } => {
+                let from_balance = self.balance_of(from);
+
+                // check the `fee`
+                if fee.is_some() && fee != &Some(config::FEE) {
+                    return Err(ProcessTransactionError::bad_fee(config::FEE));
+                }
+
+                let amount_with_fee = match amount.checked_add(config::FEE) {
+                    Some(amount_with_fee) => amount_with_fee,
+                    None => {
+                        // overflow
+                        return Err(ProcessTransactionError::insufficient_funds(from_balance));
+                    }
+                };
+
+                // check that `from` has enough balance to transfer
+                if amount_with_fee > from_balance {
+                    return Err(ProcessTransactionError::insufficient_funds(from_balance));
+                }
+
+                // check the allowance
+                if let Some(spender) = spender {
+                    if spender != from {
+                        let current_allowance = self.allowance(from, spender, now).0;
+                        if amount_with_fee > current_allowance {
+                            return Err(ProcessTransactionError::insufficient_allowance(
+                                current_allowance,
+                            ));
+                        }
+                    }
+                }
+
+                // sanity check that `to` won't overflow
+                let to_balance = self.balance_of(to);
+                if to_balance.checked_add(*amount).is_none() {
+                    return Err(anyhow!(
+                        "Cannot apply the transaction {:?} \
+                                        because it would overflow the to user balance",
+                        transaction
+                    )
+                    .into());
+                }
+
+                // sanity check that total supply won't overflow
+                if self.cache.total_supply.checked_add(config::FEE).is_none() {
+                    return Err(anyhow!(
+                        "Cannot apply the transaction {:?} \
+                                        because it would overflow the total supply",
+                        transaction
+                    )
+                    .into());
+                }
+
+                Ok(effective_fee_from_suggested_fee(*fee))
+            }
+        }
+    }
+
+    // Apply the `operation` inside the given `transcation`
+    fn apply_operation(&mut self, transaction: &Transaction, now: u64) -> anyhow::Result<()> {
+        match &transaction.operation {
+            Operation::Approve {
+                from,
+                spender,
+                amount,
+                expires_at,
+                ..
+            } => {
+                record_approval(self, from, spender, *amount, *expires_at);
+
+                self.debit(from, crate::config::FEE)
+            }
+            Operation::Burn { from, amount } => self.debit(from, *amount),
+            Operation::Mint { to, amount } => self.credit(to, *amount),
+            Operation::Transfer {
+                from,
+                to,
+                spender,
+                amount,
+                ..
+            } => {
+                let amount_plus_fee = amount.saturating_add(crate::config::FEE);
+
+                if let Some(spender) = spender {
+                    if spender != from {
+                        use_allowance(self, from, spender, amount_plus_fee, now);
+                    }
+                }
+
+                self.debit(from, amount_plus_fee)?;
+                self.credit(to, *amount)
+            }
+        }
+        .map(|_| ())
+        .map_err(|e| e.context(format!("Unable to apply the transaction {:?}", transaction)))
+    }
+
+    /// Create a [Block] from the given [transaction] and add it
+    /// to the Ledger in a consistent way.
+    pub fn process_transaction(
+        &mut self,
+        transaction: Transaction,
+        now: u64,
+    ) -> Result<u64, ProcessTransactionError> {
+        // 1. Validate the transaction
+
+        validate_created_at_time(&transaction.created_at_time, now)?;
+
+        validate_memo(&transaction.memo)
+            .context(format!("Failed to process transaction {:?}", transaction))?;
+
+        // Check that the transaction has a valid hash
+        let tx_hash = match transaction.hash() {
+            Ok(tx_hash) => tx_hash,
+            Err(err) => {
+                log!(P0, "{:#}", err);
+                return Err(err.into());
+            }
+        };
+
+        // Check that the transaction is not a duplicate
+        if transaction.created_at_time.is_some() {
+            if let Some(block_index) = self.transaction_hashes.get(&tx_hash) {
+                return Err(ProcessTransactionError::duplicate_of(block_index));
+            }
+        }
+
+        // 2. Calidate the operation within the transaction
+
+        let effective_fee = self.validate_operation(&transaction, now)?;
+
+        // 3. create the block and do a sanity check that it can be serialized
+
+        // Create the block from the transaction
+        let block = Block {
+            transaction: transaction.clone(),
+            timestamp: now,
+            phash: self.last_block_hash(),
+            effective_fee,
+        };
+
+        // Check that the block has a valid hash
+        let block_hash = match block.hash() {
+            Ok(block_hash) => block_hash,
+            Err(err) => {
+                log!(P0, "{:#}", err);
+                return Err(err.into());
+            }
+        };
+
+        // 4. `block`` and `transaction`` are valid, state changes are valid => change the state
+
+        // Append the block to the chain
+        if let Err(err) = self.blocks.append(&Cbor(block.clone())) {
+            log!(P0, "failed to append block {:?}. Error: {:?}", block, err);
+            return Err(anyhow!("{:?}", err)
+                .context(format!("failed to append block {:?}", block))
+                .into());
+        }
+
+        // Change the last block hash to the new block hash
+        self.cache.phash = Some(block_hash);
+
+        // Change the certified data to point to the new block at the end of the list of blocks
+        let block_index = self.blocks.len() - 1;
+        populate_last_block_hash_and_hash_tree(&mut self.cache.hash_tree, block_index, block_hash);
+        set_certified_data(&self.root_hash());
+
+        // Add the transaction to the expiration queue and the deduplication set
+        // if created_at_time is set
+        if let Some(created_at_time) = transaction.created_at_time {
+            self.transaction_hashes.insert(tx_hash, block_index);
+            self.transaction_timestamps
+                .insert((created_at_time, block_index), ());
+        }
+
+        // Change balances and allowances. All changes should
+        // be safe to do because we validate the
+        // operation before but just to be safe the code panics
+        // in case of error so that the changes before
+        // this line are rollbacked.
+        if let Err(err) = self.apply_operation(&transaction, now) {
+            log_error_and_trap(&err)
+        }
+
+        prune_approvals(now, self, config::APPROVE_PRUNE_LIMIT);
+        prune_transactions(now, self, config::TRANSACTION_PRUNE_LIMIT);
+        check_invariants(self);
+
+        Ok(block_index)
     }
 
     fn compute_total_supply(balances: &Balances) -> u128 {
@@ -432,7 +804,7 @@ pub fn to_account_key(account: &Account) -> AccountKey {
 }
 
 pub fn balance_of(account: &Account) -> u128 {
-    read_state(|s| s.balances.get(&to_account_key(account)).unwrap_or_default())
+    read_state(|s| s.balance_of(account))
 }
 
 pub fn record_deposit(
@@ -461,38 +833,39 @@ pub fn record_deposit(
     })
 }
 
-pub enum CreatedAtTimeValidation {
+#[derive(Debug)]
+pub enum CreatedAtTimeValidationError {
     TooOld,
     InTheFuture { ledger_time: u64 },
 }
 
-impl From<CreatedAtTimeValidation> for TransferFromError {
-    fn from(value: CreatedAtTimeValidation) -> Self {
+impl From<CreatedAtTimeValidationError> for TransferFromError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
-            CreatedAtTimeValidation::TooOld => Self::TooOld,
-            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
                 Self::CreatedInFuture { ledger_time }
             }
         }
     }
 }
 
-impl From<CreatedAtTimeValidation> for SendError {
-    fn from(value: CreatedAtTimeValidation) -> Self {
+impl From<CreatedAtTimeValidationError> for SendError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
-            CreatedAtTimeValidation::TooOld => Self::TooOld,
-            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
                 Self::CreatedInFuture { ledger_time }
             }
         }
     }
 }
 
-impl From<CreatedAtTimeValidation> for ApproveError {
-    fn from(value: CreatedAtTimeValidation) -> Self {
+impl From<CreatedAtTimeValidationError> for ApproveError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
-            CreatedAtTimeValidation::TooOld => Self::TooOld,
-            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
                 Self::CreatedInFuture { ledger_time }
             }
         }
@@ -502,18 +875,18 @@ impl From<CreatedAtTimeValidation> for ApproveError {
 pub fn validate_created_at_time(
     created_at_time: &Option<u64>,
     now: u64,
-) -> Result<(), CreatedAtTimeValidation> {
+) -> Result<(), CreatedAtTimeValidationError> {
     let Some(created_at_time) = created_at_time else { return Ok(())};
     if created_at_time
         .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
         .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
         < now
     {
-        return Err(CreatedAtTimeValidation::TooOld);
+        return Err(CreatedAtTimeValidationError::TooOld);
     }
 
     if created_at_time > &now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
-        return Err(CreatedAtTimeValidation::InTheFuture { ledger_time: now });
+        return Err(CreatedAtTimeValidationError::InTheFuture { ledger_time: now });
     }
     Ok(())
 }
@@ -657,12 +1030,7 @@ pub fn send(
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
-    let key = (to_account_key(account), to_account_key(spender));
-    let allowance = read_state(|s| s.approvals.get(&key).unwrap_or_default());
-    if allowance.1 > 0 && allowance.1 < now {
-        return (0, 0);
-    }
-    allowance
+    read_state(|state| state.allowance(account, spender, now))
 }
 
 #[allow(clippy::too_many_arguments)]

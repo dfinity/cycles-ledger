@@ -3,6 +3,7 @@ use ic_stable_structures::Storable;
 use serde::Serialize;
 use std::{borrow::Cow, time::Duration};
 
+pub const REMOTE_FUTURE: u64 = u64::MAX;
 pub const FEE: u128 = 100_000_000;
 pub const DECIMALS: u8 = 0;
 pub const TOKEN_NAME: &str = "Cycles";

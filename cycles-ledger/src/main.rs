@@ -1,4 +1,5 @@
 use candid::{candid_method, Nat};
+use cycles_ledger::config::REMOTE_FUTURE;
 use cycles_ledger::endpoints::{
     DataCertificate, GetTransactionsArgs, GetTransactionsResult, LedgerArgs, SendError,
 };
@@ -28,8 +29,6 @@ use num_traits::ToPrimitive;
 // candid::Principal has these two consts as private
 pub const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
 pub const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
-
-const REMOTE_FUTURE: u64 = u64::MAX;
 
 #[init]
 #[candid_method(init)]
@@ -142,26 +141,32 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
     let amount = msg_cycles_accept128(cycles_available);
 
-    if amount < crate::config::FEE {
+    if amount < config::FEE {
         ic_cdk::trap(&format!(
-            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
+            "The requested amount {} to be deposited \
+                              is less than the cycles ledger fee: {}",
             amount,
-            crate::config::FEE
+            config::FEE
         ))
     }
 
-    validate_memo(&arg.memo);
-
-    let now = ic_cdk::api::time();
-    prune(now);
-    let (txid, balance, _phash) = match storage::record_deposit(&arg.to, amount, arg.memo, now) {
-        Ok(r) => r,
-        Err(err) => log_error_and_trap(&err.context("Unable to record the deposit")),
+    let transaction = Transaction {
+        operation: Operation::Mint { to: arg.to, amount },
+        memo: arg.memo,
+        // deposit is done by canisters so deduplication is not needed
+        created_at_time: None,
     };
 
-    endpoints::DepositResult {
-        txid: Nat::from(txid),
-        balance: Nat::from(balance),
+    let result = mutate_state(|state| state.process_transaction(transaction, ic_cdk::api::time()));
+    match result {
+        Ok(block_idx) => {
+            let balance = read_state(|s| s.balance_of(&arg.to));
+            endpoints::DepositResult {
+                txid: Nat::from(block_idx),
+                balance: Nat::from(balance),
+            }
+        }
+        Err(err) => ic_cdk::trap(&format!("{:?}", err)),
     }
 }
 
@@ -200,7 +205,7 @@ fn execute_transfer(
         });
     }
 
-    validate_memo(&memo);
+    validate_memo(&memo).unwrap();
 
     let now = ic_cdk::api::time();
     validate_created_at_time(&created_at_time, now)?;
@@ -331,7 +336,7 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         });
     }
     let memo = Some(encode_send_memo(&target_canister.canister_id));
-    validate_memo(&memo);
+    validate_memo(&memo).unwrap();
 
     let now = ic_cdk::api::time();
     validate_created_at_time(&args.created_at_time, now)?;
@@ -400,7 +405,7 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     if from_account.owner == args.spender.owner {
         ic_cdk::trap("self approval is not allowed")
     }
-    validate_memo(&args.memo);
+    validate_memo(&args.memo).unwrap();
 
     let now = ic_cdk::api::time();
     validate_created_at_time(&args.created_at_time, now)?;
