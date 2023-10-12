@@ -561,7 +561,7 @@ pub fn transfer(
         if let Err(err) = s.debit(from, total_spent_amount) {
             log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", block)))
         };
-        // panic to rollback the previous debit.
+        // Panic to rollback the previous debit.
         if let Err(err) = s.credit(to, amount) {
             log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", block)))
         };
