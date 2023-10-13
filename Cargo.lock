@@ -56,6 +56,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
+name = "base32"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23ce669cd6c8588f79e15cf450314f9638f967fc5770ff1c7c1deb0925ea7cfa"
+
+[[package]]
 name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -157,9 +163,9 @@ dependencies = [
 
 [[package]]
 name = "candid"
-version = "0.9.6"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88f6eec0ae850e006ef0fe306f362884d370624094ec55a6a26de18b251774be"
+checksum = "aa0f00717c71b8e9ee4c090b4880ec2418c8506bb6828a2c72df72d3896e905d"
 dependencies = [
  "anyhow",
  "binread",
@@ -311,7 +317,7 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "assert_matches",
- "candid 0.9.6",
+ "candid 0.9.9",
  "ciborium",
  "depositor",
  "escargot",
@@ -352,7 +358,7 @@ checksum = "c2e66c9d817f1720209181c316d28635c050fa304f9c79e47a520882661b7308"
 name = "depositor"
 version = "0.2.1"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "cycles-ledger",
  "ic-cdk",
  "ic-cdk-macros 0.6.10",
@@ -617,7 +623,7 @@ name = "ic-canisters-http-types"
 version = "0.8.0"
 source = "git+https://github.com/dfinity/ic?rev=a033d30216116523dc495a4d0f3976b5aa47c2c8#a033d30216116523dc495a4d0f3976b5aa47c2c8"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "serde",
  "serde_bytes",
 ]
@@ -628,7 +634,7 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "767fe244224c02f2adad1d43909de93d35d5caada28eed3f270d89735ba5bdd0"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "ic-certification",
  "leb128",
  "nom",
@@ -641,7 +647,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d4c0b932bf454d5d60e61e13c3c944972fcfd74dc82b9ed5c8b0a75979cf50"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "ic-cdk-macros 0.7.1",
  "ic0",
  "serde",
@@ -668,7 +674,7 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "411c0dd4c149132b68e679274d397053332ee29996c6a541075895881916333b"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "proc-macro2",
  "quote",
  "serde",
@@ -682,7 +688,7 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07bc3fa76751b637bb0c0e37f4089d7f5a3fbacfed3c5fbcfef0d6797a54d63f"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "ic-cbor",
  "ic-certification",
  "leb128",
@@ -732,7 +738,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cadf6ac4a193a8a45287da67c6c385f118d9266f46d6d98e40fbbd469d3822e"
 dependencies = [
- "candid 0.9.6",
+ "candid 0.9.9",
  "ciborium",
  "serde",
  "serde_bytes",
@@ -746,12 +752,15 @@ checksum = "576c539151d4769fb4d1a0c25c4108dd18facd04c5695b02cf2d226ab4e43aa5"
 
 [[package]]
 name = "icrc-ledger-types"
-version = "0.1.1"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69ee120bab077a71cf85fcc6b0e88674edfeca7fe18240bee9afa947d8e08865"
+checksum = "b4ad46da2124f4d7bf5c079eca568786b87bd60fc962bef404ff44207077961c"
 dependencies = [
- "candid 0.9.6",
+ "base32",
+ "candid 0.9.9",
+ "crc32fast",
  "hex",
+ "num-bigint",
  "num-traits",
  "serde",
  "serde_bytes",
@@ -766,7 +775,7 @@ checksum = "1de228913a69be63eec41a6435701d5c1daa6b4e156a92748cf5c50690ca8e40"
 dependencies = [
  "anyhow",
  "async-trait",
- "candid 0.9.6",
+ "candid 0.9.9",
  "serde",
  "thiserror",
 ]
@@ -779,7 +788,7 @@ checksum = "10b9da6e60d53643f2453086fc0487008fc9a1a7c181f4f850bf3f43016886a9"
 dependencies = [
  "anyhow",
  "async-trait",
- "candid 0.9.6",
+ "candid 0.9.9",
  "hex",
  "ic-test-state-machine-client",
  "icrc1-test-env",
@@ -792,7 +801,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "917e17fd43d9afc946d75422a1282ecacb03867dfee9ab3863868388c9a4b127"
 dependencies = [
  "anyhow",
- "candid 0.9.6",
+ "candid 0.9.9",
  "futures",
  "icrc1-test-env",
 ]

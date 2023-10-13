@@ -73,7 +73,9 @@ pub struct Cache {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(bound = "")]
 pub struct Transaction {
+    #[serde(flatten)]
     pub operation: Operation,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,13 +102,17 @@ impl Transaction {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(bound = "")]
+#[serde(tag = "op")]
 pub enum Operation {
+    #[serde(rename = "mint")]
     Mint {
         #[serde(with = "compact_account")]
         to: Account,
         #[serde(rename = "amt")]
         amount: u128,
     },
+    #[serde(rename = "xfer")]
     Transfer {
         #[serde(with = "compact_account")]
         from: Account,
@@ -123,12 +129,14 @@ pub enum Operation {
         #[serde(skip_serializing_if = "Option::is_none")]
         fee: Option<u128>,
     },
+    #[serde(rename = "burn")]
     Burn {
         #[serde(with = "compact_account")]
         from: Account,
         #[serde(rename = "amt")]
         amount: u128,
     },
+    #[serde(rename = "approve")]
     Approve {
         #[serde(with = "compact_account")]
         from: Account,
@@ -147,6 +155,7 @@ pub enum Operation {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Block {
+    #[serde(rename = "tx")]
     pub transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
@@ -1123,6 +1132,7 @@ mod tests {
     use icrc_ledger_types::{
         icrc::generic_value::Value,
         icrc1::{account::Account, transfer::Memo},
+        icrc3,
     };
     use num_bigint::BigUint;
     use proptest::{
@@ -1271,6 +1281,23 @@ mod tests {
                 .expect("Unable to convert value to block");
             prop_assert_eq!(&block, &actual_block);
             prop_assert!(block.hash().is_ok())
+        });
+    }
+
+    #[test]
+    fn test_block_schema() {
+        let test_conf = proptest::test_runner::Config {
+            // Increase the cases so that more blocks are tested.
+            // 2048 cases take around 0.89s to run.
+            cases: 2048,
+            ..Default::default()
+        };
+        proptest!(test_conf, |(block in block_strategy())| {
+            let value = block.to_value()
+                .expect("Unable to convert value to block");
+            if let Err(err) = icrc3::schema::validate(&value) {
+                panic!("block {} is not a valid icrc3 block. Errors:\n{}", value, err)
+            }
         });
     }
 
