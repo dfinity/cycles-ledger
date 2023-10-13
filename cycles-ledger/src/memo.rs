@@ -25,13 +25,14 @@ pub fn encode_send_memo(target_canister: &Principal) -> Memo {
     encoder.into_writer().into()
 }
 
-pub fn validate_memo(memo: &Option<Memo>) {
+pub fn validate_memo(memo: &Option<Memo>) -> Result<(), String> {
     if let Some(memo) = memo {
         if memo.0.len() as u64 > MAX_MEMO_LENGTH {
-            ic_cdk::trap(&format!(
+            return Err(format!(
                 "memo length exceeds the maximum of {} bytes",
-                MAX_MEMO_LENGTH,
+                MAX_MEMO_LENGTH
             ));
         }
     }
+    Ok(())
 }
