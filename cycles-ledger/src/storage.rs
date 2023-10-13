@@ -10,7 +10,7 @@ use crate::{
     },
     generic_to_ciborium_value,
 };
-use anyhow::{bail, Context, Error};
+use anyhow::{anyhow, bail, Context, Error};
 use candid::Nat;
 use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
@@ -586,12 +586,7 @@ pub fn transfer(
     // check allowance
     if let Some(spender) = spender {
         if spender != from {
-            let allowance = allowance(&from, &spender, now).0;
-            if allowance < amount_with_fee {
-                return Err(InsufficientAllowance {
-                    allowance: allowance.into(),
-                });
-            }
+            read_state(|state| check_allowance(state, &from, &spender, amount, now))?;
         }
     }
 
@@ -637,10 +632,16 @@ pub fn transfer(
     // If an error happens then log it and panic so that
     // the state is reset to a valid one.
 
-    // TODO: use_allowance should return errors and not panic
     if let Some(spender) = spender {
         if spender != from {
-            mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now));
+            if let Err(err) =
+                mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
+            {
+                let err = anyhow!(err.to_string());
+                log_error_and_trap(
+                    &err.context(format!("Unable to perform transfer: {:?}", transaction)),
+                );
+            }
         }
     }
 
@@ -718,6 +719,8 @@ mod transfer_from {
 
     const UNKNOWN_GENERIC_ERROR: u64 = 100000;
     const INVALID_MEMO_ERROR: u64 = 100001;
+    const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
+    const EXPIRED_APPROVAL: u64 = 100003;
 
     pub fn anyhow_error(error: anyhow::Error) -> TransferFromError {
         unknown_generic_error(format!("{:#}", error))
@@ -736,6 +739,20 @@ mod transfer_from {
             message,
         }
     }
+
+    pub fn cannot_transfer_from_zero() -> TransferFromError {
+        TransferFromError::GenericError {
+            error_code: Nat::from(CANNOT_TRANSFER_FROM_ZERO),
+            message: "The transfer_from 0 cycles is not possible".into(),
+        }
+    }
+
+    pub fn expired_approval() -> TransferFromError {
+        TransferFromError::GenericError {
+            error_code: Nat::from(EXPIRED_APPROVAL),
+            message: "Approval has expired".into(),
+        }
+    }
 }
 
 impl From<ProcessTransactionError> for TransferFromError {
@@ -752,6 +769,41 @@ impl From<ProcessTransactionError> for TransferFromError {
             InvalidMemo(error) => transfer_from::invalid_memo_error(error),
             InvalidCreatedAtTime(err) => err.into(),
             GenericError(error) => transfer_from::unknown_generic_error(format!("{:#}", error)),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum UseAllowanceError {
+    CannotDeduceZero,
+    ExpiredApproval,
+    InsufficientAllowance { allowance: u128 },
+}
+
+impl std::fmt::Display for UseAllowanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use UseAllowanceError::*;
+
+        match self {
+            CannotDeduceZero => write!(f, "The transfer_from 0 cycles is not possible"),
+            ExpiredApproval => write!(f, "Approval has expired"),
+            InsufficientAllowance { allowance } => {
+                write!(f, "Insufficient allowance {}", allowance)
+            }
+        }
+    }
+}
+
+impl From<UseAllowanceError> for TransferFromError {
+    fn from(value: UseAllowanceError) -> Self {
+        use UseAllowanceError::*;
+
+        match value {
+            CannotDeduceZero => transfer_from::cannot_transfer_from_zero(),
+            ExpiredApproval { .. } => transfer_from::expired_approval(),
+            InsufficientAllowance { allowance } => Self::InsufficientAllowance {
+                allowance: allowance.into(),
+            },
         }
     }
 }
@@ -1057,42 +1109,60 @@ fn record_approval(
     }
 }
 
-fn use_allowance(s: &mut State, account: &Account, spender: &Account, amount: u128, now: u64) {
+fn check_allowance(
+    s: &State,
+    account: &Account,
+    spender: &Account,
+    amount: u128,
+    now: u64,
+) -> Result<(u128, u64), UseAllowanceError> {
+    use UseAllowanceError::*;
+
     let key = (to_account_key(account), to_account_key(spender));
 
     if amount == 0 {
-        ic_cdk::trap("Cannot deduct amount 0 from allowance")
+        return Err(CannotDeduceZero);
     }
-    let (current_allowance, current_expiration) = s.approvals.get(&key).unwrap_or_else(|| {
-        ic_cdk::trap(&format!(
-            "Allowance does not exist, account {}, spender {}",
-            account, spender
-        ));
-    });
+
+    let (current_allowance, current_expiration) = s
+        .approvals
+        .get(&key)
+        .ok_or(InsufficientAllowance { allowance: 0 })?;
 
     if !(current_expiration == 0 || current_expiration > now) {
-        ic_cdk::trap(&format!(
-            "Expired allowance, expiration {} is earlier than now {}",
-            current_expiration, now
-        ))
+        return Err(ExpiredApproval);
     }
 
-    if current_allowance < amount {
-        ic_cdk::trap(&format!(
-            "Insufficient allowance, current_allowance {}, total spent amount {}",
-            current_allowance, amount
-        ))
-    }
+    let new_allowance = current_allowance
+        .checked_sub(amount)
+        .ok_or(InsufficientAllowance {
+            allowance: current_allowance,
+        })?;
 
-    let new_amount = current_allowance - amount;
+    Ok((new_allowance, current_expiration))
+}
+
+fn use_allowance(
+    s: &mut State,
+    account: &Account,
+    spender: &Account,
+    amount: u128,
+    now: u64,
+) -> Result<(), UseAllowanceError> {
+    let (new_amount, expiration) = check_allowance(s, account, spender, amount, now)?;
+
+    let key = (to_account_key(account), to_account_key(spender));
+
     if new_amount == 0 {
-        if current_expiration > 0 {
-            s.expiration_queue.remove(&(current_expiration, key));
+        if expiration > 0 {
+            s.expiration_queue.remove(&(expiration, key));
         }
         s.approvals.remove(&key);
     } else {
-        s.approvals.insert(key, (new_amount, current_expiration));
+        s.approvals.insert(key, (new_amount, expiration));
     }
+
+    Ok(())
 }
 
 fn prune_approvals(now: u64, s: &mut State, limit: usize) {
