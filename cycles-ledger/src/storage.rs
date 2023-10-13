@@ -234,6 +234,23 @@ impl State {
         Ok(())
     }
 
+    // Return `Ok` with the new balance if the `account`
+    // balance has enough funds,
+    // `Err` with the current balance otherwise
+    pub fn check_debit_from_account(&self, account: &Account, amount: u128) -> Result<u128, u128> {
+        let account_key = to_account_key(account);
+        let old_balance = self.balances.get(&account_key).unwrap_or_default();
+        old_balance.checked_sub(amount).ok_or(old_balance)
+    }
+
+    // Return `Ok` if total supply doesn't underflow
+    // when decreased of `amount`, `Err` otherwise
+    pub fn check_total_supply_decrease(&self, amount: u128) -> anyhow::Result<u128> {
+        self.total_supply()
+            .checked_sub(amount)
+            .context("Underflow while changing the total supply")
+    }
+
     /// Increases the balance of an account of the given amount.
     /// Returns an error is either the account balance or the
     /// total supply overflow.
@@ -542,16 +559,105 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
         // and within `process_transaction`.
         // If this happens then log an error and panic so that
         // the state is reset to a valid one.
-        let err = err.context(format!("Unable to credit {} to {}", to, amount));
-        log!(P0, "{:#}", err);
-        ic_cdk::trap(&format!("{:#}", err));
+        log_error_and_trap(&err.context(format!("Unable to credit {} to {}", to, amount)));
     }
 
     Ok(block_index)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn transfer(
+    from: Account,
+    to: Account,
+    spender: Option<Account>,
+    amount: u128,
+    memo: Option<Memo>,
+    now: u64,
+    created_at_time: Option<u64>,
+    suggested_fee: Option<u128>,
+) -> Result<Nat, TransferFromError> {
+    use TransferFromError::*;
+
+    // if amount + fee overflows then the user doesn't have enough funds
+    let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
+        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+    };
+
+    // check allowance
+    if let Some(spender) = spender {
+        if spender != from {
+            let allowance = allowance(&from, &spender, now).0;
+            if allowance < amount_with_fee {
+                return Err(InsufficientAllowance {
+                    allowance: allowance.into(),
+                });
+            }
+        }
+    }
+
+    // TODO: FI-992 prevent transfer from/to management canister and anonymous
+
+    // check that the from account has enough funds
+    read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
+        |balance| TransferFromError::InsufficientFunds {
+            balance: balance.into(),
+        },
+    )?;
+
+    // sanity check that the to account balance won't overflow
+    read_state(|state| state.check_credit_to_account(&to, amount))
+        .map_err(transfer_from::anyhow_error)?;
+
+    // sanity check that the total_supply won't underflow
+    read_state(|state| state.check_total_supply_decrease(config::FEE))
+        .with_context(|| {
+            format!(
+                "Unable to transfer {} cycles from {} to {} (spender: {:?})",
+                amount, from, to, spender
+            )
+        })
+        .map_err(transfer_from::anyhow_error)?;
+
+    let transaction = Transaction {
+        operation: Operation::Transfer {
+            from,
+            to,
+            spender,
+            amount,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+
+    let block_index = process_transaction(transaction.clone(), now)?;
+
+    // The operations belows should not return error because of the checks
+    // before and within `process_transaction`.
+    // If an error happens then log it and panic so that
+    // the state is reset to a valid one.
+
+    // TODO: use_allowance should return errors and not panic
+    if let Some(spender) = spender {
+        if spender != from {
+            mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now));
+        }
+    }
+
+    if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
+        log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", transaction)))
+    };
+
+    if let Err(err) = mutate_state(|state| state.credit(&to, amount)) {
+        log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", transaction)))
+    };
+
+    Ok(Nat::from(block_index))
+}
+
 #[derive(Debug)]
 enum ProcessTransactionError {
+    BadFee { expected_fee: u128 },
     Duplicate { duplicate_of: u64 },
     InvalidMemo(String),
     InvalidCreatedAtTime(CreatedAtTimeValidationError),
@@ -579,6 +685,9 @@ impl std::error::Error for ProcessTransactionError {
 impl std::fmt::Display for ProcessTransactionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BadFee { expected_fee } => {
+                write!(f, "Invalid fee, expected fee is {}", expected_fee)
+            }
             Self::Duplicate { duplicate_of } => write!(
                 f,
                 "Input transaction is a duplicate of transaction at index {}",
@@ -603,12 +712,75 @@ impl From<anyhow::Error> for ProcessTransactionError {
     }
 }
 
+mod transfer_from {
+    use candid::Nat;
+    use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
+
+    const UNKNOWN_GENERIC_ERROR: u64 = 100000;
+    const INVALID_MEMO_ERROR: u64 = 100001;
+
+    pub fn anyhow_error(error: anyhow::Error) -> TransferFromError {
+        unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn unknown_generic_error(message: String) -> TransferFromError {
+        TransferFromError::GenericError {
+            error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
+            message,
+        }
+    }
+
+    pub fn invalid_memo_error(message: String) -> TransferFromError {
+        TransferFromError::GenericError {
+            error_code: Nat::from(INVALID_MEMO_ERROR),
+            message,
+        }
+    }
+}
+
+impl From<ProcessTransactionError> for TransferFromError {
+    fn from(error: ProcessTransactionError) -> Self {
+        use ProcessTransactionError::*;
+
+        match error {
+            BadFee { expected_fee } => Self::BadFee {
+                expected_fee: Nat::from(expected_fee),
+            },
+            Duplicate { duplicate_of } => Self::Duplicate {
+                duplicate_of: Nat::from(duplicate_of),
+            },
+            InvalidMemo(error) => transfer_from::invalid_memo_error(error),
+            InvalidCreatedAtTime(err) => err.into(),
+            GenericError(error) => transfer_from::unknown_generic_error(format!("{:#}", error)),
+        }
+    }
+}
+
+// Validates the suggested fee and returns the effective fee.
+// If the validation fails then return Err with the expected fee.
+fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
+    use Operation as Op;
+
+    match op {
+        Op::Burn { .. } | Op::Mint { .. } => Ok(Some(0)),
+        Op::Transfer { fee, .. } | Op::Approve { fee, .. } => {
+            if fee.is_some() && fee != &Some(config::FEE) {
+                return Err(config::FEE);
+            }
+            Ok(fee.is_none().then_some(config::FEE))
+        }
+    }
+}
+
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
     use ProcessTransactionError as PTErr;
 
     validate_memo(&transaction.memo).map_err(PTErr::InvalidMemo)?;
 
     validate_created_at_time(&transaction.created_at_time, now)?;
+
+    let effective_fee = validate_suggested_fee(&transaction.operation)
+        .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
 
     // sanity check that the transaction can be hashed
     let tx_hash = match transaction.hash() {
@@ -631,7 +803,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
         transaction,
         timestamp: now,
         phash: read_state(|state| state.last_block_hash()),
-        effective_fee: Some(0),
+        effective_fee,
     };
 
     // sanity check that block can be hashed
@@ -703,59 +875,6 @@ pub fn validate_created_at_time(
         return Err(CreatedAtTimeValidationError::InTheFuture { ledger_time: now });
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn transfer(
-    from: &Account,
-    to: &Account,
-    spender: Option<Account>,
-    amount: u128,
-    memo: Option<Memo>,
-    now: u64,
-    created_at_time: Option<u64>,
-    suggested_fee: Option<u128>,
-) -> (u64, Hash) {
-    let total_spent_amount = amount.saturating_add(crate::config::FEE);
-
-    let block = read_state(|s| {
-        let phash = s.last_block_hash();
-        Block {
-            transaction: Transaction {
-                operation: Operation::Transfer {
-                    from: *from,
-                    to: *to,
-                    spender,
-                    amount,
-                    fee: suggested_fee,
-                },
-                memo,
-                created_at_time,
-            },
-            timestamp: now,
-            phash,
-            effective_fee: suggested_fee.is_none().then_some(config::FEE),
-        }
-    });
-
-    mutate_state(|s| {
-        if let Some(spender) = spender {
-            if spender != *from {
-                use_allowance(s, from, &spender, total_spent_amount, now);
-            }
-        }
-
-        if let Err(err) = s.debit(from, total_spent_amount) {
-            log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", block)))
-        };
-        // Panic to rollback the previous debit.
-        if let Err(err) = s.credit(to, amount) {
-            log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", block)))
-        };
-
-        let block_hash = s.emit_block(block);
-        (s.blocks.len() - 1, block_hash)
-    })
 }
 
 /// Add a log entry with high priority for the error and trap.
