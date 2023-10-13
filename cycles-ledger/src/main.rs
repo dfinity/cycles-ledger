@@ -142,26 +142,9 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
     let amount = msg_cycles_accept128(cycles_available);
 
-    if amount < crate::config::FEE {
-        ic_cdk::trap(&format!(
-            "The requested amount {} to be deposited is less than the cycles ledger fee: {}",
-            amount,
-            crate::config::FEE
-        ))
-    }
-
-    validate_memo(&arg.memo);
-
-    let now = ic_cdk::api::time();
-    prune(now);
-    let (txid, balance, _phash) = match storage::record_deposit(&arg.to, amount, arg.memo, now) {
-        Ok(r) => r,
-        Err(err) => log_error_and_trap(&err.context("Unable to record the deposit")),
-    };
-
-    endpoints::DepositResult {
-        txid: Nat::from(txid),
-        balance: Nat::from(balance),
+    match storage::deposit(arg.to, amount, arg.memo, ic_cdk::api::time()) {
+        Ok(res) => res,
+        Err(err) => ic_cdk::trap(&err.to_string()),
     }
 }
 
@@ -200,7 +183,9 @@ fn execute_transfer(
         });
     }
 
-    validate_memo(&memo);
+    if let Err(err) = validate_memo(&memo) {
+        ic_cdk::trap(&err);
+    }
 
     let now = ic_cdk::api::time();
     validate_created_at_time(&created_at_time, now)?;
@@ -331,7 +316,9 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         });
     }
     let memo = Some(encode_send_memo(&target_canister.canister_id));
-    validate_memo(&memo);
+    if let Err(err) = validate_memo(&memo) {
+        ic_cdk::trap(&err);
+    }
 
     let now = ic_cdk::api::time();
     validate_created_at_time(&args.created_at_time, now)?;
@@ -400,7 +387,9 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     if from_account.owner == args.spender.owner {
         ic_cdk::trap("self approval is not allowed")
     }
-    validate_memo(&args.memo);
+    if let Err(err) = validate_memo(&args.memo) {
+        ic_cdk::trap(&err);
+    }
 
     let now = ic_cdk::api::time();
     validate_created_at_time(&args.created_at_time, now)?;

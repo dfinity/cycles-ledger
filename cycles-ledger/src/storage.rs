@@ -1,6 +1,7 @@
 use crate::config::Config;
-use crate::endpoints::{DataCertificate, SendError};
+use crate::endpoints::{DataCertificate, DepositResult, SendError};
 use crate::logs::{P0, P1};
+use crate::memo::validate_memo;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -9,7 +10,7 @@ use crate::{
     },
     generic_to_ciborium_value,
 };
-use anyhow::{Context, Error};
+use anyhow::{bail, Context, Error};
 use candid::Nat;
 use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
@@ -208,9 +209,38 @@ impl State {
         self.cache.total_supply
     }
 
+    // Return `Ok` if the `account` balance doesn't overflow
+    // when credited the `amount`, `Err` otherwise.
+    pub fn check_credit_to_account(&self, account: &Account, amount: u128) -> anyhow::Result<u128> {
+        let account_key = to_account_key(account);
+        let old_balance = self.balances.get(&account_key).unwrap_or_default();
+        old_balance
+            .checked_add(amount)
+            .context("Overflow while changing the account balance")
+    }
+
+    // Return `Ok` if total supply doesn't overflow
+    // when increased of `amount`, `Err` otherwise.
+    pub fn check_total_supply_increase(&self, amount: u128) -> anyhow::Result<u128> {
+        self.total_supply()
+            .checked_add(amount)
+            .context("Overflow while changing the total supply")
+    }
+
+    // Combination of `check_credit_to_account` and `check_total_supply_increase`
+    pub fn check_credit(&self, account: &Account, amount: u128) -> anyhow::Result<()> {
+        let _ = self.check_credit_to_account(account, amount)?;
+        let _ = self.check_total_supply_increase(amount)?;
+        Ok(())
+    }
+
     /// Increases the balance of an account of the given amount.
     /// Returns an error is either the account balance or the
     /// total supply overflow.
+    ///
+    /// Invariant: if `self.check_credit_to_account(account, amount).is_ok()`
+    /// and `self.check_total_supply_increase(amount).is_ok()` then
+    /// `self.credit(account, amount).is_ok()`
     pub fn credit(&mut self, account: &Account, amount: u128) -> anyhow::Result<u128> {
         let account_key = to_account_key(account);
         let old_balance = self.balances.get(&account_key).unwrap_or_default();
@@ -461,38 +491,195 @@ pub fn record_deposit(
     })
 }
 
-pub enum CreatedAtTimeValidation {
+pub fn deposit(
+    to: Account,
+    amount: u128,
+    memo: Option<Memo>,
+    now: u64,
+) -> anyhow::Result<DepositResult> {
+    // check that the amount is at least the fee
+    if amount < crate::config::FEE {
+        bail!(
+            "The requested amount {} to be deposited is \
+               less than the cycles ledger fee: {}",
+            amount,
+            crate::config::FEE
+        )
+    }
+
+    let block_index = mint(to, amount, memo, now)?;
+
+    prune(now);
+
+    Ok(DepositResult {
+        txid: Nat::from(block_index),
+        balance: Nat::from(balance_of(&to)),
+    })
+}
+
+pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::Result<u64> {
+    if let Err(err) = read_state(|state| state.check_credit(&to, amount)) {
+        // This should not happen as the number of total cycles
+        // a canister can deposit should never exceed the max.
+        // If this happens then the error is logged and returned
+        // to the caller.
+        let err = err.context(format!("Unable to mint {} cycles to {}", amount, to));
+        log!(P0, "{:#}", err);
+        return Err(err);
+    }
+
+    let block_index = process_transaction(
+        Transaction {
+            operation: Operation::Mint { to, amount },
+            created_at_time: None,
+            memo,
+        },
+        now,
+    )?;
+
+    if let Err(err) = mutate_state(|state| state.credit(&to, amount)) {
+        // This should not happen because of the checks before
+        // and within `process_transaction`.
+        // If this happens then log an error and panic so that
+        // the state is reset to a valid one.
+        let err = err.context(format!("Unable to credit {} to {}", to, amount));
+        log!(P0, "{:#}", err);
+        ic_cdk::trap(&format!("{:#}", err));
+    }
+
+    Ok(block_index)
+}
+
+#[derive(Debug)]
+enum ProcessTransactionError {
+    Duplicate { duplicate_of: u64 },
+    InvalidMemo(String),
+    InvalidCreatedAtTime(CreatedAtTimeValidationError),
+    GenericError(anyhow::Error),
+}
+
+impl std::error::Error for ProcessTransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::GenericError(err) => Some(err.as_ref()),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> &str {
+        // this method is deprecated and not used
+        "Error while processing transaction"
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
+}
+
+impl std::fmt::Display for ProcessTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Duplicate { duplicate_of } => write!(
+                f,
+                "Input transaction is a duplicate of transaction at index {}",
+                duplicate_of
+            ),
+            Self::InvalidMemo(err) => write!(f, "Invalid memo: {}", err),
+            Self::InvalidCreatedAtTime(err) => write!(f, "Invalid created_at_time: {:?}", err),
+            Self::GenericError(err) => write!(f, "{:#}", err),
+        }
+    }
+}
+
+impl From<CreatedAtTimeValidationError> for ProcessTransactionError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
+        Self::InvalidCreatedAtTime(value)
+    }
+}
+
+impl From<anyhow::Error> for ProcessTransactionError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::GenericError(error)
+    }
+}
+
+fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
+    use ProcessTransactionError as PTErr;
+
+    validate_memo(&transaction.memo).map_err(PTErr::InvalidMemo)?;
+
+    validate_created_at_time(&transaction.created_at_time, now)?;
+
+    // sanity check that the transaction can be hashed
+    let tx_hash = match transaction.hash() {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            let err = err.context(format!("Unable to process transaction {:?}", transaction));
+            log!(P0, "{:#}", err);
+            return Err(PTErr::from(err));
+        }
+    };
+
+    // check whether transaction is a duplicate
+    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
+        return Err(PTErr::Duplicate {
+            duplicate_of: block_index,
+        });
+    }
+
+    let block = Block {
+        transaction,
+        timestamp: now,
+        phash: read_state(|state| state.last_block_hash()),
+        effective_fee: Some(0),
+    };
+
+    // sanity check that block can be hashed
+    if let Err(err) = block.hash() {
+        let err = err.context(format!("Unable to process block {:?}", block));
+        log!(P0, "{:#}", err);
+        return Err(PTErr::from(err));
+    }
+
+    let _ = mutate_state(|state| state.emit_block(block));
+    let block_index = read_state(|state| state.blocks.len() - 1);
+
+    Ok(block_index)
+}
+
+#[derive(Debug)]
+pub enum CreatedAtTimeValidationError {
     TooOld,
     InTheFuture { ledger_time: u64 },
 }
 
-impl From<CreatedAtTimeValidation> for TransferFromError {
-    fn from(value: CreatedAtTimeValidation) -> Self {
+impl From<CreatedAtTimeValidationError> for TransferFromError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
-            CreatedAtTimeValidation::TooOld => Self::TooOld,
-            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
                 Self::CreatedInFuture { ledger_time }
             }
         }
     }
 }
 
-impl From<CreatedAtTimeValidation> for SendError {
-    fn from(value: CreatedAtTimeValidation) -> Self {
+impl From<CreatedAtTimeValidationError> for SendError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
-            CreatedAtTimeValidation::TooOld => Self::TooOld,
-            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
                 Self::CreatedInFuture { ledger_time }
             }
         }
     }
 }
 
-impl From<CreatedAtTimeValidation> for ApproveError {
-    fn from(value: CreatedAtTimeValidation) -> Self {
+impl From<CreatedAtTimeValidationError> for ApproveError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
-            CreatedAtTimeValidation::TooOld => Self::TooOld,
-            CreatedAtTimeValidation::InTheFuture { ledger_time } => {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
                 Self::CreatedInFuture { ledger_time }
             }
         }
@@ -502,18 +689,18 @@ impl From<CreatedAtTimeValidation> for ApproveError {
 pub fn validate_created_at_time(
     created_at_time: &Option<u64>,
     now: u64,
-) -> Result<(), CreatedAtTimeValidation> {
+) -> Result<(), CreatedAtTimeValidationError> {
     let Some(created_at_time) = created_at_time else { return Ok(())};
     if created_at_time
         .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
         .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
         < now
     {
-        return Err(CreatedAtTimeValidation::TooOld);
+        return Err(CreatedAtTimeValidationError::TooOld);
     }
 
     if created_at_time > &now.saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64) {
-        return Err(CreatedAtTimeValidation::InTheFuture { ledger_time: now });
+        return Err(CreatedAtTimeValidationError::InTheFuture { ledger_time: now });
     }
     Ok(())
 }
