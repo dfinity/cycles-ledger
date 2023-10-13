@@ -238,7 +238,7 @@ impl State {
     /// Returns an error is either the account balance or the
     /// total supply overflow.
     ///
-    /// Invaliant: if `self.check_credit_to_account(account, amount).is_ok()`
+    /// Invariant: if `self.check_credit_to_account(account, amount).is_ok()`
     /// and `self.check_total_supply_increase(amount).is_ok()` then
     /// `self.credit(account, amount).is_ok()`
     pub fn credit(&mut self, account: &Account, amount: u128) -> anyhow::Result<u128> {
@@ -634,7 +634,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
         effective_fee: Some(0),
     };
 
-    // sanity check that block can be hashes
+    // sanity check that block can be hashed
     if let Err(err) = block.hash() {
         let err = err.context(format!("Unable to process block {:?}", block));
         log!(P0, "{:#}", err);
