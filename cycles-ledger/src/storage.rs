@@ -634,7 +634,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
         effective_fee: Some(0),
     };
 
-    // sanity check that block can be hashes
+    // sanity check that block can be hashed
     if let Err(err) = block.hash() {
         let err = err.context(format!("Unable to process block {:?}", block));
         log!(P0, "{:#}", err);
