@@ -112,14 +112,17 @@ pub fn generic_to_ciborium_value(value: &Value, depth: usize) -> anyhow::Result<
         Value::Array(values) => Ok(CiboriumValue::Array(
             values
                 .iter()
-                .map(|v| generic_to_ciborium_value(v, depth + 1))
+                .enumerate()
+                .map(|(i, v)| generic_to_ciborium_value(v, depth + 1)
+                    .with_context(|| format!("Unable to convert element {}", i)))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         Value::Map(map) => Ok(CiboriumValue::Map(
             map.iter()
                 .map(|(k, v)| {
                     let key = CiboriumValue::Text(k.to_owned());
-                    let value = generic_to_ciborium_value(v, depth + 1)?;
+                    let value = generic_to_ciborium_value(v, depth + 1)
+                        .with_context(|| format!("Unable to convert field {}", k))?;
                     Ok::<(CiboriumValue, CiboriumValue), anyhow::Error>((key, value))
                 })
                 .collect::<Result<Vec<_>, _>>()?,

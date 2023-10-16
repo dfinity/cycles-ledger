@@ -73,7 +73,6 @@ pub struct Cache {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(bound = "")]
 pub struct Transaction {
     #[serde(flatten)]
     pub operation: Operation,
@@ -102,7 +101,6 @@ impl Transaction {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(bound = "")]
 #[serde(tag = "op")]
 pub enum Operation {
     #[serde(rename = "mint")]
@@ -168,28 +166,27 @@ pub struct Block {
 
 impl Block {
     pub fn from_value(value: Value) -> anyhow::Result<Self> {
-        let value = generic_to_ciborium_value(&value, 0).context(format!(
-            "Bug: unable to convert Value to Ciborium Value. Value: {:?}",
+        let cvalue = generic_to_ciborium_value(&value, 0).context(format!(
+            "Bug: unable to convert Value to Ciborium Value.\nValue: {:?}",
             value
         ))?;
-        ciborium::value::Value::deserialized(&value).context(format!(
-            "Bug: unable to convert Ciborium Value to Block. Value: {:?}",
-            value
+        ciborium::value::Value::deserialized(&cvalue).context(format!(
+            "Bug: unable to convert Ciborium Value to Block.\nCiborium Value: {:?}\nValue: {:?}",
+            cvalue, value
         ))
     }
 
     pub fn to_value(&self) -> anyhow::Result<Value> {
         let value = ciborium::Value::serialized(self).context(format!(
-            "Bug: unable to convert Block to Ciborium Value. Block: {:?}",
+            "Bug: unable to convert Block to Ciborium Value.\nBlock: {:?}",
             self
         ))?;
         ciborium_to_generic_value(&value, 0).context(format!(
-            "Bug: unable to convert Ciborium Value to Value. Block: {:?}, Value: {:?}",
+            "Bug: unable to convert Ciborium Value to Value.\nBlock: {:?}\nValue: {:?}",
             self, value
         ))
     }
 
-    /// Panics if [to_value] fails.
     pub fn hash(&self) -> anyhow::Result<Hash> {
         self.to_value()
             .map(|v| v.hash())
@@ -1127,7 +1124,7 @@ mod tests {
     use ic_certified_map::RbTree;
     use ic_stable_structures::{
         memory_manager::{MemoryId, MemoryManager},
-        VectorMemory,
+        VectorMemory, Storable,
     };
     use icrc_ledger_types::{
         icrc::generic_value::Value,
@@ -1143,7 +1140,7 @@ mod tests {
     use crate::{
         ciborium_to_generic_value,
         config::{self, MAX_MEMO_LENGTH},
-        storage::{prune_approvals, to_account_key, Operation, Transaction},
+        storage::{prune_approvals, to_account_key, Operation, Transaction, Cbor},
     };
 
     use super::{
@@ -1162,7 +1159,7 @@ mod tests {
         let cvalue = ciborium::Value::serialized(&num).unwrap();
         let value = ciborium_to_generic_value(&cvalue, 0).unwrap();
 
-        assert_eq!(value, expected);
+        assert_eq!(value, expected, "{:?}", cvalue);
     }
 
     prop_compose! {
@@ -1263,11 +1260,13 @@ mod tests {
         }
     }
 
-    // Use proptest to genereate blocks and call hash on them.
+    // Use proptest to genereate blocks and call 
+    // cbor(block).to_bytes()/from_bytes(), to_value and
+    // hash on them.
     // The test succeeeds if hash never panics, which means
     // that `Block::to_value` is always safe to call.
     #[test]
-    fn test_block_to_value_and_hash() {
+    fn test_block_ser_to_value_and_hash() {
         let test_conf = proptest::test_runner::Config {
             // Increase the cases so that more blocks are tested.
             // 2048 cases take around 0.89s to run.
@@ -1275,12 +1274,16 @@ mod tests {
             ..Default::default()
         };
         proptest!(test_conf, |(block in block_strategy())| {
+            let cblock = Cbor(block.clone());
+            let actual_block = Cbor::<Block>::from_bytes(cblock.to_bytes());
+            prop_assert_eq!(&block, &actual_block.0, "{:?}", block);
+
             let value = block.to_value()
                 .expect("Unable to convert value to block");
             let actual_block = Block::from_value(value)
                 .expect("Unable to convert value to block");
-            prop_assert_eq!(&block, &actual_block);
-            prop_assert!(block.hash().is_ok())
+            prop_assert_eq!(&block, &actual_block, "{:?}", block);
+            prop_assert!(block.hash().is_ok(), "{:?}", block)
         });
     }
 
