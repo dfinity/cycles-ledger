@@ -174,7 +174,7 @@ impl TryFrom<FlattenedTransaction> for Transaction {
                 amount: value.amount,
             },
             "mint" => Operation::Mint {
-                to: value.to.ok_or("to field required for to operation")?,
+                to: value.to.ok_or("to field required for mint operation")?,
                 amount: value.amount,
             },
             "xfer" => Operation::Transfer {
