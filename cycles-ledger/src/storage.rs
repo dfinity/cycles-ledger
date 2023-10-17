@@ -11,7 +11,7 @@ use crate::{
     generic_to_ciborium_value,
 };
 use anyhow::{anyhow, bail, Context, Error};
-use candid::Nat;
+use candid::{Nat, Principal};
 use ic_canister_log::log;
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
@@ -681,6 +681,9 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
     Ok(block_index)
 }
 
+const BLACKLISTED_PRINCIPALS: [Principal; 2] =
+    [Principal::anonymous(), Principal::management_canister()];
+
 #[allow(clippy::too_many_arguments)]
 pub fn transfer(
     from: Account,
@@ -694,6 +697,28 @@ pub fn transfer(
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
 
+    // check that none of the accounts is owned by a blacklisted principal
+    if BLACKLISTED_PRINCIPALS
+        .iter()
+        .any(|blacklisted| blacklisted == &from.owner)
+    {
+        return Err(transfer_from::blacklisted_owner(from));
+    }
+    if BLACKLISTED_PRINCIPALS
+        .iter()
+        .any(|blacklisted| blacklisted == &to.owner)
+    {
+        return Err(transfer_from::blacklisted_owner(to));
+    }
+    if let Some(spender) = spender {
+        if BLACKLISTED_PRINCIPALS
+            .iter()
+            .any(|blacklisted| blacklisted == &spender.owner)
+        {
+            return Err(transfer_from::blacklisted_owner(spender));
+        }
+    }
+
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
         return Err(InsufficientFunds { balance: balance_of(&from).into() });
@@ -705,8 +730,6 @@ pub fn transfer(
             read_state(|state| check_allowance(state, &from, &spender, amount, now))?;
         }
     }
-
-    // TODO: FI-992 prevent transfer from/to management canister and anonymous
 
     // Check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
@@ -837,14 +860,25 @@ impl From<anyhow::Error> for ProcessTransactionError {
 
 mod transfer_from {
     use candid::Nat;
-    use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
+    use icrc_ledger_types::{icrc1::account::Account, icrc2::transfer_from::TransferFromError};
 
     const UNKNOWN_GENERIC_ERROR: u64 = 100000;
+    const BLACKLISTED_OWNER: u64 = 100001;
     const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
     const EXPIRED_APPROVAL: u64 = 100003;
 
     pub fn anyhow_error(error: anyhow::Error) -> TransferFromError {
         unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn blacklisted_owner(account: Account) -> TransferFromError {
+        TransferFromError::GenericError {
+            error_code: Nat::from(BLACKLISTED_OWNER),
+            message: format!(
+                "Owner of the account {} is blacklisted and cannot make transactions",
+                account
+            ),
+        }
     }
 
     pub fn unknown_generic_error(message: String) -> TransferFromError {
