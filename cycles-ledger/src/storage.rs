@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{DataCertificate, DepositResult, SendError};
 use crate::logs::{P0, P1};
 use crate::memo::validate_memo;
@@ -741,13 +741,7 @@ pub fn transfer(
         memo,
     };
 
-    let block_index = match process_transaction(transaction.clone(), now) {
-        Ok(block_index) => block_index,
-        // The ICRC-1 and ICP Ledgers trap when the memo validation fails
-        // so we do the same here.
-        Err(ProcessTransactionError::InvalidMemo(err)) => ic_cdk::trap(&err.to_string()),
-        Err(err) => return Err(err.into()),
-    };
+    let block_index = process_transaction(transaction.clone(), now)?;
 
     // The operations below should not return an error because of the checks
     // before and inside `process_transaction`.
@@ -778,11 +772,87 @@ pub fn transfer(
     Ok(Nat::from(block_index))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn approve(
+    from: Account,
+    spender: Account,
+    amount: u128,
+    memo: Option<Memo>,
+    now: u64,
+    created_at_time: Option<u64>,
+    suggested_fee: Option<u128>,
+    expected_allowance: Option<u128>,
+    expires_at: Option<u64>,
+) -> Result<Nat, ApproveError> {
+    // check that this isn't a self approval
+    if from.owner == spender.owner {
+        ic_cdk::trap("self approval is not allowed");
+    }
+
+    // check that the `expected_allowance` matches the current one
+    let allowance = allowance(&from, &spender, now).0;
+    if expected_allowance.is_some() && expected_allowance != Some(allowance) {
+        return Err(ApproveError::AllowanceChanged {
+            current_allowance: Nat::from(allowance),
+        });
+    }
+
+    // check that the `from` account has enough funds to pay the fee
+    let balance = balance_of(&from);
+    if balance < config::FEE {
+        return Err(ApproveError::InsufficientFunds {
+            balance: Nat::from(balance),
+        });
+    }
+
+    // check that the epiration is in the future
+    if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
+        return Err(ApproveError::Expired { ledger_time: now });
+    }
+
+    // sanity check that the total_supply won't underflow
+    read_state(|state| state.check_total_supply_decrease(config::FEE))
+        .with_context(|| {
+            format!(
+                "Unable to approve {} cycles from {} to spender {}",
+                amount, from, spender
+            )
+        })
+        .map_err(approve::anyhow_error)?;
+
+    let transaction = Transaction {
+        operation: Operation::Approve {
+            from,
+            spender,
+            amount,
+            expected_allowance,
+            expires_at,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+
+    let block_index = process_transaction(transaction.clone(), now)?;
+
+    // The operations below should not return an error because of the checks
+    // before and inside `process_transaction`.
+    // If an error happens, then log it and panic so that
+    // the state is reset to a valid one.
+
+    mutate_state(|state| record_approval(state, &from, &spender, amount, expires_at));
+
+    if let Err(err) = mutate_state(|state| state.debit(&from, crate::config::FEE)) {
+        log_error_and_trap(&err.context(format!("Unable to approve: {:?}", transaction)));
+    }
+
+    Ok(Nat::from(block_index))
+}
+
 #[derive(Debug)]
 enum ProcessTransactionError {
     BadFee { expected_fee: u128 },
     Duplicate { duplicate_of: u64 },
-    InvalidMemo(String),
     InvalidCreatedAtTime(CreatedAtTimeValidationError),
     GenericError(anyhow::Error),
 }
@@ -816,7 +886,6 @@ impl std::fmt::Display for ProcessTransactionError {
                 "Input transaction is a duplicate of transaction at index {}",
                 duplicate_of
             ),
-            Self::InvalidMemo(err) => write!(f, "Invalid memo: {}", err),
             Self::InvalidCreatedAtTime(err) => write!(f, "Invalid created_at_time: {:?}", err),
             Self::GenericError(err) => write!(f, "{:#}", err),
         }
@@ -839,9 +908,9 @@ mod transfer_from {
     use candid::Nat;
     use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
 
-    const UNKNOWN_GENERIC_ERROR: u64 = 100000;
-    const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
-    const EXPIRED_APPROVAL: u64 = 100003;
+    pub const UNKNOWN_GENERIC_ERROR: u64 = 100000;
+    pub const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
+    pub const EXPIRED_APPROVAL: u64 = 100003;
 
     pub fn anyhow_error(error: anyhow::Error) -> TransferFromError {
         unknown_generic_error(format!("{:#}", error))
@@ -869,6 +938,22 @@ mod transfer_from {
     }
 }
 
+mod approve {
+    use candid::Nat;
+    use icrc_ledger_types::icrc2::approve::ApproveError;
+
+    pub fn anyhow_error(error: anyhow::Error) -> ApproveError {
+        unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn unknown_generic_error(message: String) -> ApproveError {
+        ApproveError::GenericError {
+            error_code: Nat::from(crate::storage::transfer_from::UNKNOWN_GENERIC_ERROR),
+            message,
+        }
+    }
+}
+
 impl From<ProcessTransactionError> for TransferFromError {
     fn from(error: ProcessTransactionError) -> Self {
         use ProcessTransactionError::*;
@@ -880,11 +965,25 @@ impl From<ProcessTransactionError> for TransferFromError {
             Duplicate { duplicate_of } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
-            // The Ledger should always trap if the memo validation fails
-            // so this branch should never be reached.
-            InvalidMemo(error) => transfer_from::unknown_generic_error(error.to_string()),
             InvalidCreatedAtTime(err) => err.into(),
-            GenericError(error) => transfer_from::unknown_generic_error(format!("{:#}", error)),
+            GenericError(err) => transfer_from::unknown_generic_error(format!("{:#}", err)),
+        }
+    }
+}
+
+impl From<ProcessTransactionError> for ApproveError {
+    fn from(error: ProcessTransactionError) -> Self {
+        use ProcessTransactionError::*;
+
+        match error {
+            BadFee { expected_fee } => Self::BadFee {
+                expected_fee: Nat::from(expected_fee),
+            },
+            Duplicate { duplicate_of } => Self::Duplicate {
+                duplicate_of: Nat::from(duplicate_of),
+            },
+            InvalidCreatedAtTime(err) => err.into(),
+            GenericError(err) => approve::unknown_generic_error(format!("{:#}", err)),
         }
     }
 }
@@ -943,7 +1042,11 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
     use ProcessTransactionError as PTErr;
 
-    validate_memo(&transaction.memo).map_err(PTErr::InvalidMemo)?;
+    // The ICRC-1 and ICP Ledgers trap when the memo validation fails
+    // so we do the same.
+    if let Err(err) = validate_memo(&transaction.memo) {
+        ic_cdk::trap(&err);
+    }
 
     validate_created_at_time(&transaction.created_at_time, now)?;
 
@@ -1137,49 +1240,6 @@ pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) 
         return (0, 0);
     }
     allowance
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn approve(
-    from_spender: (&Account, &Account),
-    amount: u128,
-    expires_at: Option<u64>,
-    now: u64,
-    expected_allowance: Option<u128>,
-    memo: Option<Memo>,
-    created_at_time: Option<u64>,
-    suggested_fee: Option<u128>,
-) -> u64 {
-    let from = from_spender.0;
-    let spender = from_spender.1;
-
-    mutate_state(|s| {
-        record_approval(s, from, spender, amount, expires_at);
-
-        if let Err(err) = s.debit(from, crate::config::FEE) {
-            log_error_and_trap(&err.context("Unable to approve"))
-        }
-
-        let phash = s.last_block_hash();
-        s.emit_block(Block {
-            transaction: Transaction {
-                operation: Operation::Approve {
-                    from: *from,
-                    spender: *spender,
-                    amount,
-                    expected_allowance,
-                    expires_at,
-                    fee: suggested_fee,
-                },
-                memo,
-                created_at_time,
-            },
-            timestamp: now,
-            phash,
-            effective_fee: suggested_fee.is_none().then_some(config::FEE),
-        });
-        s.blocks.len() - 1
-    })
 }
 
 fn record_approval(
