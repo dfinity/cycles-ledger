@@ -627,9 +627,9 @@ pub fn transfer(
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
-    // The operations belows should not return error because of the checks
-    // before and within `process_transaction`.
-    // If an error happens then log it and panic so that
+    // The operations below should not return an error because of the checks
+    // before and inside `process_transaction`.
+    // If an error happens, then log it and panic so that
     // the state is reset to a valid one.
 
     if let Some(spender) = spender {
