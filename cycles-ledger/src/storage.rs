@@ -743,9 +743,9 @@ pub fn transfer(
 
     let block_index = match process_transaction(transaction.clone(), now) {
         Ok(block_index) => block_index,
-        // The ICRC-1 and ICP Ledgers panic when the memo validation fails
+        // The ICRC-1 and ICP Ledgers trap when the memo validation fails
         // so we do the same here.
-        Err(ProcessTransactionError::InvalidMemo(err)) => ic_cdk::trap(&format!("{}", err)),
+        Err(ProcessTransactionError::InvalidMemo(err)) => ic_cdk::trap(&err.to_string()),
         Err(err) => return Err(err.into()),
     };
 
@@ -840,7 +840,6 @@ mod transfer_from {
     use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
 
     const UNKNOWN_GENERIC_ERROR: u64 = 100000;
-    const INVALID_MEMO_ERROR: u64 = 100001;
     const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
     const EXPIRED_APPROVAL: u64 = 100003;
 
@@ -851,13 +850,6 @@ mod transfer_from {
     pub fn unknown_generic_error(message: String) -> TransferFromError {
         TransferFromError::GenericError {
             error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
-            message,
-        }
-    }
-
-    pub fn invalid_memo_error(message: String) -> TransferFromError {
-        TransferFromError::GenericError {
-            error_code: Nat::from(INVALID_MEMO_ERROR),
             message,
         }
     }
@@ -888,7 +880,9 @@ impl From<ProcessTransactionError> for TransferFromError {
             Duplicate { duplicate_of } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
-            InvalidMemo(error) => transfer_from::invalid_memo_error(error),
+            // The Ledger should always trap if the memo validation fails
+            // so this branch should never be reached.
+            InvalidMemo(error) => transfer_from::unknown_generic_error(error.to_string()),
             InvalidCreatedAtTime(err) => err.into(),
             GenericError(error) => transfer_from::unknown_generic_error(format!("{:#}", error)),
         }
