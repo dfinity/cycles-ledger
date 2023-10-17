@@ -73,14 +73,11 @@ pub struct Cache {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(try_from = "FlattenedTransaction")]
+#[serde(into = "FlattenedTransaction")]
 pub struct Transaction {
     pub operation: Operation,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "ts")]
     pub created_at_time: Option<u64>,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<Memo>,
 }
 
@@ -99,54 +96,174 @@ impl Transaction {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     Mint {
-        #[serde(with = "compact_account")]
         to: Account,
-        #[serde(rename = "amt")]
         amount: u128,
     },
     Transfer {
-        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(with = "compact_account")]
         to: Account,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "compact_account::opt"
-        )]
         spender: Option<Account>,
-        #[serde(rename = "amt")]
         amount: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fee: Option<u128>,
     },
     Burn {
-        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(rename = "amt")]
         amount: u128,
     },
     Approve {
-        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(with = "compact_account")]
         spender: Account,
-        #[serde(rename = "amt")]
         amount: u128,
-        #[serde(skip_serializing_if = "Option::is_none")]
         expected_allowance: Option<u128>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fee: Option<u128>,
     },
 }
 
+// A [Transaction] but flattened meaning that [Operation]
+// fields are mixed with [Transaction] fields.
+// workaround to https://github.com/serde-rs/json/issues/625
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct FlattenedTransaction {
+    // [Transaction] fields.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "ts")]
+    pub created_at_time: Option<u64>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo: Option<Memo>,
+
+    // [Operation] fields.
+    pub op: String,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(with = "compact_account::opt")]
+    from: Option<Account>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(with = "compact_account::opt")]
+    to: Option<Account>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(with = "compact_account::opt")]
+    spender: Option<Account>,
+    #[serde(rename = "amt")]
+    amount: u128,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fee: Option<u128>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_allowance: Option<u128>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<u64>,
+}
+
+impl TryFrom<FlattenedTransaction> for Transaction {
+    type Error = String;
+
+    fn try_from(value: FlattenedTransaction) -> Result<Self, Self::Error> {
+        let operation = match value.op.as_str() {
+            "burn" => Operation::Burn {
+                from: value
+                    .from
+                    .ok_or("`from` field required for `burn` operation")?,
+                amount: value.amount,
+            },
+            "mint" => Operation::Mint {
+                to: value.to.ok_or("`to` field required for `mint` operation")?,
+                amount: value.amount,
+            },
+            "xfer" => Operation::Transfer {
+                from: value
+                    .from
+                    .ok_or("`from` field required for `xfer` operation")?,
+                spender: value.spender,
+                to: value.to.ok_or("`to` field required for `xfer` operation")?,
+                amount: value.amount,
+                fee: value.fee,
+            },
+            "approve" => Operation::Approve {
+                from: value
+                    .from
+                    .ok_or("`from` field required for `approve` operation")?,
+                spender: value
+                    .spender
+                    .ok_or("`spender` field required for `approve` operation")?,
+                amount: value.amount,
+                expected_allowance: value.expected_allowance,
+                expires_at: value.expires_at,
+                fee: value.fee,
+            },
+            unknown_op => return Err(format!("Unknown op name {}", unknown_op)),
+        };
+        Ok(Transaction {
+            operation,
+            created_at_time: value.created_at_time,
+            memo: value.memo,
+        })
+    }
+}
+
+impl From<Transaction> for FlattenedTransaction {
+    fn from(t: Transaction) -> Self {
+        use Operation::*;
+
+        FlattenedTransaction {
+            created_at_time: t.created_at_time,
+            memo: t.memo,
+            op: match &t.operation {
+                Burn { .. } => "burn",
+                Mint { .. } => "mint",
+                Transfer { .. } => "xfer",
+                Approve { .. } => "approve",
+            }
+            .into(),
+            from: match &t.operation {
+                Transfer { from, .. } | Burn { from, .. } | Approve { from, .. } => Some(*from),
+                _ => None,
+            },
+            to: match &t.operation {
+                Mint { to, .. } | Transfer { to, .. } => Some(*to),
+                _ => None,
+            },
+            spender: match &t.operation {
+                Transfer { spender, .. } => spender.to_owned(),
+                Approve { spender, .. } => Some(*spender),
+                _ => None,
+            },
+            amount: match &t.operation {
+                Burn { amount, .. }
+                | Mint { amount, .. }
+                | Transfer { amount, .. }
+                | Approve { amount, .. } => *amount,
+            },
+            fee: match &t.operation {
+                Transfer { fee, .. } | Approve { fee, .. } => fee.to_owned(),
+                _ => None,
+            },
+            expected_allowance: match &t.operation {
+                Approve {
+                    expected_allowance, ..
+                } => expected_allowance.to_owned(),
+                _ => None,
+            },
+            expires_at: match &t.operation {
+                Approve { expires_at, .. } => expires_at.to_owned(),
+                _ => None,
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Block {
+    #[serde(rename = "tx")]
     pub transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
@@ -159,28 +276,27 @@ pub struct Block {
 
 impl Block {
     pub fn from_value(value: Value) -> anyhow::Result<Self> {
-        let value = generic_to_ciborium_value(&value, 0).context(format!(
-            "Bug: unable to convert Value to Ciborium Value. Value: {:?}",
+        let cvalue = generic_to_ciborium_value(&value, 0).context(format!(
+            "Bug: unable to convert Value to Ciborium Value.\nValue: {:?}",
             value
         ))?;
-        ciborium::value::Value::deserialized(&value).context(format!(
-            "Bug: unable to convert Ciborium Value to Block. Value: {:?}",
-            value
+        ciborium::value::Value::deserialized(&cvalue).context(format!(
+            "Bug: unable to convert Ciborium Value to Block.\nCiborium Value: {:?}\nValue: {:?}",
+            cvalue, value
         ))
     }
 
     pub fn to_value(&self) -> anyhow::Result<Value> {
         let value = ciborium::Value::serialized(self).context(format!(
-            "Bug: unable to convert Block to Ciborium Value. Block: {:?}",
+            "Bug: unable to convert Block to Ciborium Value.\nBlock: {:?}",
             self
         ))?;
         ciborium_to_generic_value(&value, 0).context(format!(
-            "Bug: unable to convert Ciborium Value to Value. Block: {:?}, Value: {:?}",
+            "Bug: unable to convert Ciborium Value to Value.\nBlock: {:?}\nValue: {:?}",
             self, value
         ))
     }
 
-    /// Panics if [to_value] fails.
     pub fn hash(&self) -> anyhow::Result<Hash> {
         self.to_value()
             .map(|v| v.hash())
@@ -1301,48 +1417,30 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use candid::Principal;
     use ic_certified_map::RbTree;
     use ic_stable_structures::{
         memory_manager::{MemoryId, MemoryManager},
-        VectorMemory,
+        Storable, VectorMemory,
     };
     use icrc_ledger_types::{
-        icrc::generic_value::Value,
         icrc1::{account::Account, transfer::Memo},
+        icrc3,
     };
-    use num_bigint::BigUint;
     use proptest::{
         prelude::any, prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
         strategy::Strategy,
     };
 
     use crate::{
-        ciborium_to_generic_value,
         config::{self, MAX_MEMO_LENGTH},
-        storage::{prune_approvals, to_account_key, Operation, Transaction},
+        storage::{prune_approvals, to_account_key, Cbor, Operation, Transaction},
     };
 
     use super::{
         prune_transactions, Approvals, Balances, Block, BlockLog, Cache, ConfigCell,
         ExpirationQueue, State, TransactionHashes, TransactionTimeStamps,
     };
-
-    #[test]
-    fn test_u128_encoding() {
-        // ciborium_to_generic_value should convert u128 to Value::Nat
-        let num = u128::MAX; // u128::MAX is 340282366920938463463374607431768211455
-        let expected = Value::Nat(candid::Nat(
-            BigUint::from_str("340282366920938463463374607431768211455").unwrap(),
-        ));
-
-        let cvalue = ciborium::Value::serialized(&num).unwrap();
-        let value = ciborium_to_generic_value(&cvalue, 0).unwrap();
-
-        assert_eq!(value, expected);
-    }
 
     prop_compose! {
         fn principal_strategy()
@@ -1442,24 +1540,55 @@ mod tests {
         }
     }
 
-    // Use proptest to genereate blocks and call hash on them.
+    // Use proptest to genereate blocks and call
+    // cbor(block).to_bytes()/from_bytes(), to_value and
+    // hash on them.
     // The test succeeeds if hash never panics, which means
     // that `Block::to_value` is always safe to call.
     #[test]
-    fn test_block_to_value_and_hash() {
+    fn test_block_ser_to_value_and_hash() {
         let test_conf = proptest::test_runner::Config {
             // Increase the cases so that more blocks are tested.
             // 2048 cases take around 0.89s to run.
             cases: 2048,
+            // Fail as soon as one test fails, all blocks should
+            // pass the test
+            max_local_rejects: 1,
+            max_shrink_iters: 0,
+            ..Default::default()
+        };
+        proptest!(test_conf, |(block in block_strategy())| {
+            let cblock = Cbor(block.clone());
+            let actual_block = Cbor::<Block>::from_bytes(cblock.to_bytes());
+            prop_assert_eq!(&block, &actual_block.0, "{:?}", block);
+
+            let value = block.to_value()
+                .expect("Unable to convert value to block");
+            let actual_block = Block::from_value(value)
+                .expect("Unable to convert value to block");
+            prop_assert_eq!(&block, &actual_block, "{:?}", block);
+            prop_assert!(block.hash().is_ok(), "{:?}", block)
+        });
+    }
+
+    #[test]
+    fn test_block_schema() {
+        let test_conf = proptest::test_runner::Config {
+            // Increase the cases so that more blocks are tested.
+            // 2048 cases take around 0.89s to run.
+            cases: 2048,
+            // Fail as soon as one test fails, all blocks should
+            // pass the test
+            max_local_rejects: 1,
+            max_shrink_iters: 0,
             ..Default::default()
         };
         proptest!(test_conf, |(block in block_strategy())| {
             let value = block.to_value()
                 .expect("Unable to convert value to block");
-            let actual_block = Block::from_value(value)
-                .expect("Unable to convert value to block");
-            prop_assert_eq!(&block, &actual_block);
-            prop_assert!(block.hash().is_ok())
+            if let Err(err) = icrc3::schema::validate(&value) {
+                panic!("block {} is not a valid icrc3 block. Errors:\n{}", value, err)
+            }
         });
     }
 
