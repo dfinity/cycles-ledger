@@ -16,7 +16,6 @@ pub mod endpoints;
 pub mod logs;
 pub mod memo;
 pub mod storage;
-pub mod u128;
 
 /// The maximum allowed value nesting within a CBOR value.
 const VALUE_DEPTH_LIMIT: usize = 64;

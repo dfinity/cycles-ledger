@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::endpoints::{DataCertificate, DepositResult, SendError};
 use crate::logs::{P0, P1};
 use crate::memo::validate_memo;
-use crate::u128::U128;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -101,26 +100,26 @@ impl Transaction {
 pub enum Operation {
     Mint {
         to: Account,
-        amount: U128,
+        amount: u128,
     },
     Transfer {
         from: Account,
         to: Account,
         spender: Option<Account>,
-        amount: U128,
-        fee: Option<U128>,
+        amount: u128,
+        fee: Option<u128>,
     },
     Burn {
         from: Account,
-        amount: U128,
+        amount: u128,
     },
     Approve {
         from: Account,
         spender: Account,
-        amount: U128,
-        expected_allowance: Option<U128>,
+        amount: u128,
+        expected_allowance: Option<u128>,
         expires_at: Option<u64>,
-        fee: Option<U128>,
+        fee: Option<u128>,
     },
 }
 
@@ -153,13 +152,13 @@ struct FlattenedTransaction {
     #[serde(with = "compact_account::opt")]
     spender: Option<Account>,
     #[serde(rename = "amt")]
-    amount: U128,
+    amount: u128,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    fee: Option<U128>,
+    fee: Option<u128>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    expected_allowance: Option<U128>,
+    expected_allowance: Option<u128>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     expires_at: Option<u64>,
@@ -268,7 +267,7 @@ pub struct Block {
     pub phash: Option<[u8; 32]>,
     #[serde(rename = "fee")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effective_fee: Option<U128>,
+    pub effective_fee: Option<u128>,
 }
 
 impl Block {
@@ -591,14 +590,14 @@ pub fn record_deposit(
             transaction: Transaction {
                 operation: Operation::Mint {
                     to: *account,
-                    amount: U128::new(amount),
+                    amount,
                 },
                 memo,
                 created_at_time: None,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(U128::ZERO),
+            effective_fee: Some(0),
         });
         Ok((s.blocks.len() - 1, new_balance, block_hash))
     })
@@ -643,10 +642,7 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
 
     let block_index = process_transaction(
         Transaction {
-            operation: Operation::Mint {
-                to,
-                amount: U128::new(amount),
-            },
+            operation: Operation::Mint { to, amount },
             created_at_time: None,
             memo,
         },
@@ -747,7 +743,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
         transaction,
         timestamp: now,
         phash: read_state(|state| state.last_block_hash()),
-        effective_fee: Some(U128::ZERO),
+        effective_fee: Some(0),
     };
 
     // sanity check that block can be hashed
@@ -842,15 +838,15 @@ pub fn transfer(
                     from: *from,
                     to: *to,
                     spender,
-                    amount: U128::new(amount),
-                    fee: suggested_fee.map(U128::new),
+                    amount,
+                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: suggested_fee.is_none().then_some(U128::new(config::FEE)),
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         }
     });
 
@@ -915,14 +911,14 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount: U128::new(crate::config::FEE),
+                    amount: crate::config::FEE,
                 },
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 created_at_time: None,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(U128::ZERO),
+            effective_fee: Some(0),
         });
         Some((BlockIndex::from(s.blocks.len() - 1), block_hash))
     })
@@ -946,14 +942,14 @@ pub fn send(
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount: U128::new(amount),
+                    amount,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(U128::new(crate::config::FEE)),
+            effective_fee: Some(crate::config::FEE),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -995,17 +991,17 @@ pub fn approve(
                 operation: Operation::Approve {
                     from: *from,
                     spender: *spender,
-                    amount: U128::new(amount),
-                    expected_allowance: expected_allowance.map(U128::new),
+                    amount,
+                    expected_allowance,
                     expires_at,
-                    fee: suggested_fee.map(U128::new),
+                    fee: suggested_fee,
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: suggested_fee.is_none().then_some(U128::new(config::FEE)),
+            effective_fee: suggested_fee.is_none().then_some(config::FEE),
         });
         s.blocks.len() - 1
     })
@@ -1246,22 +1242,12 @@ mod tests {
     use crate::{
         config::{self, MAX_MEMO_LENGTH},
         storage::{prune_approvals, to_account_key, Cbor, Operation, Transaction},
-        u128::U128,
     };
 
     use super::{
         prune_transactions, Approvals, Balances, Block, BlockLog, Cache, ConfigCell,
         ExpirationQueue, State, TransactionHashes, TransactionTimeStamps,
     };
-
-    prop_compose! {
-        #[allow(non_snake_case)]
-        fn U128_strategy()
-                        (n in any::<u128>())
-                        -> U128 {
-            U128::new(n)
-        }
-    }
 
     prop_compose! {
         fn principal_strategy()
@@ -1284,10 +1270,10 @@ mod tests {
         fn approve_strategy()
                            (from in account_strategy(),
                             spender in account_strategy(),
-                            amount in U128_strategy(),
-                            expected_allowance in proptest::option::of(U128_strategy()),
+                            amount in any::<u128>(),
+                            expected_allowance in proptest::option::of(any::<u128>()),
                             expires_at in proptest::option::of(any::<u64>()),
-                            fee in proptest::option::of(U128_strategy()))
+                            fee in proptest::option::of(any::<u128>()))
                            -> Operation {
             Operation::Approve { from, spender, amount, expected_allowance, expires_at, fee }
         }
@@ -1296,7 +1282,7 @@ mod tests {
     prop_compose! {
         fn burn_strategy()
                         (from in account_strategy(),
-                         amount in U128_strategy())
+                         amount in any::<u128>())
                         -> Operation {
             Operation::Burn { from, amount }
         }
@@ -1305,7 +1291,7 @@ mod tests {
     prop_compose! {
         fn mint_strategy()
                         (to in account_strategy(),
-                         amount in U128_strategy())
+                         amount in any::<u128>())
                         -> Operation {
             Operation::Mint { to, amount }
         }
@@ -1316,8 +1302,8 @@ mod tests {
                             (from in account_strategy(),
                              to in account_strategy(),
                              spender in proptest::option::of(account_strategy()),
-                             amount in U128_strategy(),
-                             fee in proptest::option::of(U128_strategy()))
+                             amount in any::<u128>(),
+                             fee in proptest::option::of(any::<u128>()))
                             -> Operation {
             Operation::Transfer { from, to, spender, amount, fee }
         }
@@ -1355,7 +1341,7 @@ mod tests {
         fn block_strategy()
                          (transaction in transaction_strategy(),
                           timestamp in any::<u64>(),
-                          effective_fee in proptest::option::of(U128_strategy()))
+                          effective_fee in proptest::option::of(any::<u128>()))
                          -> Block {
             Block { transaction, timestamp, phash: None, effective_fee}
         }

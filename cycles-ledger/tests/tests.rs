@@ -18,7 +18,6 @@ use cycles_ledger::{
         Operation::{self, Approve, Burn, Mint, Transfer},
         Transaction,
     },
-    u128::U128,
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
@@ -1193,7 +1192,7 @@ fn test_icrc3_get_transactions() {
     let mut block0 = block(
         Mint {
             to: user1,
-            amount: 5_000_000_000.into(),
+            amount: 5_000_000_000,
         },
         None,
         None,
@@ -1217,7 +1216,7 @@ fn test_icrc3_get_transactions() {
     let mut block1 = block(
         Mint {
             to: user2,
-            amount: 3_000_000_000.into(),
+            amount: 3_000_000_000,
         },
         None,
         None,
@@ -1261,7 +1260,7 @@ fn test_icrc3_get_transactions() {
     let mut block2 = block(
         Burn {
             from: user2,
-            amount: 2_000_000_000.into(),
+            amount: 2_000_000_000,
         },
         None,
         Some(send_memo),
@@ -1324,7 +1323,7 @@ fn test_icrc3_get_transactions() {
             from: user1,
             to: user2,
             spender: None,
-            amount: 1_000_000_000.into(),
+            amount: 1_000_000_000,
             fee: None,
         },
         None,
@@ -1335,10 +1334,10 @@ fn test_icrc3_get_transactions() {
         Approve {
             from: user1,
             spender: user2,
-            amount: U128::new(1_000_000_000 + FEE),
-            expected_allowance: Some(U128::ZERO),
+            amount: 1_000_000_000 + FEE,
+            expected_allowance: Some(0),
             expires_at: None,
-            fee: Some(U128::new(FEE)),
+            fee: Some(FEE),
         },
         None,
         None,
@@ -1349,8 +1348,8 @@ fn test_icrc3_get_transactions() {
             from: user1,
             to: user3,
             spender: Some(user2),
-            amount: 1_000_000_000.into(),
-            fee: Some(U128::new(FEE)),
+            amount: 1_000_000_000,
+            fee: Some(FEE),
         },
         None,
         None,
@@ -1414,18 +1413,18 @@ fn block(
     phash: Option<[u8; 32]>,
 ) -> Block {
     let effective_fee = match operation {
-        Burn { .. } => Some(U128::new(FEE)),
-        Mint { .. } => Some(U128::ZERO),
+        Burn { .. } => Some(FEE),
+        Mint { .. } => Some(0),
         Transfer { fee, .. } => {
             if fee.is_none() {
-                Some(U128::new(FEE))
+                Some(FEE)
             } else {
                 None
             }
         }
         Approve { fee, .. } => {
             if fee.is_none() {
-                Some(U128::new(FEE))
+                Some(FEE)
             } else {
                 None
             }
