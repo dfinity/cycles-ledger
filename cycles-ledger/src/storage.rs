@@ -599,7 +599,7 @@ pub fn transfer(
         },
     )?;
 
-    // sanity check that the to account balance won't overflow
+    // sanity check that the `to` account balance won't overflow
     read_state(|state| state.check_credit_to_account(&to, amount))
         .map_err(transfer_from::anyhow_error)?;
 
