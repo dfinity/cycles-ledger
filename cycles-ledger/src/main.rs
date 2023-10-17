@@ -149,80 +149,34 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 }
 
 fn execute_transfer(
-    from: &Account,
-    to: &Account,
+    from: Account,
+    to: Account,
     spender: Option<Account>,
     amount: Nat,
     fee: Option<Nat>,
     memo: Option<Memo>,
     created_at_time: Option<u64>,
 ) -> Result<Nat, TransferFromError> {
-    let balance = storage::balance_of(from);
-
     let Some(amount) = amount.0.to_u128() else {
         return Err(TransferFromError::InsufficientFunds {
-            balance: Nat::from(balance),
+            balance: Nat::from(storage::balance_of(&from)),
         });
     };
 
     let suggested_fee = match fee {
         Some(fee) => match fee.0.to_u128() {
-            Some(fee) if fee == config::FEE => Some(fee),
-            _ => {
+            None => {
                 return Err(TransferFromError::BadFee {
                     expected_fee: Nat::from(config::FEE),
-                });
+                })
             }
+            Some(fee) => Some(fee),
         },
         None => None,
     };
 
-    if balance < amount.saturating_add(config::FEE) {
-        return Err(TransferFromError::InsufficientFunds {
-            balance: Nat::from(balance),
-        });
-    }
-
-    if let Err(err) = validate_memo(&memo) {
-        ic_cdk::trap(&err);
-    }
-
     let now = ic_cdk::api::time();
-    validate_created_at_time(&created_at_time, now)?;
-
-    if let Some(spender) = spender {
-        if spender != *from {
-            let current_allowance = storage::allowance(from, &spender, now).0;
-            if current_allowance < amount.saturating_add(config::FEE) {
-                return Err(TransferFromError::InsufficientAllowance {
-                    allowance: Nat::from(current_allowance),
-                });
-            }
-        }
-    }
-
-    let tx_hash = Transaction {
-        operation: Operation::Transfer {
-            from: *from,
-            to: *to,
-            amount,
-            spender,
-            fee: suggested_fee,
-        },
-        memo: memo.clone(),
-        created_at_time,
-    }
-    .hash()
-    .unwrap();
-    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
-        return Err(TransferFromError::Duplicate {
-            duplicate_of: Nat::from(block_index),
-        });
-    }
-
-    prune(now);
-
-    let (txid, _hash) = storage::transfer(
+    let txid = storage::transfer(
         from,
         to,
         spender,
@@ -231,9 +185,11 @@ fn execute_transfer(
         now,
         created_at_time,
         suggested_fee,
-    );
+    )?;
 
-    Ok(Nat::from(txid))
+    prune(now);
+
+    Ok(txid)
 }
 
 #[update]
@@ -245,8 +201,8 @@ fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     };
 
     execute_transfer(
-        &from,
-        &args.to,
+        from,
+        args.to,
         None,
         args.amount,
         args.fee,
@@ -264,8 +220,8 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
         subaccount: args.spender_subaccount,
     };
     execute_transfer(
-        &args.from,
-        &args.to,
+        args.from,
+        args.to,
         Some(spender),
         args.amount,
         args.fee,
