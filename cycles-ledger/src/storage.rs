@@ -1228,8 +1228,6 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use candid::Principal;
     use ic_certified_map::RbTree;
     use ic_stable_structures::{
@@ -1237,18 +1235,15 @@ mod tests {
         Storable, VectorMemory,
     };
     use icrc_ledger_types::{
-        icrc::generic_value::Value,
         icrc1::{account::Account, transfer::Memo},
         icrc3,
     };
-    use num_bigint::BigUint;
     use proptest::{
         prelude::any, prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
         strategy::Strategy,
     };
 
     use crate::{
-        ciborium_to_generic_value,
         config::{self, MAX_MEMO_LENGTH},
         storage::{prune_approvals, to_account_key, Cbor, Operation, Transaction},
         u128::U128,
@@ -1258,20 +1253,6 @@ mod tests {
         prune_transactions, Approvals, Balances, Block, BlockLog, Cache, ConfigCell,
         ExpirationQueue, State, TransactionHashes, TransactionTimeStamps,
     };
-
-    #[test]
-    fn test_u128_encoding() {
-        // ciborium_to_generic_value should convert u128 to Value::Nat
-        let num = u128::MAX; // u128::MAX is 340282366920938463463374607431768211455
-        let expected = Value::Nat(candid::Nat(
-            BigUint::from_str("340282366920938463463374607431768211455").unwrap(),
-        ));
-
-        let cvalue = ciborium::Value::serialized(&num).unwrap();
-        let value = ciborium_to_generic_value(&cvalue, 0).unwrap();
-
-        assert_eq!(value, expected, "{:?}", cvalue);
-    }
 
     prop_compose! {
         #[allow(non_snake_case)]

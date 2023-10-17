@@ -167,12 +167,6 @@ impl Serialize for U128 {
     where
         S: Serializer,
     {
-        // println!("{} {:?} {:?} {:?}",
-        //     self,
-        //     self.try_as_u64(),
-        //     TaggedRepr::from(*self),
-        //     Value::serialized(&TaggedRepr::from(*self)),
-        // );
         match self.try_as_u64() {
             Some(n) => serializer.serialize_u64(n),
             None => TaggedRepr::from(*self).serialize(serializer),
