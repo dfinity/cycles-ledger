@@ -592,7 +592,7 @@ pub fn transfer(
 
     // TODO: FI-992 prevent transfer from/to management canister and anonymous
 
-    // check that the from account has enough funds
+    // Check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
         |balance| TransferFromError::InsufficientFunds {
             balance: balance.into(),
