@@ -944,6 +944,10 @@ fn test_pruning_transactions() {
         owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
+    let user2 = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
     let transfer_amount = Nat::from(100_000);
 
     let check_tx_hashes = |length: u64, first_block: u64, last_block: u64| {
@@ -986,7 +990,7 @@ fn test_pruning_transactions() {
         user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -1011,7 +1015,7 @@ fn test_pruning_transactions() {
         user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: Some(time),
             memo: None,
@@ -1034,7 +1038,7 @@ fn test_pruning_transactions() {
         user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: Some(time),
             memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
@@ -1067,7 +1071,7 @@ fn test_pruning_transactions() {
         user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: Some(time),
             memo: None,
