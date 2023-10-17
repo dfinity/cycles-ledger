@@ -741,7 +741,13 @@ pub fn transfer(
         memo,
     };
 
-    let block_index = process_transaction(transaction.clone(), now)?;
+    let block_index = match process_transaction(transaction.clone(), now) {
+        Ok(block_index) => block_index,
+        // The ICRC-1 and ICP Ledgers panic when the memo validation fails
+        // so we do the same here.
+        Err(ProcessTransactionError::InvalidMemo(err)) => ic_cdk::trap(&format!("{}", err)),
+        Err(err) => return Err(err.into()),
+    };
 
     // The operations below should not return an error because of the checks
     // before and inside `process_transaction`.
