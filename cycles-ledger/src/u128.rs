@@ -205,6 +205,9 @@ impl<'de> Deserialize<'de> for U128 {
                 Ok(U128::from(value))
             }
 
+            // Both [visit_enum] and [visit_u128] are needed because depending
+            // on the context Ciborium will decode an integer from the bytes
+            // automatically.
             fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
