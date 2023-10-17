@@ -16,6 +16,7 @@ pub mod endpoints;
 pub mod logs;
 pub mod memo;
 pub mod storage;
+pub mod u128;
 
 /// The maximum allowed value nesting within a CBOR value.
 const VALUE_DEPTH_LIMIT: usize = 64;
@@ -113,8 +114,10 @@ pub fn generic_to_ciborium_value(value: &Value, depth: usize) -> anyhow::Result<
             values
                 .iter()
                 .enumerate()
-                .map(|(i, v)| generic_to_ciborium_value(v, depth + 1)
-                    .with_context(|| format!("Unable to convert element {}", i)))
+                .map(|(i, v)| {
+                    generic_to_ciborium_value(v, depth + 1)
+                        .with_context(|| format!("Unable to convert element {}", i))
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         Value::Map(map) => Ok(CiboriumValue::Map(

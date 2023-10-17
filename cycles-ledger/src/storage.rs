@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::endpoints::{DataCertificate, DepositResult, SendError};
 use crate::logs::{P0, P1};
 use crate::memo::validate_memo;
+use crate::u128::U128;
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -73,15 +74,11 @@ pub struct Cache {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(try_from = "FlattenedTransaction")]
+#[serde(into = "FlattenedTransaction")]
 pub struct Transaction {
-    #[serde(flatten)]
     pub operation: Operation,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "ts")]
     pub created_at_time: Option<u64>,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<Memo>,
 }
 
@@ -108,7 +105,7 @@ pub enum Operation {
         #[serde(with = "compact_account")]
         to: Account,
         #[serde(rename = "amt")]
-        amount: u128,
+        amount: U128,
     },
     #[serde(rename = "xfer")]
     Transfer {
@@ -123,16 +120,16 @@ pub enum Operation {
         )]
         spender: Option<Account>,
         #[serde(rename = "amt")]
-        amount: u128,
+        amount: U128,
         #[serde(skip_serializing_if = "Option::is_none")]
-        fee: Option<u128>,
+        fee: Option<U128>,
     },
     #[serde(rename = "burn")]
     Burn {
         #[serde(with = "compact_account")]
         from: Account,
         #[serde(rename = "amt")]
-        amount: u128,
+        amount: U128,
     },
     #[serde(rename = "approve")]
     Approve {
@@ -141,14 +138,148 @@ pub enum Operation {
         #[serde(with = "compact_account")]
         spender: Account,
         #[serde(rename = "amt")]
-        amount: u128,
+        amount: U128,
         #[serde(skip_serializing_if = "Option::is_none")]
-        expected_allowance: Option<u128>,
+        expected_allowance: Option<U128>,
         #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        fee: Option<u128>,
+        fee: Option<U128>,
     },
+}
+
+// A [Transaction] but flattened meaning that [Operation]
+// fields are mixed with [Transaction] fields.
+// workaround to https://github.com/serde-rs/json/issues/625
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct FlattenedTransaction {
+    // [Transaction] fields.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "ts")]
+    pub created_at_time: Option<u64>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo: Option<Memo>,
+
+    // [Operation] fields.
+    pub op: String,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(with = "compact_account::opt")]
+    from: Option<Account>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(with = "compact_account::opt")]
+    to: Option<Account>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(with = "compact_account::opt")]
+    spender: Option<Account>,
+    #[serde(rename = "amt")]
+    amount: U128,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fee: Option<U128>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_allowance: Option<U128>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<u64>,
+}
+
+impl TryFrom<FlattenedTransaction> for Transaction {
+    type Error = String;
+
+    fn try_from(value: FlattenedTransaction) -> Result<Self, Self::Error> {
+        let operation = match value.op.as_str() {
+            "burn" => Operation::Burn {
+                from: value.from.ok_or("from field required for burn operation")?,
+                amount: value.amount,
+            },
+            "mint" => Operation::Mint {
+                to: value.to.ok_or("to field required for to operation")?,
+                amount: value.amount,
+            },
+            "xfer" => Operation::Transfer {
+                from: value.from.ok_or("from field required for xfer operation")?,
+                spender: value.spender,
+                to: value.to.ok_or("to field required for xfer operation")?,
+                amount: value.amount,
+                fee: value.fee,
+            },
+            "approve" => Operation::Approve {
+                from: value
+                    .from
+                    .ok_or("from field required for approve operation")?,
+                spender: value
+                    .spender
+                    .ok_or("spender field required for approve operation")?,
+                amount: value.amount,
+                expected_allowance: value.expected_allowance,
+                expires_at: value.expires_at,
+                fee: value.fee,
+            },
+            unknown_op => return Err(format!("Unknown op name {}", unknown_op)),
+        };
+        Ok(Transaction {
+            operation,
+            created_at_time: value.created_at_time,
+            memo: value.memo,
+        })
+    }
+}
+
+impl From<Transaction> for FlattenedTransaction {
+    fn from(t: Transaction) -> Self {
+        use Operation::*;
+
+        FlattenedTransaction {
+            created_at_time: t.created_at_time,
+            memo: t.memo,
+            op: match &t.operation {
+                Burn { .. } => "burn",
+                Mint { .. } => "mint",
+                Transfer { .. } => "xfer",
+                Approve { .. } => "approve",
+            }
+            .into(),
+            from: match &t.operation {
+                Transfer { from, .. } | Burn { from, .. } | Approve { from, .. } => Some(*from),
+                _ => None,
+            },
+            to: match &t.operation {
+                Mint { to, .. } | Transfer { to, .. } => Some(*to),
+                _ => None,
+            },
+            spender: match &t.operation {
+                Transfer { spender, .. } => spender.to_owned(),
+                Approve { spender, .. } => Some(*spender),
+                _ => None,
+            },
+            amount: match &t.operation {
+                Burn { amount, .. }
+                | Mint { amount, .. }
+                | Transfer { amount, .. }
+                | Approve { amount, .. } => *amount,
+            },
+            fee: match &t.operation {
+                Transfer { fee, .. } | Approve { fee, .. } => fee.to_owned(),
+                _ => None,
+            },
+            expected_allowance: match &t.operation {
+                Approve {
+                    expected_allowance, ..
+                } => expected_allowance.to_owned(),
+                _ => None,
+            },
+            expires_at: match &t.operation {
+                Approve { expires_at, .. } => expires_at.to_owned(),
+                _ => None,
+            },
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -161,7 +292,7 @@ pub struct Block {
     pub phash: Option<[u8; 32]>,
     #[serde(rename = "fee")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effective_fee: Option<u128>,
+    pub effective_fee: Option<U128>,
 }
 
 impl Block {
@@ -484,14 +615,14 @@ pub fn record_deposit(
             transaction: Transaction {
                 operation: Operation::Mint {
                     to: *account,
-                    amount,
+                    amount: U128::new(amount),
                 },
                 memo,
                 created_at_time: None,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(0),
+            effective_fee: Some(U128::ZERO),
         });
         Ok((s.blocks.len() - 1, new_balance, block_hash))
     })
@@ -536,7 +667,10 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
 
     let block_index = process_transaction(
         Transaction {
-            operation: Operation::Mint { to, amount },
+            operation: Operation::Mint {
+                to,
+                amount: U128::new(amount),
+            },
             created_at_time: None,
             memo,
         },
@@ -637,7 +771,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
         transaction,
         timestamp: now,
         phash: read_state(|state| state.last_block_hash()),
-        effective_fee: Some(0),
+        effective_fee: Some(U128::ZERO),
     };
 
     // sanity check that block can be hashed
@@ -732,15 +866,15 @@ pub fn transfer(
                     from: *from,
                     to: *to,
                     spender,
-                    amount,
-                    fee: suggested_fee,
+                    amount: U128::new(amount),
+                    fee: suggested_fee.map(U128::new),
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: suggested_fee.is_none().then_some(config::FEE),
+            effective_fee: suggested_fee.is_none().then_some(U128::new(config::FEE)),
         }
     });
 
@@ -805,14 +939,14 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount: crate::config::FEE,
+                    amount: U128::new(crate::config::FEE),
                 },
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 created_at_time: None,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(0),
+            effective_fee: Some(U128::ZERO),
         });
         Some((BlockIndex::from(s.blocks.len() - 1), block_hash))
     })
@@ -836,14 +970,14 @@ pub fn send(
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
-                    amount,
+                    amount: U128::new(amount),
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: Some(crate::config::FEE),
+            effective_fee: Some(U128::new(crate::config::FEE)),
         });
         (BlockIndex::from(s.blocks.len() - 1), block_hash)
     })
@@ -885,17 +1019,17 @@ pub fn approve(
                 operation: Operation::Approve {
                     from: *from,
                     spender: *spender,
-                    amount,
-                    expected_allowance,
+                    amount: U128::new(amount),
+                    expected_allowance: expected_allowance.map(U128::new),
                     expires_at,
-                    fee: suggested_fee,
+                    fee: suggested_fee.map(U128::new),
                 },
                 memo,
                 created_at_time,
             },
             timestamp: now,
             phash,
-            effective_fee: suggested_fee.is_none().then_some(config::FEE),
+            effective_fee: suggested_fee.is_none().then_some(U128::new(config::FEE)),
         });
         s.blocks.len() - 1
     })
@@ -1124,7 +1258,7 @@ mod tests {
     use ic_certified_map::RbTree;
     use ic_stable_structures::{
         memory_manager::{MemoryId, MemoryManager},
-        VectorMemory, Storable,
+        Storable, VectorMemory,
     };
     use icrc_ledger_types::{
         icrc::generic_value::Value,
@@ -1140,7 +1274,8 @@ mod tests {
     use crate::{
         ciborium_to_generic_value,
         config::{self, MAX_MEMO_LENGTH},
-        storage::{prune_approvals, to_account_key, Operation, Transaction, Cbor},
+        storage::{prune_approvals, to_account_key, Cbor, Operation, Transaction},
+        u128::U128,
     };
 
     use super::{
@@ -1160,6 +1295,15 @@ mod tests {
         let value = ciborium_to_generic_value(&cvalue, 0).unwrap();
 
         assert_eq!(value, expected, "{:?}", cvalue);
+    }
+
+    prop_compose! {
+        #[allow(non_snake_case)]
+        fn U128_strategy()
+                        (n in any::<u128>())
+                        -> U128 {
+            U128::new(n)
+        }
     }
 
     prop_compose! {
@@ -1183,10 +1327,10 @@ mod tests {
         fn approve_strategy()
                            (from in account_strategy(),
                             spender in account_strategy(),
-                            amount in any::<u128>(),
-                            expected_allowance in proptest::option::of(any::<u128>()),
+                            amount in U128_strategy(),
+                            expected_allowance in proptest::option::of(U128_strategy()),
                             expires_at in proptest::option::of(any::<u64>()),
-                            fee in proptest::option::of(any::<u128>()))
+                            fee in proptest::option::of(U128_strategy()))
                            -> Operation {
             Operation::Approve { from, spender, amount, expected_allowance, expires_at, fee }
         }
@@ -1195,7 +1339,7 @@ mod tests {
     prop_compose! {
         fn burn_strategy()
                         (from in account_strategy(),
-                         amount in any::<u128>())
+                         amount in U128_strategy())
                         -> Operation {
             Operation::Burn { from, amount }
         }
@@ -1204,7 +1348,7 @@ mod tests {
     prop_compose! {
         fn mint_strategy()
                         (to in account_strategy(),
-                         amount in any::<u128>())
+                         amount in U128_strategy())
                         -> Operation {
             Operation::Mint { to, amount }
         }
@@ -1215,8 +1359,8 @@ mod tests {
                             (from in account_strategy(),
                              to in account_strategy(),
                              spender in proptest::option::of(account_strategy()),
-                             amount in any::<u128>(),
-                             fee in proptest::option::of(any::<u128>()))
+                             amount in U128_strategy(),
+                             fee in proptest::option::of(U128_strategy()))
                             -> Operation {
             Operation::Transfer { from, to, spender, amount, fee }
         }
@@ -1254,13 +1398,13 @@ mod tests {
         fn block_strategy()
                          (transaction in transaction_strategy(),
                           timestamp in any::<u64>(),
-                          effective_fee in proptest::option::of(any::<u128>()))
+                          effective_fee in proptest::option::of(U128_strategy()))
                          -> Block {
             Block { transaction, timestamp, phash: None, effective_fee}
         }
     }
 
-    // Use proptest to genereate blocks and call 
+    // Use proptest to genereate blocks and call
     // cbor(block).to_bytes()/from_bytes(), to_value and
     // hash on them.
     // The test succeeeds if hash never panics, which means
@@ -1271,6 +1415,10 @@ mod tests {
             // Increase the cases so that more blocks are tested.
             // 2048 cases take around 0.89s to run.
             cases: 2048,
+            // Fail as soon as one test fails, all blocks should
+            // pass the test
+            max_local_rejects: 1,
+            max_shrink_iters: 0,
             ..Default::default()
         };
         proptest!(test_conf, |(block in block_strategy())| {
@@ -1293,6 +1441,10 @@ mod tests {
             // Increase the cases so that more blocks are tested.
             // 2048 cases take around 0.89s to run.
             cases: 2048,
+            // Fail as soon as one test fails, all blocks should
+            // pass the test
+            max_local_rejects: 1,
+            max_shrink_iters: 0,
             ..Default::default()
         };
         proptest!(test_conf, |(block in block_strategy())| {

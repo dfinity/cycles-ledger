@@ -9,6 +9,7 @@ use cycles_ledger::storage::{
     log_error_and_trap, mutate_state, prune, read_state, validate_created_at_time, Operation,
     Transaction,
 };
+use cycles_ledger::u128::U128;
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
@@ -205,9 +206,9 @@ fn execute_transfer(
         operation: Operation::Transfer {
             from: *from,
             to: *to,
-            amount,
+            amount: U128::new(amount),
             spender,
-            fee: suggested_fee,
+            fee: suggested_fee.map(U128::new),
         },
         memo: memo.clone(),
         created_at_time,
@@ -324,7 +325,10 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     validate_created_at_time(&args.created_at_time, now)?;
 
     let tx_hash = Transaction {
-        operation: Operation::Burn { from, amount },
+        operation: Operation::Burn {
+            from,
+            amount: U128::new(amount),
+        },
         memo: memo.clone(),
         created_at_time: args.created_at_time,
     }
