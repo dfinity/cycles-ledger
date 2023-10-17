@@ -684,6 +684,12 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
 const BLACKLISTED_PRINCIPALS: [Principal; 2] =
     [Principal::anonymous(), Principal::management_canister()];
 
+fn is_blacklisted_account_owner(principal: &Principal) -> bool {
+    BLACKLISTED_PRINCIPALS
+        .iter()
+        .any(|blacklisted| blacklisted == principal)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn transfer(
     from: Account,
@@ -698,23 +704,14 @@ pub fn transfer(
     use TransferFromError::*;
 
     // check that none of the accounts is owned by a blacklisted principal
-    if BLACKLISTED_PRINCIPALS
-        .iter()
-        .any(|blacklisted| blacklisted == &from.owner)
-    {
+    if is_blacklisted_account_owner(&from.owner) {
         return Err(transfer_from::blacklisted_owner(from));
     }
-    if BLACKLISTED_PRINCIPALS
-        .iter()
-        .any(|blacklisted| blacklisted == &to.owner)
-    {
+    if is_blacklisted_account_owner(&to.owner) {
         return Err(transfer_from::blacklisted_owner(to));
     }
     if let Some(spender) = spender {
-        if BLACKLISTED_PRINCIPALS
-            .iter()
-            .any(|blacklisted| blacklisted == &spender.owner)
-        {
+        if is_blacklisted_account_owner(&spender.owner) {
             return Err(transfer_from::blacklisted_owner(spender));
         }
     }
