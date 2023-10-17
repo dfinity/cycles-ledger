@@ -578,7 +578,7 @@ pub fn transfer(
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
 
-    // if amount + fee overflows then the user doesn't have enough funds
+    // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
         return Err(InsufficientFunds { balance: balance_of(&from).into() });
     };
