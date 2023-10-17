@@ -681,13 +681,11 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
     Ok(block_index)
 }
 
-const BLACKLISTED_PRINCIPALS: [Principal; 2] =
+const DENIED_PRINCIPALS: [Principal; 2] =
     [Principal::anonymous(), Principal::management_canister()];
 
-fn is_blacklisted_account_owner(principal: &Principal) -> bool {
-    BLACKLISTED_PRINCIPALS
-        .iter()
-        .any(|blacklisted| blacklisted == principal)
+fn is_denied_account_owner(principal: &Principal) -> bool {
+    DENIED_PRINCIPALS.iter().any(|denied| denied == principal)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -703,16 +701,16 @@ pub fn transfer(
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
 
-    // check that none of the accounts is owned by a blacklisted principal
-    if is_blacklisted_account_owner(&from.owner) {
-        return Err(transfer_from::blacklisted_owner(from));
+    // check that no account is owned by a denied principal
+    if is_denied_account_owner(&from.owner) {
+        return Err(transfer_from::denied_owner(from));
     }
-    if is_blacklisted_account_owner(&to.owner) {
-        return Err(transfer_from::blacklisted_owner(to));
+    if is_denied_account_owner(&to.owner) {
+        return Err(transfer_from::denied_owner(to));
     }
     if let Some(spender) = spender {
-        if is_blacklisted_account_owner(&spender.owner) {
-            return Err(transfer_from::blacklisted_owner(spender));
+        if is_denied_account_owner(&spender.owner) {
+            return Err(transfer_from::denied_owner(spender));
         }
     }
 
@@ -860,7 +858,7 @@ mod transfer_from {
     use icrc_ledger_types::{icrc1::account::Account, icrc2::transfer_from::TransferFromError};
 
     const UNKNOWN_GENERIC_ERROR: u64 = 100000;
-    const BLACKLISTED_OWNER: u64 = 100001;
+    const DENIED_OWNER: u64 = 100001;
     const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
     const EXPIRED_APPROVAL: u64 = 100003;
 
@@ -868,13 +866,10 @@ mod transfer_from {
         unknown_generic_error(format!("{:#}", error))
     }
 
-    pub fn blacklisted_owner(account: Account) -> TransferFromError {
+    pub fn denied_owner(account: Account) -> TransferFromError {
         TransferFromError::GenericError {
-            error_code: Nat::from(BLACKLISTED_OWNER),
-            message: format!(
-                "Owner of the account {} is blacklisted and cannot make transactions",
-                account
-            ),
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!("Owner of the account {} cannot make transactions", account),
         }
     }
 
