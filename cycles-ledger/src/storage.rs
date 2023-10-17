@@ -170,27 +170,27 @@ impl TryFrom<FlattenedTransaction> for Transaction {
     fn try_from(value: FlattenedTransaction) -> Result<Self, Self::Error> {
         let operation = match value.op.as_str() {
             "burn" => Operation::Burn {
-                from: value.from.ok_or("from field required for burn operation")?,
+                from: value.from.ok_or("`from` field required for `burn` operation")?,
                 amount: value.amount,
             },
             "mint" => Operation::Mint {
-                to: value.to.ok_or("to field required for mint operation")?,
+                to: value.to.ok_or("`to` field required for `mint` operation")?,
                 amount: value.amount,
             },
             "xfer" => Operation::Transfer {
-                from: value.from.ok_or("from field required for xfer operation")?,
+                from: value.from.ok_or("`from` field required for `xfer` operation")?,
                 spender: value.spender,
-                to: value.to.ok_or("to field required for xfer operation")?,
+                to: value.to.ok_or("`to` field required for `xfer` operation")?,
                 amount: value.amount,
                 fee: value.fee,
             },
             "approve" => Operation::Approve {
                 from: value
                     .from
-                    .ok_or("from field required for approve operation")?,
+                    .ok_or("`from` field required for `approve` operation")?,
                 spender: value
                     .spender
-                    .ok_or("spender field required for approve operation")?,
+                    .ok_or("`spender` field required for `approve` operation")?,
                 amount: value.amount,
                 expected_allowance: value.expected_allowance,
                 expires_at: value.expires_at,
