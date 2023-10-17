@@ -97,53 +97,29 @@ impl Transaction {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(tag = "op")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
-    #[serde(rename = "mint")]
     Mint {
-        #[serde(with = "compact_account")]
         to: Account,
-        #[serde(rename = "amt")]
         amount: U128,
     },
-    #[serde(rename = "xfer")]
     Transfer {
-        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(with = "compact_account")]
         to: Account,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "compact_account::opt"
-        )]
         spender: Option<Account>,
-        #[serde(rename = "amt")]
         amount: U128,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fee: Option<U128>,
     },
-    #[serde(rename = "burn")]
     Burn {
-        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(rename = "amt")]
         amount: U128,
     },
-    #[serde(rename = "approve")]
     Approve {
-        #[serde(with = "compact_account")]
         from: Account,
-        #[serde(with = "compact_account")]
         spender: Account,
-        #[serde(rename = "amt")]
         amount: U128,
-        #[serde(skip_serializing_if = "Option::is_none")]
         expected_allowance: Option<U128>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         expires_at: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fee: Option<U128>,
     },
 }
