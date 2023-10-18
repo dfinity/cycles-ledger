@@ -751,7 +751,7 @@ fn test_basic_transfer() {
         .unwrap_err()
     );
 
-    // Should not be able to use a denied principal as from owner
+    // Should not be able to transfer from a denied principal
     for owner in [Principal::anonymous(), Principal::management_canister()] {
         transfer(
             env,
