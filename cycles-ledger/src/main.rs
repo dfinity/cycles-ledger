@@ -4,9 +4,8 @@ use cycles_ledger::endpoints::{
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
-use cycles_ledger::memo::validate_memo;
 use cycles_ledger::storage::{
-    balance_of, mutate_state, prune, read_state, validate_created_at_time,
+    balance_of, mutate_state, prune, read_state,
 };
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
@@ -21,8 +20,6 @@ use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 use num_traits::ToPrimitive;
-
-const REMOTE_FUTURE: u64 = u64::MAX;
 
 #[init]
 #[candid_method(init)]
@@ -169,7 +166,7 @@ fn execute_transfer(
     };
 
     let now = ic_cdk::api::time();
-    let txid = storage::transfer(
+    let block_index = storage::transfer(
         from,
         to,
         spender,
@@ -182,7 +179,7 @@ fn execute_transfer(
 
     prune(now);
 
-    Ok(txid)
+    Ok(block_index)
 }
 
 #[update]
@@ -271,70 +268,51 @@ fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
 #[update]
 #[candid_method]
 fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
-    let from_account = Account {
+    let from = Account {
         owner: ic_cdk::api::caller(),
         subaccount: args.from_subaccount,
     };
-    if from_account.owner == args.spender.owner {
-        ic_cdk::trap("self approval is not allowed")
-    }
-    if let Err(err) = validate_memo(&args.memo) {
-        ic_cdk::trap(&err);
-    }
 
     let now = ic_cdk::api::time();
-    validate_created_at_time(&args.created_at_time, now)?;
 
-    let amount = args.amount.0.to_u128().unwrap_or(u128::MAX);
-    let current_allowance = storage::allowance(&from_account, &args.spender, now).0;
     let expected_allowance = match args.expected_allowance {
         Some(n) => match n.0.to_u128() {
-            Some(n) if n == current_allowance => Some(n),
-            _ => {
+            None => {
                 return Err(ApproveError::AllowanceChanged {
-                    current_allowance: Nat::from(current_allowance),
-                });
+                    current_allowance: Nat::from(storage::allowance(&from, &args.spender, now).0),
+                })
             }
+            Some(n) => Some(n),
         },
         None => None,
     };
     let suggested_fee = match args.fee {
         Some(fee) => match fee.0.to_u128() {
-            Some(fee) if fee == config::FEE => Some(fee),
-            _ => {
+            None => {
                 return Err(ApproveError::BadFee {
                     expected_fee: Nat::from(config::FEE),
-                });
+                })
             }
+            Some(fee) => Some(fee),
         },
         None => None,
     };
 
-    let balance = storage::balance_of(&from_account);
-    if balance < config::FEE {
-        return Err(ApproveError::InsufficientFunds {
-            balance: Nat::from(balance),
-        });
-    }
-
-    if args.expires_at.unwrap_or(REMOTE_FUTURE) <= now {
-        return Err(ApproveError::Expired { ledger_time: now });
-    }
+    let block_index = storage::approve(
+        from,
+        args.spender,
+        args.amount.0.to_u128().unwrap_or(u128::MAX),
+        args.memo,
+        now,
+        args.created_at_time,
+        suggested_fee,
+        expected_allowance,
+        args.expires_at,
+    )?;
 
     prune(now);
 
-    let txid = storage::approve(
-        (&from_account, &args.spender),
-        amount,
-        args.expires_at,
-        now,
-        expected_allowance,
-        args.memo,
-        args.created_at_time,
-        suggested_fee,
-    );
-
-    Ok(Nat::from(txid))
+    Ok(block_index)
 }
 
 #[query]
