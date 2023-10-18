@@ -688,7 +688,7 @@ fn test_basic_transfer() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -716,7 +716,7 @@ fn test_basic_transfer() {
         transfer(
             env,
             ledger_id,
-            user2,
+            user2.owner,
             TransferArgs {
                 from_subaccount: None,
                 to: user2,
@@ -738,7 +738,7 @@ fn test_basic_transfer() {
         transfer(
             env,
             ledger_id,
-            user1,
+            user1.owner,
             TransferArgs {
                 from_subaccount: None,
                 to: user1,
@@ -750,6 +750,41 @@ fn test_basic_transfer() {
         )
         .unwrap_err()
     );
+
+    // Should not be able to transfer from a denied principal
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
+        transfer(
+            env,
+            ledger_id,
+            owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: user1,
+                fee: None,
+                created_at_time: None,
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err();
+
+        transfer(
+            env,
+            ledger_id,
+            user1.owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: Account::from(owner),
+                fee: None,
+                created_at_time: None,
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err();
+
+        transfer_from(env, ledger_id, user1, user2, Account::from(owner), 0).unwrap_err();
+    }
 }
 
 #[test]
@@ -773,7 +808,7 @@ fn test_deduplication() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -788,7 +823,7 @@ fn test_deduplication() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -811,7 +846,7 @@ fn test_deduplication() {
         transfer(
             env,
             ledger_id,
-            user1,
+            user1.owner,
             TransferArgs {
                 from_subaccount: None,
                 to: user1,
@@ -828,7 +863,7 @@ fn test_deduplication() {
     let tx: Nat = transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -846,7 +881,7 @@ fn test_deduplication() {
         transfer(
             env,
             ledger_id,
-            user1,
+            user1.owner,
             TransferArgs {
                 from_subaccount: None,
                 to: user2,
@@ -863,7 +898,7 @@ fn test_deduplication() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -887,7 +922,7 @@ fn test_deduplication() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -907,6 +942,10 @@ fn test_pruning_transactions() {
     let depositor_id = install_depositor(env, ledger_id);
     let user1 = Account {
         owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2 = Account {
+        owner: Principal::from_slice(&[2]),
         subaccount: None,
     };
     let transfer_amount = Nat::from(100_000);
@@ -948,10 +987,10 @@ fn test_pruning_transactions() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: None,
             memo: None,
@@ -973,10 +1012,10 @@ fn test_pruning_transactions() {
     let transfer_idx_2 = transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: Some(time),
             memo: None,
@@ -996,10 +1035,10 @@ fn test_pruning_transactions() {
     let transfer_idx_3 = transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: Some(time),
             memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
@@ -1029,10 +1068,10 @@ fn test_pruning_transactions() {
     let transfer_idx_4 = transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
-            to: Principal::anonymous().into(),
+            to: user2,
             fee: None,
             created_at_time: Some(time),
             memo: None,
@@ -1062,7 +1101,7 @@ fn test_total_supply_after_upgrade() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,
@@ -1283,7 +1322,7 @@ fn test_icrc3_get_transactions() {
     transfer(
         env,
         ledger_id,
-        user1,
+        user1.owner,
         TransferArgs {
             from_subaccount: None,
             to: user2,

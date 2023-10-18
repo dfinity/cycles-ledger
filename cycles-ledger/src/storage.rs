@@ -684,6 +684,13 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
     Ok(block_index)
 }
 
+const DENIED_PRINCIPALS: [Principal; 2] =
+    [Principal::anonymous(), Principal::management_canister()];
+
+fn is_denied_account_owner(principal: &Principal) -> bool {
+    DENIED_PRINCIPALS.iter().any(|denied| denied == principal)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn transfer(
     from: Account,
@@ -697,6 +704,19 @@ pub fn transfer(
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
 
+    // check that no account is owned by a denied principal
+    if is_denied_account_owner(&from.owner) {
+        return Err(transfer_from::denied_owner(from));
+    }
+    if is_denied_account_owner(&to.owner) {
+        return Err(transfer_from::denied_owner(to));
+    }
+    if let Some(spender) = spender {
+        if is_denied_account_owner(&spender.owner) {
+            return Err(transfer_from::denied_owner(spender));
+        }
+    }
+
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
         return Err(InsufficientFunds { balance: balance_of(&from).into() });
@@ -708,8 +728,6 @@ pub fn transfer(
             read_state(|state| check_allowance(state, &from, &spender, amount, now))?;
         }
     }
-
-    // TODO: FI-992 prevent transfer from/to management canister and anonymous
 
     // Check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
@@ -840,14 +858,22 @@ impl From<anyhow::Error> for ProcessTransactionError {
 
 mod transfer_from {
     use candid::Nat;
-    use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
+    use icrc_ledger_types::{icrc1::account::Account, icrc2::transfer_from::TransferFromError};
 
     pub const UNKNOWN_GENERIC_ERROR: u64 = 100000;
+    const DENIED_OWNER: u64 = 100001;
     const CANNOT_TRANSFER_FROM_ZERO: u64 = 100002;
     const EXPIRED_APPROVAL: u64 = 100003;
 
     pub fn anyhow_error(error: anyhow::Error) -> TransferFromError {
         unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn denied_owner(account: Account) -> TransferFromError {
+        TransferFromError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!("Owner of the account {} cannot make transactions", account),
+        }
     }
 
     pub fn unknown_generic_error(message: String) -> TransferFromError {
