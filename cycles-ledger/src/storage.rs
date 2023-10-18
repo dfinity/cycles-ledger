@@ -1,7 +1,7 @@
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{DataCertificate, DepositResult, SendError};
 use crate::logs::{P0, P1};
-use crate::memo::validate_memo;
+use crate::memo::{encode_send_memo, validate_memo};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -13,6 +13,8 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Error};
 use candid::{Nat, Principal};
 use ic_canister_log::log;
+use ic_cdk::api::management_canister::main::deposit_cycles;
+use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
@@ -31,6 +33,7 @@ use icrc_ledger_types::{
     },
 };
 use num_traits::ToPrimitive;
+use scopeguard::ScopeGuard;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -980,6 +983,25 @@ mod approve {
     }
 }
 
+mod send {
+    use candid::Nat;
+
+    use crate::endpoints::SendError;
+
+    use super::transfer_from::UNKNOWN_GENERIC_ERROR;
+
+    pub fn anyhow_error(error: anyhow::Error) -> SendError {
+        unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn unknown_generic_error(message: String) -> SendError {
+        SendError::GenericError {
+            error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
+            message,
+        }
+    }
+}
+
 impl From<ProcessTransactionError> for TransferFromError {
     fn from(error: ProcessTransactionError) -> Self {
         use ProcessTransactionError::*;
@@ -1010,6 +1032,23 @@ impl From<ProcessTransactionError> for ApproveError {
             },
             InvalidCreatedAtTime(err) => err.into(),
             GenericError(err) => approve::unknown_generic_error(format!("{:#}", err)),
+        }
+    }
+}
+
+impl From<ProcessTransactionError> for SendError {
+    fn from(error: ProcessTransactionError) -> Self {
+        use ProcessTransactionError::*;
+
+        match error {
+            BadFee { expected_fee } => Self::BadFee {
+                expected_fee: Nat::from(expected_fee),
+            },
+            Duplicate { duplicate_of } => Self::Duplicate {
+                duplicate_of: Nat::from(duplicate_of),
+            },
+            InvalidCreatedAtTime(err) => err.into(),
+            GenericError(err) => send::unknown_generic_error(format!("{:#}", err)),
         }
     }
 }
@@ -1066,6 +1105,14 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
 }
 
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
+    process_block(transaction, now, None)
+}
+
+fn process_block(
+    transaction: Transaction,
+    now: u64,
+    effective_fee: Option<u128>,
+) -> Result<u64, ProcessTransactionError> {
     use ProcessTransactionError as PTErr;
 
     // The ICRC-1 and ICP Ledgers trap when the memo validation fails
@@ -1077,6 +1124,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
     validate_created_at_time(&transaction.created_at_time, now)?;
 
     let effective_fee = validate_suggested_fee(&transaction.operation)
+        .map(|fee| effective_fee.or(fee))
         .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
 
     // sanity check that the transaction can be hashed
@@ -1228,35 +1276,127 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     })
 }
 
-pub fn send(
-    from: &Account,
+// candid::Principal has these two constants as private
+const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
+const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
+
+fn is_self_authenticating(principal: &Principal) -> bool {
+    principal
+        .as_slice()
+        .get(CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES - 1)
+        .is_some_and(|b| *b == CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG)
+}
+
+pub async fn send(
+    from: Account,
+    to: Principal,
     amount: u128,
-    memo: Option<Memo>,
     now: u64,
     created_at_time: Option<u64>,
-) -> (BlockIndex, Hash) {
-    mutate_state(|s| {
-        let total_balance_deduction = amount.saturating_add(crate::config::FEE);
+) -> Result<Nat, SendError> {
+    use SendError::*;
 
-        if let Err(err) = s.debit(from, total_balance_deduction) {
-            log_error_and_trap(&err.context("Unable to perform send"))
+    if is_self_authenticating(&to) {
+        // if it is not an opaque principal ID, the user is trying to send to a non-canister target
+        return Err(InvalidReceiver { receiver: to });
+    }
+
+    // if `amount` + `fee` overflows then the user doesn't have enough funds
+    let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
+        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+    };
+
+    // check that the `from` account has enough funds
+    read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
+        |balance| InsufficientFunds {
+            balance: balance.into(),
+        },
+    )?;
+
+    // sanity check that the total_supply won't underflow
+    read_state(|state| state.check_total_supply_decrease(amount_with_fee))
+        .with_context(|| format!("Unable to send {} cycles from {} to {}", amount, from, to))
+        .map_err(send::anyhow_error)?;
+
+    // The send process involves 3 steps:
+    // 1. burn cycles + fee
+    // 2. call deposit_cycles on the management canister
+    // 3. if 2. fails then mint cycles
+
+    // 1. burn cycles + fee
+
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(encode_send_memo(&to)),
+    };
+
+    let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
+
+    if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
+        log_error_and_trap(&err.context(format!("Unable to perform send: {:?}", transaction)))
+    };
+
+    prune(now);
+
+    // set a guard in case deposit_cycles panics
+
+    // Callback for the guard and in case of [deposit_cycles] error.
+    // This panics if a mint block has been recorded but the credit
+    // function didn't go through.
+    let reimburse = || -> Result<u64, ProcessTransactionError> {
+        let transaction = Transaction {
+            operation: Operation::Mint { to: from, amount },
+            created_at_time: None,
+            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
+        };
+
+        let block_index = process_transaction(transaction.clone(), now)?;
+
+        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
+            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
+        };
+
+        prune(now);
+
+        Ok(block_index)
+    };
+
+    // 2. call deposit_cycles on the management canister
+
+    // add a guard to reimburse if [deposit_cycles]
+    // panics.
+    let guard = scopeguard::guard_on_unwind((), |()| {
+        let _ = reimburse();
+    });
+
+    let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
+
+    // 3. if 2. fails but doesn't panic then mint cycles
+
+    // defuse the guard because 2. didn't panic
+    // to avoid reimbursing twice.
+    ScopeGuard::into_inner(guard);
+
+    if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
+        match reimburse() {
+            Ok(fee_block) => {
+                prune(now);
+                return Err(FailedToSend {
+                    fee_block: Some(Nat::from(fee_block)),
+                    rejection_code,
+                    rejection_reason,
+                });
+            }
+            Err(err) => {
+                // this is a critical error that should not
+                // happen because minting should never fail.
+                log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err))
+            }
         }
-        let phash = s.last_block_hash();
-        let block_hash = s.emit_block(Block {
-            transaction: Transaction {
-                operation: Operation::Burn {
-                    from: *from,
-                    amount,
-                },
-                memo,
-                created_at_time,
-            },
-            timestamp: now,
-            phash,
-            effective_fee: Some(crate::config::FEE),
-        });
-        (BlockIndex::from(s.blocks.len() - 1), block_hash)
-    })
+    }
+
+    Ok(Nat::from(block_index))
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
