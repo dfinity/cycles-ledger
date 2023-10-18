@@ -4,17 +4,14 @@ use cycles_ledger::endpoints::{
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
-use cycles_ledger::memo::{encode_send_memo, validate_memo};
+use cycles_ledger::memo::validate_memo;
 use cycles_ledger::storage::{
-    log_error_and_trap, mutate_state, prune, read_state, validate_created_at_time, Operation,
-    Transaction,
+    balance_of, mutate_state, prune, read_state, validate_created_at_time,
 };
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
-use ic_cdk::api::management_canister;
-use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
 use ic_cdk_macros::{init, post_upgrade, query, update};
 use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
@@ -24,10 +21,6 @@ use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 use num_traits::ToPrimitive;
-
-// candid::Principal has these two consts as private
-pub const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
-pub const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
 
 const REMOTE_FUTURE: u64 = u64::MAX;
 
@@ -243,79 +236,21 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
-    if args
-        .to
-        .as_slice()
-        .get(CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES - 1)
-        .map(|b| *b == CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG)
-        .unwrap_or_default()
-    {
-        // if it is not an opaque principal ID, the user is trying to send to a non-canister target
-        return Err(SendError::InvalidReceiver { receiver: args.to });
-    }
-    let balance = storage::balance_of(&from);
-
-    let target_canister = CanisterIdRecord {
-        canister_id: args.to,
-    };
 
     let Some(amount) = args.amount.0.to_u128() else {
         return Err(SendError::InsufficientFunds {
-            balance: Nat::from(balance),
+            balance: Nat::from(balance_of(&from)),
         });
     };
 
-    let total_send_cost = amount.saturating_add(config::FEE);
-    if balance < total_send_cost {
-        return Err(SendError::InsufficientFunds {
-            balance: Nat::from(balance),
-        });
-    }
-    let memo = Some(encode_send_memo(&target_canister.canister_id));
-    if let Err(err) = validate_memo(&memo) {
-        ic_cdk::trap(&err);
-    }
-
-    let now = ic_cdk::api::time();
-    validate_created_at_time(&args.created_at_time, now)?;
-
-    let tx_hash = Transaction {
-        operation: Operation::Burn { from, amount },
-        memo: memo.clone(),
-        created_at_time: args.created_at_time,
-    }
-    .hash()
-    .unwrap();
-    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
-        return Err(SendError::Duplicate {
-            duplicate_of: Nat::from(block_index),
-        });
-    }
-
-    prune(now);
-
-    // While awaiting the deposit call the in-flight cycles shall not be available to the user
-    if let Err(err) = mutate_state(|s| s.debit(&from, total_send_cost)) {
-        log_error_and_trap(&err.context("Unable to debit before depositing cycles"));
-    }
-    let deposit_cycles_result =
-        management_canister::main::deposit_cycles(target_canister, amount).await;
-    // Revert deduction of in-flight cycles. 'Real' deduction happens in storage::send
-    if let Err(err) = mutate_state(|s| s.credit(&from, total_send_cost)) {
-        log_error_and_trap(&err.context("Unable to credit after depositing cycles"));
-    }
-
-    if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        let fee_block = storage::penalize(&from, now).map(|(fee_block, _block_hash)| fee_block);
-        Err(SendError::FailedToSend {
-            fee_block,
-            rejection_code,
-            rejection_reason,
-        })
-    } else {
-        let (send, _send_hash) = storage::send(&from, amount, memo, now, args.created_at_time);
-        Ok(send)
-    }
+    storage::send(
+        from,
+        args.to,
+        amount,
+        ic_cdk::api::time(),
+        args.created_at_time,
+    )
+    .await
 }
 
 #[query]
