@@ -134,11 +134,16 @@ type DataCertificate = record {
 
 type InitArgs = record {
   max_transactions_per_request : nat64;
+  index_id : opt principal;
+};
 
+type ChangeIndexId = variant {
+  Unset; SetTo: principal;
 };
 
 type UpgradeArgs = record {
   max_transactions_per_request : opt nat64;
+  index_id : opt principal;
 };
 
 type LedgerArgs = variant {
