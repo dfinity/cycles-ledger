@@ -1364,7 +1364,7 @@ pub async fn send(
 
     // 2. call deposit_cycles on the management canister
 
-    // add a guard to reimburse in case [deposit_cycles]
+    // add a guard to reimburse if [deposit_cycles]
     // panics.
     let guard = scopeguard::guard_on_unwind((), |()| {
         let _ = reimburse();
