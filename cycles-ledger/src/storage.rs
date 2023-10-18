@@ -1175,7 +1175,7 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
     })
 }
 
-// candid::Principal has these two consts as private
+// candid::Principal has these two constants as private
 const CANDID_PRINCIPAL_MAX_LENGTH_IN_BYTES: usize = 29;
 const CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG: u8 = 2;
 
