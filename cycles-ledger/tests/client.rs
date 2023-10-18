@@ -145,12 +145,12 @@ pub fn approve(
 pub fn transfer(
     env: &StateMachine,
     ledger_id: Principal,
-    from: Account,
+    from_owner: Principal,
     args: TransferArgs,
 ) -> Result<Nat, TransferError> {
     let arg = Encode!(&args).unwrap();
     if let WasmResult::Reply(res) = env
-        .update_call(ledger_id, from.owner, "icrc1_transfer", arg)
+        .update_call(ledger_id, from_owner, "icrc1_transfer", arg)
         .unwrap()
     {
         Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
