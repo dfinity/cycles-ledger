@@ -4,9 +4,7 @@ use cycles_ledger::endpoints::{
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
-use cycles_ledger::storage::{
-    balance_of, mutate_state, prune, read_state,
-};
+use cycles_ledger::storage::{balance_of, mutate_state, prune, read_state};
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
