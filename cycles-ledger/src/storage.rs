@@ -1471,11 +1471,11 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
         }
         let start = match start.0.to_u64() {
             Some(start) if start < log_length => start,
-            _ => continue, // TODO(FI-924): log this error
+            _ => continue,
         };
         let end_excluded = match length.0.to_u64() {
             Some(length) => log_length.min(start + remaining_length.min(length)),
-            None => continue, // TODO(FI-924): log this error
+            _ => continue,
         };
         read_state(|state| {
             for id in start..end_excluded {
