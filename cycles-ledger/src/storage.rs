@@ -1241,7 +1241,7 @@ pub async fn send(
     // set a guard in case deposit_cycles panics
 
     // Callback for the guard and in case of [deposit_cycles] error.
-    // This panics in case a mint block has been recorded but the credit
+    // This panics if a mint block has been recorded but the credit
     // function didn't go through.
     let reinburse = || -> Result<u64, ProcessTransactionError> {
         let transaction = Transaction {
