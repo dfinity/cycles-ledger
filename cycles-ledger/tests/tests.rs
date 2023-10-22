@@ -47,7 +47,8 @@ use crate::{
     client::{
         approve, balance_of, fee, get_allowance, get_tip_certificate, send, total_supply,
         transaction_timestamps,
-    }, gen::{CyclesLedgerApplyCall, CyclesLedgerInStateMachine},
+    },
+    gen::{CyclesLedgerApplyCall, CyclesLedgerInStateMachine},
 };
 
 mod client;
@@ -1612,14 +1613,18 @@ fn test_upgrade_preserves_state() {
     for (i, call) in calls.into_iter().enumerate() {
         println!(" #{} {}", i, call);
 
-        expected_state.apply(&call).expect("Unable to perform call on in-memory state");
-        state_machine_caller.apply(&call).expect("Unable to perform call on StateMachine");
+        expected_state
+            .apply(&call)
+            .expect("Unable to perform call on in-memory state");
+        state_machine_caller
+            .apply(&call)
+            .expect("Unable to perform call on StateMachine");
 
         // check that the state is consistent with `expected_state`
-        check_ledger_state(&env, ledger_id, &expected_state);
+        check_ledger_state(env, ledger_id, &expected_state);
     }
 
-    let expected_blocks = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
+    let expected_blocks = get_raw_transactions(env, ledger_id, vec![(0, u64::MAX)]);
 
     // upgrade the ledger
     let arg = Encode!(&None::<LedgerArgs>).unwrap();
@@ -1628,10 +1633,10 @@ fn test_upgrade_preserves_state() {
 
     // check that the state is still consistent with `expected_state`
     // after the upgrade
-    check_ledger_state(&env, ledger_id, &expected_state);
+    check_ledger_state(env, ledger_id, &expected_state);
 
     // check that the blocks are all there after the upgrade
-    let after_upgrade_blocks = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
+    let after_upgrade_blocks = get_raw_transactions(env, ledger_id, vec![(0, u64::MAX)]);
     assert_eq!(expected_blocks, after_upgrade_blocks);
 }
 

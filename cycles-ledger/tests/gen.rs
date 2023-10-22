@@ -200,7 +200,7 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
                     "icrc2_approve",
                     arg,
                 )?
-                .map_err(|e|
+                .map_err(|e| {
                     format!(
                         "call to approve(from:{}, spender:{}, amount:{}) failed: {:?}",
                         Account {
@@ -211,13 +211,17 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
                         arg.amount,
                         e,
                     )
-                )?;
+                })?;
             }
             Send(arg) => {
                 let _ = update_call::<_, Result<Nat, SendError>>(
-                    self.env, self.ledger_id, call.caller, "send", arg,
+                    self.env,
+                    self.ledger_id,
+                    call.caller,
+                    "send",
+                    arg,
                 )?
-                .map_err(|e|
+                .map_err(|e| {
                     format!(
                         "call to send(from:{}, to:{}, amount:{}) failed: {:?}",
                         Account {
@@ -228,7 +232,7 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
                         arg.amount,
                         e,
                     )
-                )?;
+                })?;
             }
             Transfer(arg) => {
                 let _ = update_call::<_, Result<Nat, TransferError>>(
@@ -238,7 +242,7 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
                     "icrc1_transfer",
                     arg,
                 )?
-                .map_err(|e|
+                .map_err(|e| {
                     format!(
                         "call to icrc1_transfer(from:{}, to:{}, amount:{}) failed: {}",
                         Account {
@@ -249,7 +253,7 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
                         arg.amount,
                         e,
                     )
-                )?;
+                })?;
             }
             TransferFrom(arg) => {
                 let _ = update_call::<_, Result<Nat, TransferError>>(
@@ -270,10 +274,7 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
                 )?;
             }
             Deposit { amount, arg } => {
-                let cycles = amount
-                    .0
-                    .to_u128()
-                    .unwrap();
+                let cycles = amount.0.to_u128().unwrap();
                 let arg = depositor::endpoints::DepositArg {
                     to: arg.to.to_owned(),
                     memo: arg.memo.to_owned(),
@@ -358,7 +359,7 @@ impl CyclesLedgerApplyCall for CyclesLedgerInMemory {
                     .depositor_cycles
                     .saturating_sub(10_000_000_000_000u128.saturating_add(amount));
 
-                let old_balance = self.balances.get(&to).copied().unwrap_or_default();
+                let old_balance = self.balances.get(to).copied().unwrap_or_default();
                 self.balances
                     .insert(*to, old_balance.checked_add(amount).ok_or("overflow")?);
                 self.total_supply = self
@@ -412,7 +413,7 @@ impl CyclesLedgerApplyCall for CyclesLedgerInMemory {
                     .and_then(|b| b.checked_sub(FEE))
                     .ok_or("balance underflow")?;
                 self.balances.insert(from, new_balance);
-                let old_balance = self.balances.get(&to).copied().unwrap_or_default();
+                let old_balance = self.balances.get(to).copied().unwrap_or_default();
                 self.balances.insert(
                     *to,
                     old_balance.checked_add(amount).ok_or("balance overflow")?,
@@ -478,7 +479,6 @@ impl CyclesLedgerCallsState {
             state: CyclesLedgerInMemory::new(depositor_cycles),
         }
     }
-
 
     // Return the number of tokens available for minting
     fn token_pool(&self) -> u128 {
