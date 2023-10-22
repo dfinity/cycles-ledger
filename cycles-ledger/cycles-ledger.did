@@ -87,7 +87,7 @@ type TransferFromArgs = record {
   amount : nat;
 };
 type TransferFromError = variant {
-  GenericError : record { message : text; error_code : na };
+  GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
   InsufficientAllowance : record { allowance : nat };
   BadBurn : record { min_burn_amount : nat };
