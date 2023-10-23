@@ -36,7 +36,7 @@ pub struct UpgradeArgs {
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum LedgerArgs {
     Init(Config),
-    Upgrade(UpgradeArgs),
+    Upgrade(Option<UpgradeArgs>),
 }
 
 pub type NumCycles = Nat;

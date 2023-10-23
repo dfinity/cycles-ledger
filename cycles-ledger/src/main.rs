@@ -39,7 +39,7 @@ fn init(ledger_args: LedgerArgs) {
 #[post_upgrade]
 fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     match ledger_args {
-        Some(LedgerArgs::Upgrade(upgrade_args)) => {
+        Some(LedgerArgs::Upgrade(Some(upgrade_args))) => {
             if let Some(max_transactions_per_request) = upgrade_args.max_transactions_per_request {
                 mutate_config(|config| {
                     config.max_transactions_per_request = max_transactions_per_request;
@@ -51,7 +51,7 @@ fn post_upgrade(ledger_args: Option<LedgerArgs>) {
                 })
             }
         }
-        None => {},
+        None | Some(LedgerArgs::Upgrade(None)) => {},
         _ =>
             ic_cdk::trap("Cannot upgrade the canister with an Init argument. Please provide an Upgrade argument."),
     }
@@ -435,20 +435,28 @@ fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
 
 #[test]
 fn test_candid_interface_compatibility() {
-    use candid::utils::{service_compatible, CandidSource};
+    use candid::utils::{service_equal, CandidSource};
     use std::path::PathBuf;
 
     candid::export_service!();
-    let new_interface = __export_service();
+    let exported_interface = __export_service();
 
-    let old_interface =
+    let expected_interface =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("cycles-ledger.did");
 
-    println!("Exported interface: {}", new_interface);
+    println!(
+        "Expected interface: {}\n\n",
+        CandidSource::File(expected_interface.as_path())
+            .load()
+            .unwrap()
+            .1
+            .unwrap()
+    );
+    println!("Exported interface: {}\n\n", exported_interface);
 
-    service_compatible(
-        CandidSource::Text(&new_interface),
-        CandidSource::File(old_interface.as_path()),
+    service_equal(
+        CandidSource::Text(&exported_interface),
+        CandidSource::File(expected_interface.as_path()),
     )
     .expect("The assets canister interface is not compatible with the cycles-ledger.did file");
 }
