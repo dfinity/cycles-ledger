@@ -810,6 +810,14 @@ pub fn approve(
         ic_cdk::trap("self approval is not allowed");
     }
 
+    // check that no account is owned by a denied principal
+    if is_denied_account_owner(&from.owner) {
+        return Err(approve::denied_owner(from));
+    }
+    if is_denied_account_owner(&spender.owner) {
+        return Err(approve::denied_owner(spender));
+    }
+
     // check that the `expected_allowance` matches the current one
     let allowance = allowance(&from, &spender, now).0;
     if expected_allowance.is_some() && expected_allowance != Some(allowance) {
@@ -941,7 +949,10 @@ mod transfer_from {
     pub fn denied_owner(account: Account) -> TransferFromError {
         TransferFromError::GenericError {
             error_code: Nat::from(DENIED_OWNER),
-            message: format!("Owner of the account {} cannot make transactions", account),
+            message: format!(
+                "Owner of the account {} cannot be part of transactions",
+                account
+            ),
         }
     }
 
@@ -969,10 +980,22 @@ mod transfer_from {
 
 mod approve {
     use candid::Nat;
-    use icrc_ledger_types::icrc2::approve::ApproveError;
+    use icrc_ledger_types::{icrc1::account::Account, icrc2::approve::ApproveError};
+
+    use super::transfer_from::DENIED_OWNER;
 
     pub fn anyhow_error(error: anyhow::Error) -> ApproveError {
         unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn denied_owner(account: Account) -> ApproveError {
+        ApproveError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of approvals",
+                account
+            ),
+        }
     }
 
     pub fn unknown_generic_error(message: String) -> ApproveError {
