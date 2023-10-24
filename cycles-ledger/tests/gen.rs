@@ -154,8 +154,8 @@ impl std::fmt::Display for CyclesLedgerCall {
     }
 }
 
-pub trait CyclesLedgerApplyCall {
-    fn apply(&mut self, call: &CyclesLedgerCall) -> Result<(), String>;
+pub trait IsCyclesLedger {
+    fn execute(&mut self, call: &CyclesLedgerCall) -> Result<(), String>;
 }
 
 fn update_call<I, O>(
@@ -187,8 +187,8 @@ pub struct CyclesLedgerInStateMachine<'a> {
     pub depositor_id: Principal,
 }
 
-impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
-    fn apply(&mut self, call: &CyclesLedgerCall) -> Result<(), String> {
+impl<'a> IsCyclesLedger for CyclesLedgerInStateMachine<'a> {
+    fn execute(&mut self, call: &CyclesLedgerCall) -> Result<(), String> {
         use CyclesLedgerCallArg::*;
 
         match &call.arg {
@@ -315,8 +315,8 @@ impl CyclesLedgerInMemory {
     }
 }
 
-impl CyclesLedgerApplyCall for CyclesLedgerInMemory {
-    fn apply(&mut self, arg: &CyclesLedgerCall) -> Result<(), String> {
+impl IsCyclesLedger for CyclesLedgerInMemory {
+    fn execute(&mut self, arg: &CyclesLedgerCall) -> Result<(), String> {
         match &arg.arg {
             CyclesLedgerCallArg::Approve(ApproveArgs {
                 from_subaccount,
@@ -432,7 +432,7 @@ impl CyclesLedgerApplyCall for CyclesLedgerInMemory {
                 memo,
                 created_at_time,
             }) => {
-                self.apply(&CyclesLedgerCall {
+                self.execute(&CyclesLedgerCall {
                     caller: from.owner,
                     arg: CyclesLedgerCallArg::Transfer(TransferArg {
                         from_subaccount: from.subaccount,
@@ -500,9 +500,9 @@ impl CyclesLedgerCallsState {
     }
 }
 
-impl CyclesLedgerApplyCall for CyclesLedgerCallsState {
-    fn apply(&mut self, arg: &CyclesLedgerCall) -> Result<(), String> {
-        self.state.apply(arg)?;
+impl IsCyclesLedger for CyclesLedgerCallsState {
+    fn execute(&mut self, arg: &CyclesLedgerCall) -> Result<(), String> {
+        self.state.execute(arg)?;
         self.calls.push(arg.clone());
         Ok(())
     }
@@ -742,7 +742,7 @@ pub fn arb_cycles_ledger_call_state_from(
         // as either the depositor has cycles or an account has funds.
         (Union::new(arb_calls), Just(state))
             .prop_flat_map(move |(call, mut state)| {
-                state.apply(&call).unwrap();
+                state.execute(&call).unwrap();
                 step(state, depositor, n - 1)
             })
             .boxed()

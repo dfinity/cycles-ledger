@@ -48,7 +48,7 @@ use crate::{
         approve, balance_of, fee, get_allowance, get_tip_certificate, send, total_supply,
         transaction_timestamps,
     },
-    gen::{CyclesLedgerApplyCall, CyclesLedgerInStateMachine},
+    gen::{CyclesLedgerInStateMachine, IsCyclesLedger},
 };
 
 mod client;
@@ -1614,10 +1614,10 @@ fn test_upgrade_preserves_state() {
         println!(" #{} {}", i, call);
 
         expected_state
-            .apply(&call)
+            .execute(&call)
             .expect("Unable to perform call on in-memory state");
         state_machine_caller
-            .apply(&call)
+            .execute(&call)
             .expect("Unable to perform call on StateMachine");
 
         // check that the state is consistent with `expected_state`
