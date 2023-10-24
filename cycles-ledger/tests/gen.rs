@@ -738,7 +738,7 @@ pub fn arb_cycles_ledger_call_state_from(
             panic!("BUG: no valid call can be performed on the current state");
         }
 
-        // Union panics if arb_calls is empty but it shouldn't be
+        // Union panics if arb_calls is empty but this shouldn't happen
         // as either the depositor has cycles or an account has funds.
         (Union::new(arb_calls), Just(state))
             .prop_flat_map(move |(call, mut state)| {
