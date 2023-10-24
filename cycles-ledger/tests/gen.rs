@@ -639,7 +639,7 @@ prop_compose! {
                         ((from, spender, from_balance) in arb_from_spender)
                         (from in Just(from),
                          spender in Just(spender),
-                         to in arb_account().prop_filter("cannot self tranasfer", move |to| &from != to),
+                         to in arb_account().prop_filter("cannot transfer to self", move |to| &from != to),
                          fee in option::of(Just(FEE.into())),
                          amount in (0..=(from_balance-FEE)).prop_map(Nat::from),
                          memo in option::of(arb_memo()),
