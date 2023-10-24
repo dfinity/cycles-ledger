@@ -463,8 +463,8 @@ impl CyclesLedgerApplyCall for CyclesLedgerInMemory {
     }
 }
 
-// Represent a set of valid calls and the
-// in-memory state that results from performing those
+// Represents a set of valid calls and the
+// in-memory state that results when performing those
 // calls.
 #[derive(Clone, Debug, Default)]
 pub struct CyclesLedgerCallsState {
