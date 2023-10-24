@@ -179,7 +179,7 @@ where
     }
 }
 
-// A cycles-ledger and depositor cannisters installed on a [StateMachine].
+// A cycles ledger and a depositor canister installed on a [StateMachine].
 #[derive(Clone)]
 pub struct CyclesLedgerInStateMachine<'a> {
     pub env: &'a StateMachine,
