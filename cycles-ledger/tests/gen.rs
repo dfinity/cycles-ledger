@@ -577,7 +577,7 @@ fn arb_approve(
 prop_compose! {
     fn arb_deposit(depositor: Principal, depositor_cycles: u128)
                   (to in arb_account(),
-                  // deposit requires that the amount >= FEE
+                  // deposit requires that the amount is >= FEE
                    amount in arb_amount(depositor_cycles - FEE).prop_map(|c| c + Nat::from(FEE)),
                    memo in option::of(arb_memo()),
                   )
