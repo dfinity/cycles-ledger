@@ -527,6 +527,22 @@ pub fn mutate_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|cell| f(&mut cell.borrow_mut()))
 }
 
+pub fn read_config<R>(f: impl FnOnce(&Config) -> R) -> R {
+    read_state(|state| f(state.config.get()))
+}
+
+pub fn mutate_config<R>(f: impl FnOnce(&mut Config) -> R) -> R {
+    mutate_state(|state| {
+        let mut config = state.config.get().to_owned();
+        let r = f(&mut config);
+        state
+            .config
+            .set(config)
+            .expect("Failed to change configuration");
+        r
+    })
+}
+
 // Prune old approval and transactions
 // and performs a sanity check on the
 // current state of the ledger.

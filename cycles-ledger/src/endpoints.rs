@@ -12,15 +12,31 @@ use icrc_ledger_types::{
 
 use crate::config::Config;
 
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum ChangeIndexId {
+    Unset,
+    SetTo(Principal),
+}
+
+impl From<ChangeIndexId> for Option<Principal> {
+    fn from(value: ChangeIndexId) -> Self {
+        match value {
+            ChangeIndexId::Unset => None,
+            ChangeIndexId::SetTo(index_id) => Some(index_id),
+        }
+    }
+}
+
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeArgs {
     pub max_transactions_per_request: Option<u64>,
+    pub change_index_id: Option<ChangeIndexId>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum LedgerArgs {
     Init(Config),
-    Upgrade(UpgradeArgs),
+    Upgrade(Option<UpgradeArgs>),
 }
 
 pub type NumCycles = Nat;

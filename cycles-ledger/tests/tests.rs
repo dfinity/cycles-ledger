@@ -6,11 +6,14 @@ use std::{
 
 use assert_matches::assert_matches;
 use candid::{Encode, Nat, Principal};
-use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
+use client::{
+    deposit, get_metadata, get_raw_transactions, transaction_hashes, transfer, transfer_from,
+};
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE},
     endpoints::{
-        DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError, UpgradeArgs,
+        ChangeIndexId, DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError,
+        UpgradeArgs,
     },
     memo::encode_send_memo,
     storage::{
@@ -1494,6 +1497,7 @@ fn test_get_transactions_max_length() {
         &env,
         LedgerConfig {
             max_transactions_per_request,
+            index_id: None,
         },
     );
     let depositor_id = install_depositor(&env, ledger_id);
@@ -1532,9 +1536,10 @@ fn test_set_max_transactions_per_request_in_upgrade() {
     assert_eq!(5, res.transactions.len() as u64);
 
     let max_transactions_per_request = 2;
-    let arg = Encode!(&Some(LedgerArgs::Upgrade(UpgradeArgs {
-        max_transactions_per_request: Some(max_transactions_per_request)
-    })))
+    let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
+        max_transactions_per_request: Some(max_transactions_per_request),
+        change_index_id: None,
+    }))))
     .unwrap();
     env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
         .unwrap();
@@ -1547,6 +1552,62 @@ fn test_set_max_transactions_per_request_in_upgrade() {
 
     let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
     assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+}
+
+#[test]
+fn test_set_index_id_in_init() {
+    let env = new_state_machine();
+    let index_id = Principal::from_slice(&[111]);
+    let config = LedgerConfig {
+        index_id: Some(index_id),
+        ..Default::default()
+    };
+    let ledger_id = install_ledger_with_conf(&env, config);
+    let metadata = get_metadata(&env, ledger_id);
+    assert_eq!(
+        metadata
+            .iter()
+            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
+        Some(&index_id.as_slice().into()),
+    );
+}
+
+#[test]
+fn test_change_index_id() {
+    let env = new_state_machine();
+    let ledger_id = install_ledger_with_conf(&env, LedgerConfig::default());
+    let metadata = get_metadata(&env, ledger_id);
+
+    // by default there is no index_id set
+    assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
+
+    // set the index_id
+    let index_id = Principal::from_slice(&[111]);
+    let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
+        max_transactions_per_request: None,
+        change_index_id: Some(ChangeIndexId::SetTo(index_id)),
+    }))))
+    .unwrap();
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
+        .unwrap();
+    let metadata = get_metadata(&env, ledger_id);
+    assert_eq!(
+        metadata
+            .iter()
+            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
+        Some(&index_id.as_slice().into()),
+    );
+
+    // unset the index_id
+    let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
+        max_transactions_per_request: None,
+        change_index_id: Some(ChangeIndexId::Unset),
+    }))))
+    .unwrap();
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
+        .unwrap();
+    let metadata = get_metadata(&env, ledger_id);
+    assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
 }
 
 #[test]
