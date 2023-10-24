@@ -27,7 +27,7 @@ use proptest::{
 use serde::Deserialize;
 use serde_bytes::ByteBuf;
 
-// The arguments passed to an update call to the Cycles Ledger.
+// The arguments passed to an update call to the cycles ledger.
 #[derive(Clone, Debug)]
 pub enum CyclesLedgerCallArg {
     Approve(ApproveArgs),
