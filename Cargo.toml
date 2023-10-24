@@ -1,12 +1,12 @@
 [workspace]
 default = "cycles-ledger"
 members = [
-  # Production crates
-  "cycles-ledger",
+    # Production crates
+    "cycles-ledger",
 
-  # Crates used for testing only
-  "depositor",
-  "fake-cmc",
+    # Crates used for testing only
+    "depositor",
+    "fake-cmc"
 ]
 
 [workspace.package]
@@ -15,7 +15,7 @@ edition = "2021"
 authors = ["DFINITY Stiftung <sdk@dfinity.org>"]
 license = "Apache-2.0"
 repository = "https://github.com/dfinity/cycles-ledger"
-publish = false                                         # don't publish to crates.io
+publish = false # don't publish to crates.io
 
 [workspace.dependencies]
 candid = "0.9.5"
@@ -29,9 +29,9 @@ serde = "1"
 pre-release-replacements = [
   # cargo release expects to find CHANGELOG.md file inside the package that's supposed to be released (e.g. cycles-ledger),
   # therefore we need to go one directory level up, so it will search for the change log in the root of the repository
-  { file = "../CHANGELOG.md", search = "Unreleased", replace = "{{version}}" },
-  { file = "../CHANGELOG.md", search = "\\.\\.\\.HEAD", replace = "...{{tag_name}}", exactly = 1 },
-  { file = "../CHANGELOG.md", search = "ReleaseDate", replace = "{{date}}" },
-  { file = "../CHANGELOG.md", search = "<!-- next-header -->", replace = "<!-- next-header -->\n\n## [Unreleased] - ReleaseDate", exactly = 1 },
-  { file = "../CHANGELOG.md", search = "<!-- next-url -->", replace = "<!-- next-url -->\n[Unreleased]: https://github.com/dfinity/dfx-extensions/compare/{{tag_name}}...HEAD", exactly = 1 },
+  {file="../CHANGELOG.md", search="Unreleased", replace="{{version}}"},
+  {file="../CHANGELOG.md", search="\\.\\.\\.HEAD", replace="...{{tag_name}}", exactly=1},
+  {file="../CHANGELOG.md", search="ReleaseDate", replace="{{date}}"},
+  {file="../CHANGELOG.md", search="<!-- next-header -->", replace="<!-- next-header -->\n\n## [Unreleased] - ReleaseDate", exactly=1},
+  {file="../CHANGELOG.md", search="<!-- next-url -->", replace="<!-- next-url -->\n[Unreleased]: https://github.com/dfinity/dfx-extensions/compare/{{tag_name}}...HEAD", exactly=1},
 ]
