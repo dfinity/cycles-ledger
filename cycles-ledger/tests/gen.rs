@@ -353,7 +353,7 @@ impl CyclesLedgerApplyCall for CyclesLedgerInMemory {
             } => {
                 let amount = amount.0.to_u128().ok_or("amount is not a u128")?;
                 // The precise cost of calling the deposit endpoint is unknown.
-                // The depositor_cycles is decreased of an arbitary number plus
+                // depositor_cycles is decreased by an arbitrary number plus
                 // the amount.
                 self.depositor_cycles = self
                     .depositor_cycles
