@@ -17,6 +17,7 @@ use ic_cdk::api::management_canister::{
 };
 use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
+    icrc::generic_metadata_value::MetadataValue,
     icrc1::account::Account,
     icrc1::transfer::TransferArg as TransferArgs,
     icrc1::transfer::TransferError,
@@ -289,6 +290,18 @@ pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
         Decode!(&res, Nat).unwrap()
     } else {
         panic!("fee call rejected")
+    }
+}
+
+pub fn get_metadata(env: &StateMachine, ledger_id: Principal) -> Vec<(String, MetadataValue)> {
+    let arg = Encode!(&()).unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(ledger_id, Principal::anonymous(), "icrc1_metadata", arg)
+        .unwrap()
+    {
+        Decode!(&res, Vec<(String, MetadataValue)>).unwrap()
+    } else {
+        panic!("metadata call rejected")
     }
 }
 
