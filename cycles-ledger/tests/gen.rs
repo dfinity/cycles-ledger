@@ -601,7 +601,7 @@ prop_compose! {
             arg: SendArgs {
                 from_subaccount: from.subaccount,
                 // Destination must exist so we pass the only
-                // canister that we know exists except for the Ledger.
+                // canister that we know exists except for the cycles ledger.
                 to: depositor,
                 created_at_time: None, // TODO
                 amount
