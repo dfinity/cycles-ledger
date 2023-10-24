@@ -677,7 +677,7 @@ pub fn arb_cycles_ledger_call_state(
     )
 }
 
-// Note(mp): this genereator will blow up the stack for high `len`
+// Note: this genereator will blow up the stack for high `len`
 // because it will call itself recursively `len` times. If you need a bigger
 // state then do multiple sequential calls to
 // [arb_cycles_ledger_call_state_from].
