@@ -582,8 +582,6 @@ prop_compose! {
                    memo in option::of(arb_memo()),
                   )
                   -> CyclesLedgerCall {
-        println!("    depositor_cyles: {}", depositor_cycles);
-        println!("    amount:          {}", amount.0.to_u128().unwrap());
         CyclesLedgerCall {
             caller: depositor,
             arg: (amount, DepositArg { to, memo, }).into()
@@ -703,7 +701,6 @@ pub fn arb_cycles_ledger_call_state_from(
         let token_pool = state.token_pool();
 
         let mut arb_calls = vec![];
-        println!("  depositor_cycles: {}", depositor_cycles);
         if depositor_cycles > 0 {
             let arb_deposit = arb_deposit(depositor, depositor_cycles);
             arb_calls.push(arb_deposit.boxed());
@@ -745,7 +742,6 @@ pub fn arb_cycles_ledger_call_state_from(
         // as either the depositor has cycles or an account has funds.
         (Union::new(arb_calls), Just(state))
             .prop_flat_map(move |(call, mut state)| {
-                println!("  next: {}", call);
                 state.apply(&call).unwrap();
                 step(state, depositor, n - 1)
             })
