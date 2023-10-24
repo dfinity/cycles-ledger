@@ -510,7 +510,7 @@ impl CyclesLedgerApplyCall for CyclesLedgerCallsState {
 
 fn arb_allowed_principal() -> impl Strategy<Value = Principal> {
     collection::vec(any::<u8>(), 0..30).prop_filter_map(
-        "Management and anonimous principals are disabled",
+        "Management and anonymous principals are disabled",
         |bytes| {
             let principal = Principal::from_slice(&bytes);
             if principal == Principal::management_canister() || principal == Principal::anonymous()
