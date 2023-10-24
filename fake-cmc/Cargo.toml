@@ -1,5 +1,5 @@
 [package]
-name = "fake_cmc"
+name = "fake-cmc"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

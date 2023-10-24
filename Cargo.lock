@@ -459,7 +459,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fake_cmc"
+name = "fake-cmc"
 version = "0.2.1"
 dependencies = [
  "candid 0.9.9",

@@ -129,7 +129,7 @@ fn install_cmc(env: &StateMachine) {
     env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
     env.install_canister(
         CMC_PRINCIPAL,
-        get_wasm("fake_cmc"),
+        get_wasm("fake-cmc"),
         Encode!(&Vec::<u8>::new()).unwrap(),
         None,
     );
