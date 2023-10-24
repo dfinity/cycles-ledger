@@ -23,7 +23,7 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     let cycles = msg_cycles_available128();
     if cycles < 100_000_000_000 {
         return Err(CmcCreateCanisterError::Refunded {
-            refund_amount: cycles.into(),
+            refund_amount: cycles,
             create_error: "Insufficient cycles attached.".to_string(),
         });
     }
