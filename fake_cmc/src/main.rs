@@ -68,7 +68,7 @@ fn fail_next_create_canister_with(error: CmcCreateCanisterError) {
 
 #[candid_method]
 #[query]
-fn last_creat_canister_args() -> CmcCreateCanisterArgs {
+fn last_create_canister_args() -> CmcCreateCanisterArgs {
     STATE.with(|s| {
         s.borrow()
             .last_creat_canister_args
