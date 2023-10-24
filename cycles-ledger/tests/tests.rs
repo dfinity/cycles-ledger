@@ -667,6 +667,30 @@ fn test_approval_expiring() {
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
+
+    // Should not be able to approve from/to a denied principal
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
+        approve(
+            env,
+            ledger_id,
+            Account::from(owner),
+            spender1,
+            100_000_000u128,
+            None,
+            None,
+        )
+        .unwrap_err();
+        approve(
+            env,
+            ledger_id,
+            from,
+            Account::from(owner),
+            100_000_000u128,
+            None,
+            None,
+        )
+        .unwrap_err();
+    }
 }
 
 #[test]
