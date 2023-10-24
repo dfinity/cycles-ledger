@@ -67,7 +67,7 @@ impl From<TransferFromArgs> for CyclesLedgerCallArg {
     }
 }
 
-// An update call to the Cycle Ledger.
+// An update call to the cycles ledger.
 #[derive(Clone, Debug)]
 pub struct CyclesLedgerCall {
     caller: Principal,
