@@ -293,7 +293,7 @@ impl<'a> CyclesLedgerApplyCall for CyclesLedgerInStateMachine<'a> {
     }
 }
 
-// A in memory cycles-ledger state.
+// An in-memory cycles ledger state.
 #[derive(Clone, Debug, Default)]
 pub struct CyclesLedgerInMemory {
     pub balances: HashMap<Account, u128>,
