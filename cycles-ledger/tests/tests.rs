@@ -1600,7 +1600,7 @@ fn test_upgrade_preserves_state() {
 
     let mut expected_state = CyclesLedgerInMemory::new(depositor_cycles);
 
-    // generate a list of call for the cycles-ledger
+    // generate a list of calls for the cycles ledger
     let calls = gen::arb_cycles_ledger_call_state(depositor_id, depositor_cycles, 10)
         .new_tree(&mut TestRunner::default())
         .unwrap()
