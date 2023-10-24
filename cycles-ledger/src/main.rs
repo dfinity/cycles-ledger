@@ -248,6 +248,32 @@ async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
     .await
 }
 
+#[update]
+#[candid_method]
+async fn create_canister(
+    args: endpoints::CreateCanisterArgs,
+) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterError> {
+    let from = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.from_subaccount,
+    };
+
+    let Some(amount) = args.amount.0.to_u128() else {
+        return Err(endpoints::CreateCanisterError::InsufficientFunds {
+            balance: Nat::from(balance_of(&from)),
+        });
+    };
+
+    storage::create_canister(
+        from,
+        amount,
+        ic_cdk::api::time(),
+        args.created_at_time,
+        args.creation_args,
+    )
+    .await
+}
+
 #[query]
 #[candid_method(query)]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {

@@ -459,6 +459,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fake_cmc"
+version = "0.2.1"
+dependencies = [
+ "candid 0.9.9",
+ "cycles-ledger",
+ "ic-cdk",
+ "ic-cdk-macros 0.6.10",
+ "icrc-ledger-types",
+ "serde",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

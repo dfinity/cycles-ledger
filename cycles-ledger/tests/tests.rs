@@ -1,35 +1,37 @@
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use assert_matches::assert_matches;
-use candid::{Encode, Nat, Principal};
+use candid::{CandidType, Decode, Encode, Nat, Principal};
 use client::{deposit, get_raw_transactions, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE},
     endpoints::{
+        CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
         DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError, UpgradeArgs,
     },
     memo::encode_send_memo,
     storage::{
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
-        Transaction,
+        Transaction, CMC_PRINCIPAL,
     },
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use futures::FutureExt;
 use ic_cbor::CertificateToCbor;
-use ic_cdk::api::call::RejectionCode;
+use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
     Certificate, HashTree, LookupResult,
 };
-use ic_test_state_machine_client::{ErrorCode, StateMachine};
+use ic_test_state_machine_client::{ErrorCode, StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc1::{
         account::Account,
@@ -43,8 +45,8 @@ use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
 use crate::client::{
-    approve, balance_of, fee, get_allowance, get_tip_certificate, send, total_supply,
-    transaction_timestamps,
+    approve, balance_of, canister_status, create_canister, fail_next_create_canister_with, fee,
+    get_allowance, get_block, get_tip_certificate, send, total_supply, transaction_timestamps,
 };
 
 mod client;
@@ -100,6 +102,37 @@ fn install_depositor(env: &StateMachine, ledger_id: Principal) -> Principal {
     env.install_canister(canister, get_wasm("depositor"), depositor_init_arg, None);
     env.add_cycles(canister, u128::MAX);
     canister
+}
+
+fn install_cmc(env: &StateMachine) {
+    #[derive(CandidType, Default)]
+    struct ProvisionalCreateArg {
+        specified_id: Option<Principal>,
+    }
+    #[derive(CandidType, candid::Deserialize)]
+    struct ProvisionalCreateResponse {
+        canister_id: Principal,
+    }
+    let WasmResult::Reply(response) = env
+        .update_call(
+            Principal::from_text("aaaaa-aa").unwrap(),
+            Principal::anonymous(),
+            "provisional_create_canister_with_cycles",
+            Encode!(&ProvisionalCreateArg {
+                specified_id: Some(CMC_PRINCIPAL),
+            })
+            .unwrap(),
+        )
+        .unwrap() else {panic!("Failed to create CMC")};
+    let response = Decode!(&response, ProvisionalCreateResponse).unwrap();
+    assert_eq!(response.canister_id, CMC_PRINCIPAL);
+    env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
+    env.install_canister(
+        CMC_PRINCIPAL,
+        get_wasm("fake_cmc"),
+        Encode!(&Vec::<u8>::new()).unwrap(),
+        None,
+    );
 }
 
 #[test]
@@ -1576,4 +1609,256 @@ fn test_icrc1_test_suite() {
     {
         panic!("The ICRC-1 test suite failed");
     }
+}
+
+#[test]
+fn test_create_canister() {
+    const CREATE_CANISTER_WITH: u128 = 1_000_000_000_000;
+    let env = new_state_machine();
+    install_cmc(&env);
+    let ledger_id = install_ledger(&env);
+    let depositor_id = install_depositor(&env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[10]),
+        subaccount: Some([0; 32]),
+    };
+    let mut expected_balance = 1_000_000_000_000_000_u128;
+
+    // make the first deposit to the user and check the result
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.balance, expected_balance);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+
+    // successful create
+    let canister = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_WITH.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap()
+    .canister_id;
+    expected_balance -= CREATE_CANISTER_WITH + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    // no canister creation fee on system subnet (which the StateMachine is by default)
+    assert_eq!(CREATE_CANISTER_WITH, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+
+    let canister_settings = CanisterSettings {
+        controllers: Some(vec![user.owner, Principal::anonymous()]),
+        compute_allocation: Some(Nat::from(7)),
+        memory_allocation: Some(Nat::from(8)),
+        freezing_threshold: Some(Nat::from(9)),
+    };
+    let CreateCanisterSuccess {
+        canister_id,
+        block_id,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_WITH.into(),
+            creation_args: Some(CmcCreateCanisterArgs {
+                subnet_selection: None,
+                settings: Some(canister_settings.clone()),
+            }),
+        },
+    )
+    .unwrap();
+    expected_balance -= CREATE_CANISTER_WITH + FEE;
+    let status = canister_status(&env, canister_id, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    assert_eq!(CREATE_CANISTER_WITH, status.cycles);
+    // order is not guaranteed
+    assert_eq!(
+        HashSet::<Principal>::from_iter(status.settings.controllers.iter().cloned()),
+        HashSet::from_iter(canister_settings.controllers.unwrap().iter().cloned())
+    );
+    assert_eq!(
+        status.settings.freezing_threshold,
+        canister_settings.freezing_threshold.unwrap()
+    );
+    assert_eq!(
+        status.settings.compute_allocation,
+        canister_settings.compute_allocation.unwrap()
+    );
+    assert_eq!(
+        status.settings.memory_allocation,
+        canister_settings.memory_allocation.unwrap()
+    );
+    assert_matches!(
+        get_block(&env, ledger_id, block_id).transaction.operation,
+        Operation::Burn {
+            amount: CREATE_CANISTER_WITH,
+            ..
+        }
+    );
+
+    // reject before `await`
+    if let CreateCanisterError::InsufficientFunds { balance } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: Nat::from(u128::MAX),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        assert_eq!(balance, expected_balance);
+    } else {
+        panic!("wrong error")
+    };
+
+    // refund successful
+    fail_next_create_canister_with(
+        &env,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: CREATE_CANISTER_WITH,
+            create_error: "Custom error text".to_string(),
+        },
+    );
+    if let CreateCanisterError::FailedToCreate {
+        fee_block,
+        refund_block,
+        error: _,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_WITH.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        expected_balance -= FEE;
+        assert_matches!(
+            get_block(&env, ledger_id, fee_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Burn {
+                amount: CREATE_CANISTER_WITH,
+                ..
+            }
+        );
+        assert_matches!(
+            get_block(&env, ledger_id, refund_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Mint {
+                amount: CREATE_CANISTER_WITH,
+                ..
+            }
+        );
+        assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    } else {
+        panic!("wrong error")
+    };
+
+    const REFUND_AMOUNT: u128 = CREATE_CANISTER_WITH / 3;
+    fail_next_create_canister_with(
+        &env,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: REFUND_AMOUNT,
+            create_error: "Custom error text".to_string(),
+        },
+    );
+    if let CreateCanisterError::FailedToCreate {
+        fee_block,
+        refund_block,
+        error: _,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_WITH.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        expected_balance -= FEE + (CREATE_CANISTER_WITH - REFUND_AMOUNT);
+        assert_matches!(
+            get_block(&env, ledger_id, fee_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Burn {
+                amount: CREATE_CANISTER_WITH,
+                ..
+            }
+        );
+        assert_matches!(
+            get_block(&env, ledger_id, refund_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Mint {
+                amount: REFUND_AMOUNT,
+                ..
+            }
+        );
+        assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    } else {
+        panic!("wrong error")
+    };
+
+    // refund failed
+    fail_next_create_canister_with(
+        &env,
+        cycles_ledger::endpoints::CmcCreateCanisterError::RefundFailed {
+            create_error: "Create error text".to_string(),
+            refund_error: "Refund error text".to_string(),
+        },
+    );
+    if let CreateCanisterError::FailedToCreate {
+        fee_block,
+        refund_block,
+        error: _,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_WITH.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        expected_balance -= FEE + CREATE_CANISTER_WITH;
+        assert_matches!(
+            get_block(&env, ledger_id, fee_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Burn {
+                amount: CREATE_CANISTER_WITH,
+                ..
+            }
+        );
+        assert!(refund_block.is_none());
+        assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    } else {
+        panic!("wrong error")
+    };
 }
