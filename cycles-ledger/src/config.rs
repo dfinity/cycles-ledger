@@ -1,4 +1,4 @@
-use candid::{CandidType, Deserialize};
+use candid::{CandidType, Deserialize, Principal};
 use ic_stable_structures::Storable;
 use serde::Serialize;
 use std::{borrow::Cow, time::Duration};
@@ -22,12 +22,17 @@ pub struct Config {
     /// returned by the [icrc3_get_transactions]
     /// endpoint
     pub max_transactions_per_request: u64,
+
+    /// The principal of the index canister
+    /// for this ledger
+    pub index_id: Option<Principal>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             max_transactions_per_request: 1000,
+            index_id: None,
         }
     }
 }
@@ -50,6 +55,7 @@ fn test_config_ser_de() {
     // do not use default
     let config = Config {
         max_transactions_per_request: 10,
+        index_id: None,
     };
     assert_eq!(Config::from_bytes(config.to_bytes()), config);
 }

@@ -134,11 +134,16 @@ type DataCertificate = record {
 
 type InitArgs = record {
   max_transactions_per_request : nat64;
+  index_id : opt principal;
+};
 
+type ChangeIndexId = variant {
+  Unset; SetTo: principal;
 };
 
 type UpgradeArgs = record {
   max_transactions_per_request : opt nat64;
+  change_index_id : opt ChangeIndexId;
 };
 
 type LedgerArgs = variant {
@@ -146,12 +151,32 @@ type LedgerArgs = variant {
   Upgrade : opt UpgradeArgs;
 };
 
+type MetadataValue = variant {
+  Nat : nat;
+  Int : int;
+  Text : text;
+  Blob : blob;
+};
+
+type HttpRequest = record {
+  url : text;
+  method : text;
+  body : vec nat8;
+  headers : vec record { text; text };
+};
+type HttpResponse = record {
+  body : vec nat8;
+  headers : vec record { text; text };
+  status_code : nat16;
+};
+
 service : (ledger_args : LedgerArgs) -> {
   deposit : (DepositArgs) -> (DepositResult);
+  http_request : (HttpRequest) -> (HttpResponse) query;
   icrc1_balance_of : (Account) -> (nat) query;
   icrc1_decimals : () -> (nat8) query;
   icrc1_fee : () -> (nat) query;
-  icrc1_metadata : () -> (vec record { text; Value }) query;
+  icrc1_metadata : () -> (vec record { text; MetadataValue }) query;
   icrc1_minting_account : () -> (opt Account) query;
   icrc1_name : () -> (text) query;
   icrc1_supported_standards : () -> (vec SupportedStandard) query;

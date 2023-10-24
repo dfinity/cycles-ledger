@@ -4,7 +4,9 @@ use cycles_ledger::endpoints::{
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
-use cycles_ledger::storage::{balance_of, mutate_state, prune, read_state};
+use cycles_ledger::storage::{
+    balance_of, mutate_config, mutate_state, prune, read_config, read_state,
+};
 use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
@@ -37,17 +39,19 @@ fn init(ledger_args: LedgerArgs) {
 #[post_upgrade]
 fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     match ledger_args {
-        Some(LedgerArgs::Upgrade(upgrade_args)) => {
+        Some(LedgerArgs::Upgrade(Some(upgrade_args))) => {
             if let Some(max_transactions_per_request) = upgrade_args.max_transactions_per_request {
-                mutate_state(|state| {
-                    let mut config = state.config.get().to_owned();
+                mutate_config(|config| {
                     config.max_transactions_per_request = max_transactions_per_request;
-                    state.config.set(config)
-                        .expect("Failed to change configuration");
+                })
+            }
+            if let Some(change_index_id) = upgrade_args.change_index_id {
+                mutate_config(|config| {
+                    config.index_id = change_index_id.into();
                 })
             }
         }
-        None => {},
+        None | Some(LedgerArgs::Upgrade(None)) => {},
         _ =>
             ic_cdk::trap("Cannot upgrade the canister with an Init argument. Please provide an Upgrade argument."),
     }
@@ -109,13 +113,19 @@ fn icrc1_total_supply() -> Nat {
 #[query]
 #[candid_method(query)]
 fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
-    vec![
-        MetadataValue::entry("icrc1:decimals", config::DECIMALS as u64),
-        MetadataValue::entry("icrc1:name", config::TOKEN_NAME),
-        MetadataValue::entry("icrc1:symbol", config::TOKEN_SYMBOL),
-        MetadataValue::entry("icrc1:fee", config::FEE),
-        MetadataValue::entry("icrc1:max_memo_length", config::MAX_MEMO_LENGTH),
-    ]
+    use MetadataValue as MV;
+
+    let mut metadata = vec![
+        MV::entry("icrc1:decimals", config::DECIMALS as u64),
+        MV::entry("icrc1:name", config::TOKEN_NAME),
+        MV::entry("icrc1:symbol", config::TOKEN_SYMBOL),
+        MV::entry("icrc1:fee", config::FEE),
+        MV::entry("icrc1:max_memo_length", config::MAX_MEMO_LENGTH),
+    ];
+    if let Some(index_id) = read_config(|config| config.index_id) {
+        metadata.push(MV::entry("dfn:index_id", index_id.as_slice()))
+    }
+    metadata
 }
 
 #[query]
@@ -425,20 +435,28 @@ fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
 
 #[test]
 fn test_candid_interface_compatibility() {
-    use candid::utils::{service_compatible, CandidSource};
+    use candid::utils::{service_equal, CandidSource};
     use std::path::PathBuf;
 
     candid::export_service!();
-    let new_interface = __export_service();
+    let exported_interface = __export_service();
 
-    let old_interface =
+    let expected_interface =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("cycles-ledger.did");
 
-    println!("Exported interface: {}", new_interface);
+    println!(
+        "Expected interface: {}\n\n",
+        CandidSource::File(expected_interface.as_path())
+            .load()
+            .unwrap()
+            .1
+            .unwrap()
+    );
+    println!("Exported interface: {}\n\n", exported_interface);
 
-    service_compatible(
-        CandidSource::Text(&new_interface),
-        CandidSource::File(old_interface.as_path()),
+    service_equal(
+        CandidSource::Text(&exported_interface),
+        CandidSource::File(expected_interface.as_path()),
     )
     .expect("The assets canister interface is not compatible with the cycles-ledger.did file");
 }
