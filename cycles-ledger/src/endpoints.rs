@@ -222,6 +222,7 @@ pub struct CreateCanisterArgs {
     /// Amount of cycles used to create the canister.
     /// The new canister will have `amount - canister creation fee` cycles when created.
     pub amount: NumCycles,
+    #[serde(default)]
     pub creation_args: Option<CmcCreateCanisterArgs>,
 }
 

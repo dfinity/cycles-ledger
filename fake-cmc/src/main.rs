@@ -30,7 +30,7 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
 
     let next_error = STATE.with(|s| {
         let mut state = s.borrow_mut();
-        state.last_creat_canister_args = Some(arg.clone());
+        state.last_create_canister_args = Some(arg.clone());
         state.fail_next_create_canister_with.take()
     });
 
@@ -71,7 +71,7 @@ fn fail_next_create_canister_with(error: CmcCreateCanisterError) {
 fn last_create_canister_args() -> CmcCreateCanisterArgs {
     STATE.with(|s| {
         s.borrow()
-            .last_creat_canister_args
+            .last_create_canister_args
             .clone()
             .expect("No create_canister call recorded")
     })
