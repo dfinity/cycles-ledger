@@ -180,7 +180,7 @@ type SubnetSelection = variant {
   Subnet : record {
     subnet : principal;
   };
-  /// Choose a random subnet that fulfills the specified properties
+  // Choose a random subnet that satisfies the specified properties.
   Filter : SubnetFilter;
 };
 

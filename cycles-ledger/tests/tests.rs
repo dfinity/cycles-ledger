@@ -1710,7 +1710,7 @@ fn test_create_canister() {
     expected_balance -= CREATE_CANISTER_WITH + FEE;
     let status = canister_status(&env, canister, user.owner);
     assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
-    // no canister creation fee on system subnet (which the StateMachine is by default)
+    // no canister creation fee on system subnet (where the StateMachine is by default)
     assert_eq!(CREATE_CANISTER_WITH, status.cycles);
     assert_eq!(vec![user.owner], status.settings.controllers);
 
