@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use candid::{CandidType, Deserialize, Nat, Principal};
-use ic_cdk::api::call::RejectionCode;
+use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
 use icrc_ledger_types::{
     icrc::generic_value::Value,
     icrc1::{
@@ -9,6 +9,7 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
+use serde::Serialize;
 
 use crate::config::Config;
 
@@ -191,4 +192,84 @@ pub struct DataCertificate {
 
     // CBOR encoded hash_tree
     pub hash_tree: serde_bytes::ByteBuf,
+}
+
+#[derive(Default, Debug, Clone, CandidType, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CmcCreateCanisterArgs {
+    pub subnet_selection: Option<SubnetSelection>,
+    pub settings: Option<CanisterSettings>,
+}
+
+#[derive(Serialize, Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub struct SubnetFilter {
+    pub subnet_type: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum SubnetSelection {
+    /// Choose a random subnet that satisfies the specified properties
+    Filter(SubnetFilter),
+    /// Choose a specific subnet
+    Subnet { subnet: Principal },
+}
+
+#[derive(Default, Debug, Clone, CandidType, Deserialize, PartialEq, Eq)]
+pub struct CreateCanisterArgs {
+    #[serde(default)]
+    pub from_subaccount: Option<Subaccount>,
+    #[serde(default)]
+    pub created_at_time: Option<u64>,
+    /// Amount of cycles used to create the canister.
+    /// The new canister will have `amount - canister creation fee` cycles when created.
+    pub amount: NumCycles,
+    #[serde(default)]
+    pub creation_args: Option<CmcCreateCanisterArgs>,
+}
+
+/// Error for create_canister endpoint
+#[derive(Serialize, Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum CmcCreateCanisterError {
+    Refunded {
+        refund_amount: u128,
+        create_error: String,
+    },
+    RefundFailed {
+        create_error: String,
+        refund_error: String,
+    },
+}
+
+/// Error for create_canister endpoint
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum CreateCanisterError {
+    InsufficientFunds {
+        balance: NumCycles,
+    },
+    TooOld,
+    CreatedInFuture {
+        ledger_time: u64,
+    },
+    TemporarilyUnavailable,
+    Duplicate {
+        duplicate_of: BlockIndex,
+    },
+    FailedToCreate {
+        fee_block: Option<Nat>,
+        refund_block: Option<Nat>,
+        error: String,
+    },
+    GenericError {
+        error_code: Nat,
+        message: String,
+    },
+}
+
+impl CreateCanisterError {
+    pub const BAD_FEE_ERROR: u64 = 100_001;
+}
+
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub struct CreateCanisterSuccess {
+    pub block_id: Nat,
+    pub canister_id: Principal,
 }

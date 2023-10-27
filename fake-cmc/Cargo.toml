@@ -1,0 +1,19 @@
+[package]
+name = "fake-cmc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cycles-ledger = { path = "../cycles-ledger" }
+candid.workspace = true
+ic-cdk.workspace = true
+ic-cdk-macros.workspace = true
+icrc-ledger-types.workspace = true
+serde.workspace = true
+
+[package.metadata.release] # cargo-release
+pre-release-replacements = []
