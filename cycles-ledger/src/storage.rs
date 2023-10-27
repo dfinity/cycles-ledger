@@ -1,5 +1,8 @@
 use crate::config::{Config, REMOTE_FUTURE};
-use crate::endpoints::{DataCertificate, DepositResult, SendError};
+use crate::endpoints::{
+    CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterSuccess,
+    DataCertificate, DepositResult, SendError,
+};
 use crate::logs::{P0, P1};
 use crate::memo::{encode_send_memo, validate_memo};
 use crate::{
@@ -13,8 +16,9 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Error};
 use candid::{Nat, Principal};
 use ic_canister_log::log;
+use ic_cdk::api::call::{call_with_payment128, RejectionCode};
 use ic_cdk::api::management_canister::main::deposit_cycles;
-use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
+use ic_cdk::api::management_canister::provisional::{CanisterIdRecord, CanisterSettings};
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
@@ -47,6 +51,8 @@ const EXPIRATION_QUEUE_MEMORY_ID: MemoryId = MemoryId::new(5);
 const TRANSACTION_HASH_MEMORY_ID: MemoryId = MemoryId::new(6);
 const TRANSACTION_TIMESTAMP_MEMORY_ID: MemoryId = MemoryId::new(7);
 const CONFIG_MEMORY_ID: MemoryId = MemoryId::new(8);
+
+pub const CMC_PRINCIPAL: Principal = Principal::from_slice(&[0, 0, 0, 0, 0, 0, 0, 4, 1, 1]);
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
@@ -826,6 +832,14 @@ pub fn approve(
         ic_cdk::trap("self approval is not allowed");
     }
 
+    // check that no account is owned by a denied principal
+    if is_denied_account_owner(&from.owner) {
+        return Err(approve::denied_owner(from));
+    }
+    if is_denied_account_owner(&spender.owner) {
+        return Err(approve::denied_owner(spender));
+    }
+
     // check that the `expected_allowance` matches the current one
     let allowance = allowance(&from, &spender, now).0;
     if expected_allowance.is_some() && expected_allowance != Some(allowance) {
@@ -957,7 +971,10 @@ mod transfer_from {
     pub fn denied_owner(account: Account) -> TransferFromError {
         TransferFromError::GenericError {
             error_code: Nat::from(DENIED_OWNER),
-            message: format!("Owner of the account {} cannot make transactions", account),
+            message: format!(
+                "Owner of the account {} cannot be part of transactions",
+                account
+            ),
         }
     }
 
@@ -985,10 +1002,22 @@ mod transfer_from {
 
 mod approve {
     use candid::Nat;
-    use icrc_ledger_types::icrc2::approve::ApproveError;
+    use icrc_ledger_types::{icrc1::account::Account, icrc2::approve::ApproveError};
+
+    use super::transfer_from::DENIED_OWNER;
 
     pub fn anyhow_error(error: anyhow::Error) -> ApproveError {
         unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn denied_owner(account: Account) -> ApproveError {
+        ApproveError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of approvals",
+                account
+            ),
+        }
     }
 
     pub fn unknown_generic_error(message: String) -> ApproveError {
@@ -1012,6 +1041,25 @@ mod send {
 
     pub fn unknown_generic_error(message: String) -> SendError {
         SendError::GenericError {
+            error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
+            message,
+        }
+    }
+}
+
+mod create_canister {
+    use candid::Nat;
+
+    use crate::endpoints::CreateCanisterError;
+
+    use super::transfer_from::UNKNOWN_GENERIC_ERROR;
+
+    pub fn anyhow_error(error: anyhow::Error) -> CreateCanisterError {
+        unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn unknown_generic_error(message: String) -> CreateCanisterError {
+        CreateCanisterError::GenericError {
             error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
             message,
         }
@@ -1065,6 +1113,27 @@ impl From<ProcessTransactionError> for SendError {
             },
             InvalidCreatedAtTime(err) => err.into(),
             GenericError(err) => send::unknown_generic_error(format!("{:#}", err)),
+        }
+    }
+}
+
+impl From<ProcessTransactionError> for CreateCanisterError {
+    fn from(error: ProcessTransactionError) -> Self {
+        use ProcessTransactionError::*;
+
+        match error {
+            BadFee { expected_fee } => Self::GenericError {
+                error_code: CreateCanisterError::BAD_FEE_ERROR.into(),
+                message: format!(
+                    "BadFee. Expected fee: {}. Should never happen.",
+                    expected_fee
+                ),
+            },
+            Duplicate { duplicate_of } => Self::Duplicate {
+                duplicate_of: Nat::from(duplicate_of),
+            },
+            InvalidCreatedAtTime(err) => err.into(),
+            GenericError(err) => create_canister::unknown_generic_error(format!("{:#}", err)),
         }
     }
 }
@@ -1208,6 +1277,17 @@ impl From<CreatedAtTimeValidationError> for SendError {
     }
 }
 
+impl From<CreatedAtTimeValidationError> for CreateCanisterError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
+        match value {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
+                Self::CreatedInFuture { ledger_time }
+            }
+        }
+    }
+}
+
 impl From<CreatedAtTimeValidationError> for ApproveError {
     fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
@@ -1247,6 +1327,9 @@ pub fn log_error_and_trap(err: &Error) -> ! {
 }
 
 const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
+const CREATE_CANISTER_MEMO: [u8; MAX_MEMO_LENGTH as usize] =
+    [u8::MAX - 1; MAX_MEMO_LENGTH as usize];
+const REFUND_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX - 2; MAX_MEMO_LENGTH as usize];
 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
 // is lower than [crate::config::FEE].
@@ -1413,6 +1496,178 @@ pub async fn send(
     }
 
     Ok(Nat::from(block_index))
+}
+
+pub async fn create_canister(
+    from: Account,
+    amount: u128,
+    now: u64,
+    created_at_time: Option<u64>,
+    argument: Option<CmcCreateCanisterArgs>,
+) -> Result<CreateCanisterSuccess, CreateCanisterError> {
+    use CreateCanisterError::*;
+
+    // if `amount` + `fee` overflows then the user doesn't have enough funds
+    let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
+        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+    };
+
+    // check that the `from` account has enough funds
+    read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
+        |balance: u128| InsufficientFunds {
+            balance: balance.into(),
+        },
+    )?;
+
+    // sanity check that the total_supply won't underflow
+    read_state(|state| state.check_total_supply_decrease(amount_with_fee))
+        .with_context(|| format!("Unable to deduct {} cycles from {}", amount, from))
+        .map_err(create_canister::anyhow_error)?;
+
+    // The canister creation process involves 3 steps:
+    // 1. burn cycles + fee
+    // 2. call create_cycles on the CMC
+    // 3. if 2. fails then mint cycles
+
+    // 1. burn cycles + fee
+
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+    };
+
+    let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
+
+    if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
+        log_error_and_trap(&err.context(format!(
+            "Unable to perform create_canister: {:?}",
+            transaction
+        )))
+    };
+
+    prune(now);
+
+    // set a guard in case create_canister panics
+
+    // Callback for the guard and in case of [create_canister] error.
+    // This panics if a mint block has been recorded but the credit
+    // function didn't go through.
+    let reimburse = || -> Result<u64, ProcessTransactionError> {
+        let transaction = Transaction {
+            operation: Operation::Mint { to: from, amount },
+            created_at_time: None,
+            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
+        };
+
+        let block_index = process_transaction(transaction.clone(), now)?;
+
+        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
+            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
+        };
+
+        prune(now);
+
+        Ok(block_index)
+    };
+
+    // 2. call create_canister on the CMC
+
+    // add a guard to reimburse if [create_canister]
+    // panics.
+    let guard = scopeguard::guard_on_unwind((), |()| {
+        let _ = reimburse();
+    });
+
+    let argument = argument.unwrap_or_else(|| CmcCreateCanisterArgs {
+        settings: Some(CanisterSettings {
+            controllers: Some(vec![ic_cdk::api::caller()]),
+            ..Default::default()
+        }),
+        subnet_selection: None,
+    });
+    let create_canister_result: Result<
+        (Result<Principal, CmcCreateCanisterError>,),
+        (RejectionCode, String),
+    > = call_with_payment128(CMC_PRINCIPAL, "create_canister", (argument,), amount).await;
+
+    // 3. if 2. fails but doesn't panic then mint cycles
+
+    // defuse the guard because 2. didn't panic
+    // to avoid reimbursing twice.
+    ScopeGuard::into_inner(guard);
+
+    match create_canister_result {
+        Err((rejection_code, rejection_reason)) => {
+            match reimburse() {
+                Ok(fee_block) => {
+                    prune(now);
+                    Err(FailedToCreate {
+                        fee_block: Some(Nat::from(block_index)),
+                        refund_block: Some(Nat::from(fee_block)),
+                        error: format!(
+                            "CMC rejected canister creation with code {:?} and reason {}",
+                            rejection_code, rejection_reason
+                        ),
+                    })
+                }
+                Err(err) => {
+                    // this is a critical error that should not
+                    // happen because minting should never fail.
+                    log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err))
+                }
+            }
+        }
+        Ok((cmc_result,)) => match cmc_result {
+            Ok(canister_id) => Ok(CreateCanisterSuccess {
+                block_id: Nat::from(block_index),
+                canister_id,
+            }),
+            Err(err) => match err {
+                CmcCreateCanisterError::Refunded {
+                    refund_amount,
+                    create_error,
+                } => {
+                    let transaction = Transaction {
+                        operation: Operation::Mint {
+                            to: from,
+                            amount: refund_amount,
+                        },
+                        created_at_time: None,
+                        memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
+                    };
+
+                    let refund_index = process_transaction(transaction.clone(), now)?;
+
+                    if let Err(err) = mutate_state(|state| state.credit(&from, refund_amount)) {
+                        log_error_and_trap(&err.context(format!(
+                            "Unable to refund create_canister: {:?}",
+                            transaction
+                        )))
+                    };
+
+                    prune(now);
+
+                    Err(CreateCanisterError::FailedToCreate {
+                        fee_block: Some(Nat::from(block_index)),
+                        refund_block: Some(Nat::from(refund_index)),
+                        error: create_error,
+                    })
+                }
+                CmcCreateCanisterError::RefundFailed {
+                    create_error,
+                    refund_error,
+                } => Err(FailedToCreate {
+                    fee_block: Some(Nat::from(block_index)),
+                    refund_block: None,
+                    error: format!(
+                        "create_canister error: {}, refund error: {}",
+                        create_error, refund_error
+                    ),
+                }),
+            },
+        },
+    }
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {

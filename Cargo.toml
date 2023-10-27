@@ -6,6 +6,7 @@ members = [
 
     # Crates used for testing only
     "depositor",
+    "fake-cmc"
 ]
 
 [workspace.package]
