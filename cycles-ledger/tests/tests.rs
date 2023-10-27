@@ -1835,6 +1835,7 @@ fn test_create_canister() {
         panic!("wrong error")
     };
 
+    // dividing by 3 so that the number of cyles to be refunded is different from the amount of cycles consumed
     const REFUND_AMOUNT: u128 = CREATE_CANISTER_CYCLES / 3;
     fail_next_create_canister_with(
         &env,
