@@ -80,7 +80,8 @@ There is a fee of **100M cycles** for sending cycles to another canister.
 
 ## Creating Canisters Using Cycles
 
-TO DO
+The canister creation process via cycles can be triggered from the cycles ledger
+using the endpoint `create_canister`.
 
 ```
 type CreateCanisterArgs = record {
@@ -102,21 +103,16 @@ type CanisterSettings = record {
   freezing_threshold : opt nat;
 };
 
+type SubnetFilter = record {
+  subnet_type : opt text;
+};
+
 type SubnetSelection = variant {
   /// Choose a specific subnet
   Subnet : record {
     subnet : principal;
   };
   Filter : SubnetFilter;
-};
-
-type SubnetFilter = record {
-  subnet_type : opt text;
-};
-
-type CreateCanisterSuccess = record {
-  block_id : BlockIndex;
-  canister_id : principal;
 };
 
 type CreateCanisterError = variant {
@@ -134,9 +130,18 @@ type CreateCanisterError = variant {
 };
 
 create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
-
 ```
 
+The only parameter that must be provided is the number of cycles that should
+be used for the canister creation.
+The cycles ledger fee of **100M** cycles is deducted from the user's account
+together with the specified `amount`. The cycles ledger then sends the request to create a canister
+to the cycles minting canister, attaching `amount` cycles to the call.
+The cost for the canister creation itself can be found
+[here](https://internetcomputer.org/docs/current/developer-docs/gas-cost).
+
+> NOTE: The canister is created on a **random subnet** unless specified otherwise. `SubnetSelection`
+can be used to specify a particular subnet or subnet type.
 
 ## Make a new Release
 
