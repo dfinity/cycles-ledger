@@ -2,8 +2,10 @@
 
 The cycles ledger is a global ledger canister that enables principal IDs to hold cycles.
 
-The cycles ledger complies with the [ICRC-1 token standard](https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-1).
-In addition to the ICRC-1 functionality, the cycles ledger provides endpoints to deposit and send out cycles, and also
+The cycles ledger complies with the [ICRC-2](https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md) and [ICRC-1](https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-1/README.md) token standards.
+Additionally, it implements the endpoints defined in the proposed [ICRC-3](https://github.com/dfinity/ICRC-1/pull/128) standard.
+
+The cycles ledger further provides endpoints to deposit and send out cycles, and also
 to create canisters using cycles. These custom endpoints are introduced in the following.
 
 ## Depositing Cycles
@@ -11,25 +13,129 @@ to create canisters using cycles. These custom endpoints are introduced in the f
 The cycles ledger has the following endpoint for other canisters to deposit cycles.
 
 ```
-deposit : (record { to : Account; memo : opt blob }) -> (record { txid : nat; balance : nat });
+type DepositArgs = record {
+  to : Account;
+  memo : opt vec nat8;
+};
+
+type DepositResult = record { balance : nat; txid : nat };
+
+deposit : (DepositArgs) -> (DepositResult);
 ```
 
-When invoked with a particular account (and, optionally, a memo), the balance of the account is incremented by the
-number of cycles attached to the call. There is no fee when depositing cycles; however, the number of cycles
-must be at least the transfer fee of **100M cycles**.
+When invoked with a particular account (and, optionally, a memo), the balance of the account is incremented by the number of cycles attached to the call. There is no fee when depositing cycles; however, the number of cycles must be at least the transfer fee of **100M cycles**.
 
 > NOTE: The deposit is rejected if fewer than 100M cycles are attached to the call.
 
- 
-
-
 ## Sending Cycles
 
-TO DO
+The cycles ledger has the following endpoint to send cycles to other canisters.
+
+```
+type BlockIndex = nat;
+
+type RejectionCode = variant {
+  NoError;
+  CanisterError;
+  SysTransient;
+  DestinationInvalid;
+  Unknown;
+  SysFatal;
+  CanisterReject;
+};
+
+type SendArgs = record {
+    amount : nat;
+    from_subaccount : opt vec nat8;
+    to : principal;
+    created_at_time : opt nat64;
+};
+
+type SendError = variant {
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  FailedToSend : record {
+    fee_block : opt nat;
+    rejection_code : RejectionCode;
+    rejection_reason : text;
+  };
+  Duplicate : record { duplicate_of : nat };
+  BadFee : record { expected_fee : nat };
+  InvalidReceiver : record { receiver : principal };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  InsufficientFunds : record { balance : nat };
+};
+
+send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
+```
+
+The two required parameters are the amount to be sent and the principal ID of
+the targeted canister ID. Optionally, the subaccount from which cycles are
+deducted and the time at which the transaction is created can be set as well.
+
+There is a fee of **100M cycles** for sending cycles to another canister.
+
+> NOTE: The function returns an error when the parameter `to` is not a valid canister ID.
 
 ## Creating Canisters Using Cycles
 
 TO DO
+
+```
+type CreateCanisterArgs = record {
+  from_subaccount : opt vec nat8;
+  created_at_time : opt nat64;
+  amount : nat;
+  creation_args : opt CmcCreateCanisterArgs;
+};
+
+type CmcCreateCanisterArgs = record {
+  settings : opt CanisterSettings;
+  subnet_selection : opt SubnetSelection;
+};
+
+type CanisterSettings = record {
+  controllers : opt vec principal;
+  compute_allocation : opt nat;
+  memory_allocation : opt nat;
+  freezing_threshold : opt nat;
+};
+
+type SubnetSelection = variant {
+  /// Choose a specific subnet
+  Subnet : record {
+    subnet : principal;
+  };
+  Filter : SubnetFilter;
+};
+
+type SubnetFilter = record {
+  subnet_type : opt text;
+};
+
+type CreateCanisterSuccess = record {
+  block_id : BlockIndex;
+  canister_id : principal;
+};
+
+type CreateCanisterError = variant {
+  InsufficientFunds : record { balance : nat };
+  TooOld;
+  CreatedInFuture : record { ledger_time : nat64 };
+  TemporarilyUnavailable;
+  Duplicate : record { duplicate_of : nat };
+  FailedToCreate : record {
+    fee_block : opt BlockIndex;
+    refund_block : opt BlockIndex;
+    error : text;
+  };
+  GenericError : record { message : text; error_code : nat };
+};
+
+create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
+
+```
 
 
 ## Make a new Release
