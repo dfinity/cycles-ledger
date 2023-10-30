@@ -79,7 +79,7 @@ jobs:
       - id: create-release
         run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ env.TAG }}" --notes="TBD"
       - name: Install dfx
-        run: sh -ci "$(curl -fsSL https://internetcomputer.org/install.sh)"
+        uses: dfinity/setup-dfx@main
       - name: Build WASM
         run: |
           dfx build --check
