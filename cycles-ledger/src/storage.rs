@@ -670,7 +670,7 @@ pub fn deposit(
     prune(now);
 
     Ok(DepositResult {
-        txid: Nat::from(block_index),
+        block_index: Nat::from(block_index),
         balance: Nat::from(balance_of(&to)),
     })
 }

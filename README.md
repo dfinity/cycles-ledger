@@ -18,7 +18,7 @@ type DepositArgs = record {
   memo : opt vec nat8;
 };
 
-type DepositResult = record { balance : nat; txid : nat };
+type DepositResult = record { balance : nat; block_index : nat };
 
 deposit : (DepositArgs) -> (DepositResult);
 ```

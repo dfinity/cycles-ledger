@@ -158,7 +158,7 @@ fn test_deposit_flow() {
 
     // Make the first deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
 
     // Check that the right amount of tokens have been minted
@@ -169,7 +169,7 @@ fn test_deposit_flow() {
 
     // Make another deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 500_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(1));
+    assert_eq!(deposit_res.block_index, Nat::from(1));
     assert_eq!(deposit_res.balance, Nat::from(1_500_000_000));
 
     // Check that the right amount of tokens have been minted
@@ -225,7 +225,7 @@ fn test_send_flow() {
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
-    assert_eq!(deposit_res.txid, 0);
+    assert_eq!(deposit_res.block_index, 0);
     assert_eq!(deposit_res.balance, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_1, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_2, 1_000_000_000);
@@ -330,7 +330,7 @@ fn test_send_fails() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
     // send more than available
@@ -1681,7 +1681,7 @@ fn test_icrc1_test_suite() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(&env, depositor_id, user, 1_000_000_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
     assert_eq!(1_000_000_000_000_000, balance_of(&env, ledger_id, user));
 
@@ -1713,7 +1713,7 @@ fn test_create_canister() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(&env, depositor_id, user, expected_balance);
-    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
 
