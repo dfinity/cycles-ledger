@@ -670,7 +670,7 @@ pub fn deposit(
     prune(now);
 
     Ok(DepositResult {
-        txid: Nat::from(block_index),
+        transaction: Nat::from(block_index),
         balance: Nat::from(balance_of(&to)),
     })
 }
@@ -1482,7 +1482,7 @@ pub async fn send(
             Ok(fee_block) => {
                 prune(now);
                 return Err(FailedToSend {
-                    fee_block: Some(Nat::from(fee_block)),
+                    fee_transaction: Some(Nat::from(fee_block)),
                     rejection_code,
                     rejection_reason,
                 });
@@ -1603,8 +1603,8 @@ pub async fn create_canister(
                 Ok(fee_block) => {
                     prune(now);
                     Err(FailedToCreate {
-                        fee_block: Some(Nat::from(block_index)),
-                        refund_block: Some(Nat::from(fee_block)),
+                        fee_transaction: Some(Nat::from(block_index)),
+                        refund_transaction: Some(Nat::from(fee_block)),
                         error: format!(
                             "CMC rejected canister creation with code {:?} and reason {}",
                             rejection_code, rejection_reason
@@ -1620,7 +1620,7 @@ pub async fn create_canister(
         }
         Ok((cmc_result,)) => match cmc_result {
             Ok(canister_id) => Ok(CreateCanisterSuccess {
-                block_id: Nat::from(block_index),
+                transaction: Nat::from(block_index),
                 canister_id,
             }),
             Err(err) => match err {
@@ -1649,8 +1649,8 @@ pub async fn create_canister(
                     prune(now);
 
                     Err(CreateCanisterError::FailedToCreate {
-                        fee_block: Some(Nat::from(block_index)),
-                        refund_block: Some(Nat::from(refund_index)),
+                        fee_transaction: Some(Nat::from(block_index)),
+                        refund_transaction: Some(Nat::from(refund_index)),
                         error: create_error,
                     })
                 }
@@ -1658,8 +1658,8 @@ pub async fn create_canister(
                     create_error,
                     refund_error,
                 } => Err(FailedToCreate {
-                    fee_block: Some(Nat::from(block_index)),
-                    refund_block: None,
+                    fee_transaction: Some(Nat::from(block_index)),
+                    refund_transaction: None,
                     error: format!(
                         "create_canister error: {}, refund error: {}",
                         create_error, refund_error

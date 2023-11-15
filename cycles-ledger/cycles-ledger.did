@@ -1,7 +1,7 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
 type Allowance = record { allowance : nat; expires_at : opt nat64 };
 type AllowanceArgs = record { account : Account; spender : Account };
-type BlockIndex = nat;
+type TransactionIndex = nat;
 type ApproveArgs = record {
   fee : opt nat;
   memo : opt vec nat8;
@@ -15,7 +15,7 @@ type ApproveArgs = record {
 type ApproveError = variant {
   GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
-  Duplicate : record { duplicate_of : nat };
+  Duplicate : record { duplicate_of : TransactionIndex };
   BadFee : record { expected_fee : nat };
   AllowanceChanged : record { current_allowance : nat };
   CreatedInFuture : record { ledger_time : nat64 };
@@ -27,7 +27,10 @@ type DepositArgs = record {
   to : Account;
   memo : opt vec nat8;
 };
-type DepositResult = record { balance : nat; txid : nat };
+type DepositResult = record {
+  balance : nat;
+  transaction : TransactionIndex;
+};
 type RejectionCode = variant {
   NoError;
   CanisterError;
@@ -47,11 +50,11 @@ type SendError = variant {
   GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
   FailedToSend : record {
-    fee_block : opt nat;
+    fee_transaction : opt TransactionIndex;
     rejection_code : RejectionCode;
     rejection_reason : text;
   };
-  Duplicate : record { duplicate_of : nat };
+  Duplicate : record { duplicate_of : TransactionIndex };
   BadFee : record { expected_fee : nat };
   InvalidReceiver : record { receiver : principal };
   CreatedInFuture : record { ledger_time : nat64 };
@@ -71,7 +74,7 @@ type TransferError = variant {
   GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
   BadBurn : record { min_burn_amount : nat };
-  Duplicate : record { duplicate_of : nat };
+  Duplicate : record { duplicate_of : TransactionIndex };
   BadFee : record { expected_fee : nat };
   CreatedInFuture : record { ledger_time : nat64 };
   TooOld;
@@ -91,7 +94,7 @@ type TransferFromError = variant {
   TemporarilyUnavailable;
   InsufficientAllowance : record { allowance : nat };
   BadBurn : record { min_burn_amount : nat };
-  Duplicate : record { duplicate_of : nat };
+  Duplicate : record { duplicate_of : TransactionIndex };
   BadFee : record { expected_fee : nat };
   CreatedInFuture : record { ledger_time : nat64 };
   TooOld;
@@ -114,7 +117,7 @@ type GetTransactionsResult = record {
   // transaction log.
   log_length : nat;
 
-  transactions : vec record { id : nat; transaction : Value };
+  transactions : vec record { id : TransactionIndex; transaction : Value };
 
   // The archived_transactions vector is always going to be empty
   // for this ledger because there is no archive node.
@@ -189,7 +192,7 @@ type SubnetFilter = record {
 };
 
 type CreateCanisterSuccess = record {
-  block_id : BlockIndex;
+  transaction : TransactionIndex;
   canister_id : principal;
 };
 
@@ -200,8 +203,8 @@ type CreateCanisterError = variant {
   TemporarilyUnavailable;
   Duplicate : record { duplicate_of : nat };
   FailedToCreate : record {
-    fee_block : opt BlockIndex;
-    refund_block : opt BlockIndex;
+    fee_transaction : opt TransactionIndex;
+    refund_transaction : opt TransactionIndex;
     error : text;
   };
   GenericError : record { message : text; error_code : nat };
@@ -238,12 +241,12 @@ service : (ledger_args : LedgerArgs) -> {
   icrc1_supported_standards : () -> (vec SupportedStandard) query;
   icrc1_symbol : () -> (text) query;
   icrc1_total_supply : () -> (nat) query;
-  icrc1_transfer : (TransferArgs) -> (variant { Ok : BlockIndex; Err : TransferError });
+  icrc1_transfer : (TransferArgs) -> (variant { Ok : TransactionIndex; Err : TransferError });
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
-  icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
-  icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
+  icrc2_approve : (ApproveArgs) -> (variant { Ok : TransactionIndex; Err : ApproveError });
+  icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : TransactionIndex; Err : TransferFromError });
   icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
   icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
-  send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
+  send : (SendArgs) -> (variant { Ok : TransactionIndex; Err : SendError });
   create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
 };

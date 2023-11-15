@@ -50,7 +50,7 @@ pub struct DepositArg {
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DepositResult {
-    pub txid: Nat,
+    pub transaction: Nat,
     pub balance: Nat,
 }
 
@@ -87,7 +87,7 @@ pub enum SendError {
         duplicate_of: BlockIndex,
     },
     FailedToSend {
-        fee_block: Option<Nat>,
+        fee_transaction: Option<Nat>,
         rejection_code: RejectionCode,
         rejection_reason: String,
     },
@@ -254,8 +254,8 @@ pub enum CreateCanisterError {
         duplicate_of: BlockIndex,
     },
     FailedToCreate {
-        fee_block: Option<Nat>,
-        refund_block: Option<Nat>,
+        fee_transaction: Option<Nat>,
+        refund_transaction: Option<Nat>,
         error: String,
     },
     GenericError {
@@ -270,6 +270,6 @@ impl CreateCanisterError {
 
 #[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
 pub struct CreateCanisterSuccess {
-    pub block_id: Nat,
+    pub transaction: Nat,
     pub canister_id: Principal,
 }
