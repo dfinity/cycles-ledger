@@ -110,7 +110,10 @@ type Value = variant {
   Array : vec Value;
 };
 
-type GetTransactionsArgs = vec record { start : nat; length : nat };
+type GetTransactionsArgs = vec record {
+  start : TransactionIndex;
+  length : TransactionIndex;
+};
 
 type GetTransactionsResult = record {
   // Total number of transactions in the
