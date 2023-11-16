@@ -50,7 +50,7 @@ pub struct DepositArg {
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DepositResult {
-    pub txid: Nat,
+    pub block_index: Nat,
     pub balance: Nat,
 }
 
