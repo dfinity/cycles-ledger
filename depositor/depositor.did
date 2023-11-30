@@ -1,5 +1,5 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
 type DepositArg = record { to : Account; memo : opt vec nat8; cycles : nat };
-type DepositResult = record { balance : nat; txid : nat };
+type DepositResult = record { balance : nat; block_index : nat };
 type InitArg = record { ledger_id : principal };
-service : (InitArg) -> { deposit : (DepositArg) -> (DepositResult) }
+service : (InitArg) -> { deposit : (DepositArg) -> (DepositResult) };
