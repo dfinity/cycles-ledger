@@ -1791,6 +1791,34 @@ fn test_create_canister() {
         }
     );
 
+    // If CanisterSettings specify no controller the caller should still control the resulting canister
+    let canister_settings = CanisterSettings {
+        controllers: None,
+        compute_allocation: Some(Nat::from(7)),
+        memory_allocation: Some(Nat::from(8)),
+        freezing_threshold: Some(Nat::from(9)),
+    };
+    let CreateCanisterSuccess { canister_id, .. } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: Some(CmcCreateCanisterArgs {
+                subnet_selection: None,
+                settings: Some(canister_settings),
+            }),
+        },
+    )
+    .unwrap();
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister_id, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(status.settings.controllers, vec![user.owner]);
+
     // reject before `await`
     if let CreateCanisterError::InsufficientFunds { balance } = create_canister(
         &env,

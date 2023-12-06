@@ -1579,13 +1579,25 @@ pub async fn create_canister(
         let _ = reimburse();
     });
 
-    let argument = argument.unwrap_or_else(|| CmcCreateCanisterArgs {
-        settings: Some(CanisterSettings {
-            controllers: Some(vec![ic_cdk::api::caller()]),
-            ..Default::default()
-        }),
-        subnet_selection: None,
-    });
+    let argument = argument
+        .map(|arg| CmcCreateCanisterArgs {
+            settings: arg.settings.map(|settings| CanisterSettings {
+                controllers: Some(
+                    settings
+                        .controllers
+                        .unwrap_or_else(|| vec![ic_cdk::api::caller()]),
+                ),
+                ..settings
+            }),
+            ..arg
+        })
+        .unwrap_or_else(|| CmcCreateCanisterArgs {
+            settings: Some(CanisterSettings {
+                controllers: Some(vec![ic_cdk::api::caller()]),
+                ..Default::default()
+            }),
+            subnet_selection: None,
+        });
     let create_canister_result: Result<
         (Result<Principal, CmcCreateCanisterError>,),
         (RejectionCode, String),
