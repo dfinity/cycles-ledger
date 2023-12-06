@@ -1,4 +1,5 @@
 use candid::{candid_method, Principal};
+use core::panic;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
 use fake_cmc::State;
 use ic_cdk::{
@@ -45,18 +46,26 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
         };
         return Err(error);
     };
-
     ic_cdk::api::call::msg_cycles_accept128(cycles);
-    match ic_cdk::api::management_canister::main::create_canister(
-        CreateCanisterArgument {
-            settings: arg.settings,
-        },
-        cycles,
-    )
-    .await
-    {
-        Ok((record,)) => Ok(record.canister_id),
-        Err(error) => panic!("create_canister failed: {:?}", error),
+
+    // "Canister <id> is already installed" happens because the canister id counter doesn't take into account that a canister with that id
+    // was already created using `provisional_create_canister_with_id`. Simply loop to try the next canister id.
+    loop {
+        match ic_cdk::api::management_canister::main::create_canister(
+            CreateCanisterArgument {
+                settings: arg.settings.clone(),
+            },
+            cycles,
+        )
+        .await
+        {
+            Ok((record,)) => return Ok(record.canister_id),
+            Err(error) => {
+                if !error.1.contains("is already installed") {
+                    panic!("create_canister failed: {:?}", error)
+                }
+            }
+        }
     }
 }
 
