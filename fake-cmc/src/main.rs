@@ -49,7 +49,7 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     ic_cdk::api::call::msg_cycles_accept128(cycles);
 
     // "Canister <id> is already installed" happens because the canister id counter doesn't take into account that a canister with that id
-    // was already created using `provisional_create_canister_with_id`. Simply retry to try the next canister id.
+    // was already created using `provisional_create_canister_with_id`. Simply loop to try the next canister id.
     loop {
         match ic_cdk::api::management_canister::main::create_canister(
             CreateCanisterArgument {

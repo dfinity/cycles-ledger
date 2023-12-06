@@ -1791,7 +1791,7 @@ fn test_create_canister() {
         }
     );
 
-    // If CanisterSettings specify no controller the caller should still control the resulting canister
+    // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
     let canister_settings = CanisterSettings {
         controllers: None,
         compute_allocation: Some(Nat::from(7)),
