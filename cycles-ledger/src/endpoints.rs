@@ -252,6 +252,7 @@ pub enum CreateCanisterError {
     TemporarilyUnavailable,
     Duplicate {
         duplicate_of: BlockIndex,
+        canister_id: Option<Principal>,
     },
     FailedToCreate {
         fee_block: Option<Nat>,

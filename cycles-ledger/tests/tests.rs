@@ -1977,4 +1977,35 @@ fn test_create_canister() {
     } else {
         panic!("wrong error")
     };
+
+    // duplicate creation request returns the same canister twice
+    let arg = CreateCanisterArgs {
+        from_subaccount: user.subaccount,
+        created_at_time: Some(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64),
+        amount: CREATE_CANISTER_CYCLES.into(),
+        creation_args: None,
+    };
+    let canister = create_canister(&env, ledger_id, user, arg.clone())
+        .unwrap()
+        .canister_id;
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+    let duplicate = create_canister(&env, ledger_id, user, arg).unwrap_err();
+    assert_matches!(
+        duplicate,
+        CreateCanisterError::Duplicate { .. },
+        "No duplicate reported"
+    );
+    let CreateCanisterError::Duplicate {
+            canister_id: Some(duplicate_canister_id),
+            ..
+        }
+     = duplicate else {panic!("No duplicate canister reported")};
+    assert_eq!(
+        canister, duplicate_canister_id,
+        "Different canister id returned"
+    )
 }

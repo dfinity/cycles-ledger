@@ -439,7 +439,7 @@ fn main() {}
 fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {
-        for (key, value) in state.transaction_hashes.iter() {
+        for (key, (value, _maybe_canister)) in state.transaction_hashes.iter() {
             res.insert(key, value);
         }
     });

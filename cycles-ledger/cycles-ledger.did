@@ -198,7 +198,12 @@ type CreateCanisterError = variant {
   TooOld;
   CreatedInFuture : record { ledger_time : nat64 };
   TemporarilyUnavailable;
-  Duplicate : record { duplicate_of : nat };
+  Duplicate : record {
+    duplicate_of : nat;
+    // If the duplicate transaction created a cansister and the canister id is known,
+    // then this field will contain the canister id.
+    canister_id : opt principal;
+  };
   FailedToCreate : record {
     fee_block : opt BlockIndex;
     refund_block : opt BlockIndex;

@@ -20,10 +20,10 @@ ciborium = "0.2"
 ic-cdk.workspace = true
 ic-cdk-macros.workspace = true
 ic-certified-map = "0.4.0"
-ic-stable-structures = "0.5.0"
+ic-stable-structures = "0.6.0"
 icrc-ledger-types.workspace = true
 hex = "0.4.3"
-minicbor = {version = "0.19.1", features = ["alloc", "derive"] }
+minicbor = { version = "0.19.1", features = ["alloc", "derive"] }
 num-bigint = "0.4"
 num-traits = "0.2"
 serde.workspace = true
