@@ -200,8 +200,7 @@ type CreateCanisterError = variant {
   TemporarilyUnavailable;
   Duplicate : record {
     duplicate_of : nat;
-    // If the duplicate transaction created a cansister and the canister id is known,
-    // then this field will contain the canister id.
+    // If the original transaction created a cansister then this field will contain the canister id.
     canister_id : opt principal;
   };
   FailedToCreate : record {
