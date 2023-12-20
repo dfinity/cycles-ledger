@@ -71,7 +71,7 @@ pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
 pub type Hash = [u8; 32];
 
-// TODO(ticket-???): once we bump candid this is implemented by Principal already
+// TODO: once we bump candid to 0.10 this is implemented by Principal already and `StorablePrincipal` can be deleted
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct StorablePrincipal(Principal);
 
@@ -1684,8 +1684,18 @@ pub async fn create_canister(
         }
         Ok((cmc_result,)) => match cmc_result {
             Ok(canister_id) => {
-                // TODO
-                // mutate_state(|state| state.transaction_hashes.get)
+                if let Ok(tx_hash) = transaction.hash() {
+                    mutate_state(|state| {
+                        if state.transaction_hashes.contains_key(&tx_hash) {
+                            state
+                                .transaction_hashes
+                                .insert(tx_hash, (block_index, Some(canister_id.into())));
+                        }
+                    });
+                } else {
+                    // this should not happen because processing the transaction already checks if it can be hashed
+                    log_error_and_trap(&anyhow!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
+                }
                 Ok(CreateCanisterSuccess {
                     block_id: Nat::from(block_index),
                     canister_id,
