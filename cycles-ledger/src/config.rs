@@ -48,6 +48,9 @@ impl Storable for Config {
         ciborium::from_reader::<Self, _>(bytes.as_ref())
             .expect("Unable to deserialize the config from its CBOR form")
     }
+
+    const BOUND: ic_stable_structures::storable::Bound =
+        ic_stable_structures::storable::Bound::Unbounded;
 }
 
 #[test]

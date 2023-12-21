@@ -24,7 +24,6 @@ use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
     cell::Cell as StableCell,
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
-    storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use icrc_ledger_types::icrc2::approve::ApproveError;
@@ -56,11 +55,13 @@ pub const CMC_PRINCIPAL: Principal = Principal::from_slice(&[0, 0, 0, 0, 0, 0, 0
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
-pub type AccountKey = (Blob<29>, [u8; 32]);
+pub type AccountKey = (StorablePrincipal, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
+/// maps tx hash to block index and an optional principal, which is set if the tx produced a canister
+pub type TransactionHashes = StableBTreeMap<Hash, (u64, Option<StorablePrincipal>), VMem>;
 pub type TransactionTimeStampKey = (u64, u64);
+/// maps time stamp to block index
 pub type TransactionTimeStamps = StableBTreeMap<TransactionTimeStampKey, (), VMem>;
 pub type ConfigCell = StableCell<Config, VMem>;
 
@@ -69,6 +70,46 @@ pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
 pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
 pub type Hash = [u8; 32];
+
+// TODO: once we bump candid to 0.10 this is implemented by Principal already and `StorablePrincipal` can be deleted
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StorablePrincipal(Principal);
+
+impl Storable for StorablePrincipal {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        Cow::Borrowed(self.0.as_slice())
+    }
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        Self(Principal::from_slice(&bytes))
+    }
+
+    const BOUND: ic_stable_structures::storable::Bound =
+        ic_stable_structures::storable::Bound::Bounded {
+            max_size: 29,
+            is_fixed_size: false,
+        };
+}
+
+impl From<Principal> for StorablePrincipal {
+    fn from(value: Principal) -> Self {
+        Self(value)
+    }
+}
+
+impl From<StorablePrincipal> for Principal {
+    fn from(value: StorablePrincipal) -> Self {
+        value.0
+    }
+}
+
+impl std::ops::Deref for StorablePrincipal {
+    type Target = Principal;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 pub struct Cache {
     // The hash of the last block.
@@ -475,7 +516,7 @@ impl State {
         if let Some(ts) = created_at_time {
             // Add block index to the list of transactions and set the hash as its key
             self.transaction_hashes
-                .insert(tx_hash, self.blocks.len() - 1);
+                .insert(tx_hash, (self.blocks.len() - 1, None));
             self.transaction_timestamps
                 .insert((ts, self.blocks.len() - 1), ());
         }
@@ -609,14 +650,13 @@ where
     fn from_bytes(bytes: Cow<[u8]>) -> Self {
         Self(ciborium::de::from_reader(bytes.as_ref()).unwrap())
     }
+
+    const BOUND: ic_stable_structures::storable::Bound =
+        ic_stable_structures::storable::Bound::Unbounded;
 }
 
 pub fn to_account_key(account: &Account) -> AccountKey {
-    (
-        Blob::try_from(account.owner.as_slice())
-            .expect("principals cannot be longer than 29 bytes"),
-        *account.effective_subaccount(),
-    )
+    (account.owner.into(), *account.effective_subaccount())
 }
 
 pub fn balance_of(account: &Account) -> u128 {
@@ -902,8 +942,13 @@ pub fn approve(
 
 #[derive(Debug)]
 enum ProcessTransactionError {
-    BadFee { expected_fee: u128 },
-    Duplicate { duplicate_of: u64 },
+    BadFee {
+        expected_fee: u128,
+    },
+    Duplicate {
+        duplicate_of: u64,
+        canister_id: Option<Principal>,
+    },
     InvalidCreatedAtTime(CreatedAtTimeValidationError),
     GenericError(anyhow::Error),
 }
@@ -932,7 +977,7 @@ impl std::fmt::Display for ProcessTransactionError {
             Self::BadFee { expected_fee } => {
                 write!(f, "Invalid fee, expected fee is {}", expected_fee)
             }
-            Self::Duplicate { duplicate_of } => write!(
+            Self::Duplicate { duplicate_of, .. } => write!(
                 f,
                 "Input transaction is a duplicate of transaction at index {}",
                 duplicate_of
@@ -1074,7 +1119,7 @@ impl From<ProcessTransactionError> for TransferFromError {
             BadFee { expected_fee } => Self::BadFee {
                 expected_fee: Nat::from(expected_fee),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
@@ -1091,7 +1136,7 @@ impl From<ProcessTransactionError> for ApproveError {
             BadFee { expected_fee } => Self::BadFee {
                 expected_fee: Nat::from(expected_fee),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
@@ -1108,7 +1153,7 @@ impl From<ProcessTransactionError> for SendError {
             BadFee { expected_fee } => Self::BadFee {
                 expected_fee: Nat::from(expected_fee),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
@@ -1129,8 +1174,12 @@ impl From<ProcessTransactionError> for CreateCanisterError {
                     expected_fee
                 ),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate {
+                duplicate_of,
+                canister_id,
+            } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
+                canister_id,
             },
             InvalidCreatedAtTime(err) => err.into(),
             GenericError(err) => create_canister::unknown_generic_error(format!("{:#}", err)),
@@ -1223,9 +1272,12 @@ fn process_block(
     };
 
     // check whether transaction is a duplicate
-    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
+    if let Some((block_index, maybe_canister)) =
+        read_state(|state| state.transaction_hashes.get(&tx_hash))
+    {
         return Err(PTErr::Duplicate {
             duplicate_of: block_index,
+            canister_id: maybe_canister.map(Into::into),
         });
     }
 
@@ -1631,10 +1683,24 @@ pub async fn create_canister(
             }
         }
         Ok((cmc_result,)) => match cmc_result {
-            Ok(canister_id) => Ok(CreateCanisterSuccess {
-                block_id: Nat::from(block_index),
-                canister_id,
-            }),
+            Ok(canister_id) => {
+                if let Ok(tx_hash) = transaction.hash() {
+                    mutate_state(|state| {
+                        if state.transaction_hashes.contains_key(&tx_hash) {
+                            state
+                                .transaction_hashes
+                                .insert(tx_hash, (block_index, Some(canister_id.into())));
+                        }
+                    });
+                } else {
+                    // this should not happen because processing the transaction already checks if it can be hashed
+                    log_error_and_trap(&anyhow!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
+                }
+                Ok(CreateCanisterSuccess {
+                    block_id: Nat::from(block_index),
+                    canister_id,
+                })
+            }
             Err(err) => match err {
                 CmcCreateCanisterError::Refunded {
                     refund_amount,
@@ -1866,7 +1932,7 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
             // ´block_index´ cannot point to two blocks with identical transaction hashes within the deduplication window.
             // Example: if the ´transaction_timestamp´ storage has the entries [(time_a,block_a),(time_a,block_b)] then
             // the hashes of the transactions in block_a and block_b cannot be identical
-            Some(found_block_idx) if found_block_idx != block_idx => {
+            Some((found_block_idx, _maybe_canister)) if found_block_idx != block_idx => {
                 log!(
                     P0,
                     "Block id: {} associated with the transaction hash: {} in the \
@@ -2177,7 +2243,7 @@ mod tests {
                 // the fist 6 blocks are old and will be pruned, the last 4 are in the tx window
                 block.transaction.created_at_time = Some(if i < 6 { old } else { curr });
                 state.blocks.append(&crate::storage::Cbor(block.clone())).unwrap();
-                state.transaction_hashes.insert(block.transaction.hash().unwrap(), i as u64);
+                state.transaction_hashes.insert(block.transaction.hash().unwrap(), (i as u64, None));
                 if let Some(created_at_time) = block.transaction.created_at_time {
                     state.transaction_timestamps.insert((created_at_time, i as u64), ());
                 }
