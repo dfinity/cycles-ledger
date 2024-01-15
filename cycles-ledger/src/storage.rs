@@ -868,6 +868,20 @@ pub fn approve(
     expected_allowance: Option<u128>,
     expires_at: Option<u64>,
 ) -> Result<Nat, ApproveError> {
+    let transaction = Transaction {
+        operation: Operation::Approve {
+            from,
+            spender,
+            amount,
+            expected_allowance,
+            expires_at,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+    check_duplicate(&transaction)?;
+
     // check that this isn't a self approval
     if from.owner == spender.owner {
         ic_cdk::trap("self approval is not allowed");
@@ -911,19 +925,6 @@ pub fn approve(
             )
         })
         .map_err(approve::anyhow_error)?;
-
-    let transaction = Transaction {
-        operation: Operation::Approve {
-            from,
-            spender,
-            amount,
-            expected_allowance,
-            expires_at,
-            fee: suggested_fee,
-        },
-        created_at_time,
-        memo,
-    };
 
     let block_index = process_transaction(transaction.clone(), now)?;
 

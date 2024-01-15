@@ -615,6 +615,88 @@ fn test_approve_cap() {
 }
 
 #[test]
+fn test_approve_duplicate() {
+    use icrc_ledger_types::icrc2::approve::ApproveError;
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000
+    );
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: Nat::from(100),
+        expected_allowance: Some(Nat::from(0)),
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: Some(now),
+    };
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(100));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
+    );
+
+    // re-submit should error with duplicate
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+
+    let result = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            from.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, ApproveError>).unwrap()
+    } else {
+        panic!("icrc2_approve rejected")
+    };
+
+    assert_eq!(
+        result,
+        Err(ApproveError::Duplicate {
+            duplicate_of: Nat::from(1)
+        })
+    );
+}
+
+#[test]
 fn test_approval_expiring() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
@@ -1033,7 +1115,7 @@ fn test_deduplication_with_insufficient_funds() {
             amount: transfer_amount.clone(),
         },
     )
-        .unwrap();
+    .unwrap();
 
     // Should not be able send the same transfer twice if created_at_time is set
     assert_eq!(
@@ -1051,9 +1133,8 @@ fn test_deduplication_with_insufficient_funds() {
                 amount: transfer_amount.clone(),
             },
         )
-            .unwrap_err()
+        .unwrap_err()
     );
-
 }
 
 #[test]
