@@ -319,6 +319,70 @@ fn test_send_flow() {
 }
 
 #[test]
+fn test_send_duplicate() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user_main_account = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let send_receiver = env.create_canister(None);
+
+    // make deposits to the user and check the result
+    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
+    assert_eq!(deposit_res.block_index, 0);
+    assert_eq!(deposit_res.balance, 1_000_000_000);
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // send cycles from main account
+    let send_receiver_balance = env.cycle_balance(send_receiver);
+    let send_amount = 900_000_000_u128;
+    let send_idx = send(
+        env,
+        ledger_id,
+        user_main_account,
+        SendArgs {
+            from_subaccount: None,
+            to: send_receiver,
+            created_at_time: Some(now),
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_main_account),
+        1_000_000_000 - send_amount - FEE
+    );
+
+    assert_eq!(
+        SendError::Duplicate {
+            duplicate_of: send_idx
+        },
+        send(
+            env,
+            ledger_id,
+            user_main_account,
+            SendArgs {
+                from_subaccount: None,
+                to: send_receiver,
+                created_at_time: Some(now),
+                amount: Nat::from(send_amount),
+            },
+        )
+        .unwrap_err()
+    );
+}
+
+#[test]
 fn test_send_fails() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);

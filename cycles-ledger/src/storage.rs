@@ -1466,6 +1466,13 @@ pub async fn send(
         return Err(InsufficientFunds { balance: balance_of(&from).into() });
     };
 
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(encode_send_memo(&to)),
+    };
+    check_duplicate(&transaction)?;
+
     // check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
         |balance| InsufficientFunds {
@@ -1484,12 +1491,6 @@ pub async fn send(
     // 3. if 2. fails then mint cycles
 
     // 1. burn cycles + fee
-
-    let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
-        created_at_time,
-        memo: Some(encode_send_memo(&to)),
-    };
 
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
