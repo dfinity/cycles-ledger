@@ -2149,3 +2149,68 @@ fn test_create_canister() {
         "Different canister id returned"
     )
 }
+
+#[test]
+fn test_create_canister_duplicate() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    let env = new_state_machine();
+    install_fake_cmc(&env);
+    let ledger_id = install_ledger(&env);
+    let depositor_id = install_depositor(&env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[10]),
+        subaccount: Some([0; 32]),
+    };
+    let mut expected_balance = 1_500_000_000_000_u128;
+
+    // make the first deposit to the user and check the result
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    assert_eq!(deposit_res.block_index, Nat::from(0));
+    assert_eq!(deposit_res.balance, expected_balance);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // successful create
+    let canister = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: Some(now),
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap()
+    .canister_id;
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    // no canister creation fee on system subnet (where the StateMachine is by default)
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+
+    assert_eq!(
+        CreateCanisterError::Duplicate {
+            duplicate_of: Nat::from(1),
+            canister_id: Some(canister)
+        },
+        create_canister(
+            &env,
+            ledger_id,
+            user,
+            CreateCanisterArgs {
+                from_subaccount: user.subaccount,
+                created_at_time: Some(now),
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+            },
+        )
+        .unwrap_err()
+    );
+}

@@ -1568,6 +1568,13 @@ pub async fn create_canister(
 ) -> Result<CreateCanisterSuccess, CreateCanisterError> {
     use CreateCanisterError::*;
 
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+    };
+    check_duplicate(&transaction)?;
+
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
         return Err(InsufficientFunds { balance: balance_of(&from).into() });
@@ -1591,12 +1598,6 @@ pub async fn create_canister(
     // 3. if 2. fails then mint cycles
 
     // 1. burn cycles + fee
-
-    let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
-        created_at_time,
-        memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
-    };
 
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
