@@ -998,6 +998,65 @@ fn test_deduplication() {
 }
 
 #[test]
+fn test_deduplication_with_insufficient_funds() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+    let transfer_amount = Nat::from(600_000_000);
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // Make a transfer with created_at_time set
+    let tx: Nat = transfer(
+        env,
+        ledger_id,
+        user1.owner,
+        TransferArgs {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: Some(now),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+        .unwrap();
+
+    // Should not be able send the same transfer twice if created_at_time is set
+    assert_eq!(
+        TransferError::Duplicate { duplicate_of: tx },
+        transfer(
+            env,
+            ledger_id,
+            user1.owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: user2,
+                fee: None,
+                created_at_time: Some(now),
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+            .unwrap_err()
+    );
+
+}
+
+#[test]
 fn test_pruning_transactions() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);

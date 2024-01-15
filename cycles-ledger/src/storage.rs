@@ -766,6 +766,19 @@ pub fn transfer(
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
 
+    let transaction = Transaction {
+        operation: Operation::Transfer {
+            from,
+            to,
+            spender,
+            amount,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+    check_duplicate(&transaction)?;
+
     // check that no account is owned by a denied principal
     if is_denied_account_owner(&from.owner) {
         return Err(transfer_from::denied_owner(from));
@@ -811,18 +824,6 @@ pub fn transfer(
             )
         })
         .map_err(transfer_from::anyhow_error)?;
-
-    let transaction = Transaction {
-        operation: Operation::Transfer {
-            from,
-            to,
-            spender,
-            amount,
-            fee: suggested_fee,
-        },
-        created_at_time,
-        memo,
-    };
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
@@ -1238,6 +1239,31 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
     }
 }
 
+fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionError> {
+    use ProcessTransactionError as PTErr;
+    // sanity check that the transaction can be hashed
+    let tx_hash = match transaction.hash() {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            let err = err.context(format!("Unable to process transaction {:?}", transaction));
+            log!(P0, "{:#}", err);
+            return Err(PTErr::from(err));
+        }
+    };
+
+    // check whether transaction is a duplicate
+    if let Some((block_index, maybe_canister)) =
+        read_state(|state| state.transaction_hashes.get(&tx_hash))
+    {
+        return Err(PTErr::Duplicate {
+            duplicate_of: block_index,
+            canister_id: maybe_canister.map(Into::into),
+        });
+    }
+
+    Ok(())
+}
+
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
     process_block(transaction, now, None)
 }
@@ -1261,25 +1287,7 @@ fn process_block(
         .map(|fee| effective_fee.or(fee))
         .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
 
-    // sanity check that the transaction can be hashed
-    let tx_hash = match transaction.hash() {
-        Ok(tx_hash) => tx_hash,
-        Err(err) => {
-            let err = err.context(format!("Unable to process transaction {:?}", transaction));
-            log!(P0, "{:#}", err);
-            return Err(PTErr::from(err));
-        }
-    };
-
-    // check whether transaction is a duplicate
-    if let Some((block_index, maybe_canister)) =
-        read_state(|state| state.transaction_hashes.get(&tx_hash))
-    {
-        return Err(PTErr::Duplicate {
-            duplicate_of: block_index,
-            canister_id: maybe_canister.map(Into::into),
-        });
-    }
+    check_duplicate(&transaction)?;
 
     let block = Block {
         transaction,
