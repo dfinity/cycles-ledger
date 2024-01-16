@@ -616,7 +616,7 @@ where
 }
 
 pub fn to_account_key(account: &Account) -> AccountKey {
-    (account.owner.into(), *account.effective_subaccount())
+    (account.owner, *account.effective_subaccount())
 }
 
 pub fn balance_of(account: &Account) -> u128 {
@@ -1649,7 +1649,7 @@ pub async fn create_canister(
                         if state.transaction_hashes.contains_key(&tx_hash) {
                             state
                                 .transaction_hashes
-                                .insert(tx_hash, (block_index, Some(canister_id.into())));
+                                .insert(tx_hash, (block_index, Some(canister_id)));
                         }
                     });
                 } else {
