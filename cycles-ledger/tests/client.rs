@@ -78,7 +78,7 @@ pub fn total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
 pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> Block {
     let arg = Encode!(&vec![GetTransactionsArg {
         start: block_index,
-        length: Nat::from(1),
+        length: Nat::from(1_u128),
     }])
     .unwrap();
     if let WasmResult::Reply(res) = env
