@@ -69,7 +69,7 @@ fn new_state_machine() -> StateMachine {
         let platform: &str = "darwin";
         #[cfg(target_os = "linux")]
         let platform: &str = "linux";
-        let suggested_ic_commit = "a17247bd86c7aa4e87742bf74d108614580f216d";
+        let suggested_ic_commit = "072b2a6586c409efa88f2244d658307ff3a645d8";
 
         // not run automatically because parallel test execution screws this up
         panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
@@ -128,7 +128,10 @@ fn install_fake_cmc(env: &StateMachine) {
             })
             .unwrap(),
         )
-        .unwrap() else {panic!("Failed to create CMC")};
+        .unwrap()
+    else {
+        panic!("Failed to create CMC")
+    };
     let response = Decode!(&response, ProvisionalCreateResponse).unwrap();
     assert_eq!(response.canister_id, CMC_PRINCIPAL);
     env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
@@ -2006,10 +2009,12 @@ fn test_create_canister() {
         "No duplicate reported"
     );
     let CreateCanisterError::Duplicate {
-            canister_id: Some(duplicate_canister_id),
-            ..
-        }
-     = duplicate else {panic!("No duplicate canister reported")};
+        canister_id: Some(duplicate_canister_id),
+        ..
+    } = duplicate
+    else {
+        panic!("No duplicate canister reported")
+    };
     assert_eq!(
         canister, duplicate_canister_id,
         "Different canister id returned"

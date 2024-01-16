@@ -14,3 +14,5 @@ target/
 
 # Ignore state machine binary
 ic-test-state-machine
+
+.vscode
