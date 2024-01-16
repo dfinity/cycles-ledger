@@ -741,7 +741,9 @@ pub fn transfer(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     // check allowance
@@ -1315,7 +1317,9 @@ pub fn validate_created_at_time(
     created_at_time: &Option<u64>,
     now: u64,
 ) -> Result<(), CreatedAtTimeValidationError> {
-    let Some(created_at_time) = created_at_time else { return Ok(())};
+    let Some(created_at_time) = created_at_time else {
+        return Ok(());
+    };
     if created_at_time
         .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
         .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
@@ -1414,7 +1418,9 @@ pub async fn send(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     // check that the `from` account has enough funds
@@ -1521,7 +1527,9 @@ pub async fn create_canister(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     // check that the `from` account has enough funds
@@ -1856,7 +1864,8 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
         pruned += 1;
 
         let Some(block) = s.blocks.get(block_idx) else {
-            log!(P0,
+            log!(
+                P0,
                 "Cannot find block with id: {}. The block id was associated \
                 with the timestamp: {} and was selected for pruning from \
                 the timestamp and hashes pools",
