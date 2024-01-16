@@ -1688,6 +1688,7 @@ fn test_icrc1_test_suite() {
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
     assert_eq!(1_000_000_000_000_000, balance_of(&env, ledger_id, user));
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let ledger_env =
         icrc1_test_env_state_machine::SMLedger::new(Arc::new(env), ledger_id, user.owner);
     let tests = icrc1_test_suite::test_suite(ledger_env)
