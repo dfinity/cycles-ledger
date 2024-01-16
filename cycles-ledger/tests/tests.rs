@@ -158,8 +158,8 @@ fn test_deposit_flow() {
 
     // Make the first deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
-    assert_eq!(deposit_res.block_index, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
 
     // Check that the right amount of tokens have been minted
     assert_eq!(total_supply(env, ledger_id), 1_000_000_000);
@@ -169,8 +169,8 @@ fn test_deposit_flow() {
 
     // Make another deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 500_000_000);
-    assert_eq!(deposit_res.block_index, Nat::from(1));
-    assert_eq!(deposit_res.balance, Nat::from(1_500_000_000));
+    assert_eq!(deposit_res.block_index, Nat::from(1_u128));
+    assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
 
     // Check that the right amount of tokens have been minted
     assert_eq!(total_supply(env, ledger_id), 1_500_000_000);
@@ -225,8 +225,8 @@ fn test_send_flow() {
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
-    assert_eq!(deposit_res.block_index, 0);
-    assert_eq!(deposit_res.balance, 1_000_000_000);
+    assert_eq!(deposit_res.block_index, 0_u128);
+    assert_eq!(deposit_res.balance, 1_000_000_000_u128);
     deposit(env, depositor_id, user_subaccount_1, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_2, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_3, 1_000_000_000);
@@ -330,7 +330,7 @@ fn test_send_fails() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000_000);
-    assert_eq!(deposit_res.block_index, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
     // send more than available
@@ -370,7 +370,7 @@ fn test_send_fails() {
     .unwrap_err();
     assert!(matches!(
         send_result,
-        SendError::InsufficientFunds { balance } if balance == 0
+        SendError::InsufficientFunds { balance } if balance == 0_u128
     ));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
@@ -501,7 +501,7 @@ fn test_approve_max_allowance_size() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     // Largest possible allowance in terms of size in bytes - max amount and expiration
@@ -515,7 +515,7 @@ fn test_approve_max_allowance_size() {
         Some(u64::MAX),
     )
     .expect("approve failed");
-    assert_eq!(block_index, 1);
+    assert_eq!(block_index, 1_u128);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(u128::MAX));
     assert_eq!(allowance.expires_at, Some(u64::MAX));
@@ -538,13 +538,13 @@ fn test_approve_self() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     let args = ApproveArgs {
         from_subaccount: None,
         spender: from,
-        amount: Nat::from(100),
+        amount: Nat::from(100_u128),
         expected_allowance: None,
         expires_at: None,
         fee: Some(Nat::from(FEE)),
@@ -582,7 +582,7 @@ fn test_approve_cap() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     // Approve amount capped at u128::MAX
@@ -639,7 +639,7 @@ fn test_approval_expiring() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     // First approval expiring 1 hour from now.
@@ -654,7 +654,7 @@ fn test_approval_expiring() {
         Some(expiration),
     )
     .expect("approve failed");
-    assert_eq!(block_index, 1);
+    assert_eq!(block_index, 1_u128);
     let allowance = get_allowance(env, ledger_id, from, spender1);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration));
@@ -672,7 +672,7 @@ fn test_approval_expiring() {
         Some(expiration_3h),
     )
     .expect("approve failed");
-    assert_eq!(block_index, 2);
+    assert_eq!(block_index, 2_u128);
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
@@ -697,7 +697,7 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     let allowance = get_allowance(env, ledger_id, from, spender1);
-    assert_eq!(allowance.allowance, Nat::from(0));
+    assert_eq!(allowance.allowance, Nat::from(0_u128));
     assert_eq!(allowance.expires_at, None);
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
@@ -746,7 +746,7 @@ fn test_basic_transfer() {
     let fee = fee(env, ledger_id);
     let mut expected_total_supply = deposit_amount;
 
-    let transfer_amount = Nat::from(100_000);
+    let transfer_amount = Nat::from(100_000_u128);
     transfer(
         env,
         ledger_id,
@@ -804,7 +804,7 @@ fn test_basic_transfer() {
             TransferArgs {
                 from_subaccount: None,
                 to: user1,
-                fee: Some(Nat::from(0)),
+                fee: Some(Nat::from(0_u128)),
                 created_at_time: None,
                 memo: None,
                 amount: transfer_amount.clone(),
@@ -864,7 +864,7 @@ fn test_deduplication() {
     };
     let deposit_amount = 1_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
-    let transfer_amount = Nat::from(100_000);
+    let transfer_amount = Nat::from(100_000_u128);
 
     // If created_at_time is not set, the same transaction should be able to be sent multiple times
     transfer(
@@ -1010,7 +1010,7 @@ fn test_pruning_transactions() {
         owner: Principal::from_slice(&[2]),
         subaccount: None,
     };
-    let transfer_amount = Nat::from(100_000);
+    let transfer_amount = Nat::from(100_000_u128);
 
     let check_tx_hashes = |length: u64, first_block: u64, last_block: u64| {
         let tx_hashes = transaction_hashes(env, ledger_id);
@@ -1170,7 +1170,7 @@ fn test_total_supply_after_upgrade() {
             fee: None,
             created_at_time: None,
             memo: None,
-            amount: Nat::from(1_000_000_000),
+            amount: Nat::from(1_000_000_000_u128),
         },
     )
     .unwrap();
@@ -1182,7 +1182,7 @@ fn test_total_supply_after_upgrade() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            amount: Nat::from(1_000_000_000),
+            amount: Nat::from(1_000_000_000_u128),
         },
     )
     .unwrap();
@@ -1275,7 +1275,7 @@ fn test_icrc3_get_transactions() {
     let ledger_id = install_ledger(env);
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 0);
+    assert_eq!(txs.log_length, 0_u128);
     assert_eq!(txs.archived_transactions.len(), 0);
     assert_eq!(get_txs(&txs), vec![]);
 
@@ -1288,7 +1288,7 @@ fn test_icrc3_get_transactions() {
     deposit(env, depositor_id, user1, 5_000_000_000);
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 1);
+    assert_eq!(txs.log_length, 1_u128);
     assert_eq!(txs.archived_transactions.len(), 0);
     let mut block0 = block(
         Mint {
@@ -1312,7 +1312,7 @@ fn test_icrc3_get_transactions() {
     deposit(env, depositor_id, user2, 3_000_000_000);
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 2);
+    assert_eq!(txs.log_length, 2_u128);
     assert_eq!(txs.archived_transactions.len(), 0);
     let mut block1 = block(
         Mint {
@@ -1334,7 +1334,7 @@ fn test_icrc3_get_transactions() {
 
     // check retrieving a subset of the transactions
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
-    assert_eq!(txs.log_length, 2);
+    assert_eq!(txs.log_length, 2_u128);
     assert_eq!(txs.archived_transactions.len(), 0);
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone())];
@@ -1349,13 +1349,13 @@ fn test_icrc3_get_transactions() {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            amount: Nat::from(2_000_000_000),
+            amount: Nat::from(2_000_000_000_u128),
         },
     )
     .expect("Send failed");
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 3);
+    assert_eq!(txs.log_length, 3_u128);
     assert_eq!(txs.archived_transactions.len(), 0);
     let send_memo = encode_send_memo(&depositor_id);
     let mut block2 = block(
@@ -1391,7 +1391,7 @@ fn test_icrc3_get_transactions() {
             fee: None,
             created_at_time: None,
             memo: None,
-            amount: Nat::from(1_000_000_000),
+            amount: Nat::from(1_000_000_000_u128),
         },
     )
     .expect("Transfer failed");
@@ -1416,7 +1416,7 @@ fn test_icrc3_get_transactions() {
     .expect("Transfer from failed");
 
     let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 6);
+    assert_eq!(txs.log_length, 6_u128);
     assert_eq!(txs.archived_transactions.len(), 0);
     let actual_txs = get_txs(&txs);
     let block3 = block(
@@ -1681,7 +1681,7 @@ fn test_icrc1_test_suite() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(&env, depositor_id, user, 1_000_000_000_000_000);
-    assert_eq!(deposit_res.block_index, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
     assert_eq!(1_000_000_000_000_000, balance_of(&env, ledger_id, user));
 
@@ -1713,7 +1713,7 @@ fn test_create_canister() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(&env, depositor_id, user, expected_balance);
-    assert_eq!(deposit_res.block_index, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
 
@@ -1740,9 +1740,10 @@ fn test_create_canister() {
 
     let canister_settings = CanisterSettings {
         controllers: Some(vec![user.owner, Principal::anonymous()]),
-        compute_allocation: Some(Nat::from(7)),
-        memory_allocation: Some(Nat::from(8)),
-        freezing_threshold: Some(Nat::from(9)),
+        compute_allocation: Some(Nat::from(7_u128)),
+        memory_allocation: Some(Nat::from(8_u128)),
+        freezing_threshold: Some(Nat::from(9_u128)),
+        reserved_cycles_limit: Some(Nat::from(10_u128)),
     };
     let CreateCanisterSuccess {
         canister_id,
@@ -1783,6 +1784,10 @@ fn test_create_canister() {
         status.settings.memory_allocation,
         canister_settings.memory_allocation.unwrap()
     );
+    assert_eq!(
+        status.settings.reserved_cycles_limit,
+        canister_settings.reserved_cycles_limit.unwrap()
+    );
     assert_matches!(
         get_block(&env, ledger_id, block_id).transaction.operation,
         Operation::Burn {
@@ -1794,9 +1799,10 @@ fn test_create_canister() {
     // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
     let canister_settings = CanisterSettings {
         controllers: None,
-        compute_allocation: Some(Nat::from(7)),
-        memory_allocation: Some(Nat::from(8)),
-        freezing_threshold: Some(Nat::from(9)),
+        compute_allocation: Some(Nat::from(7_u128)),
+        memory_allocation: Some(Nat::from(8_u128)),
+        freezing_threshold: Some(Nat::from(9_u128)),
+        reserved_cycles_limit: Some(Nat::from(10_u128)),
     };
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,

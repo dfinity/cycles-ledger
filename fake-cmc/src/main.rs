@@ -61,7 +61,7 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
         {
             Ok((record,)) => return Ok(record.canister_id),
             Err(error) => {
-                if !error.1.contains("is already installed") {
+                if !error.1.contains("canister id already exists") {
                     panic!("create_canister failed: {:?}", error)
                 }
             }
