@@ -684,8 +684,8 @@ fn test_approve_cap() {
     );
 }
 
-// A test to check that DuplicateError is returned on a duplicate request
-// and not UnexpectedAllowanceError, in case when expected_allowance is set
+// A test to check that `DuplicateError` is returned on a duplicate `approve` request
+// and not `UnexpectedAllowanceError` if `expected_allowance` is set
 #[test]
 fn test_approve_duplicate() {
     use icrc_ledger_types::icrc2::approve::ApproveError;
