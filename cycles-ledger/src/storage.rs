@@ -726,6 +726,7 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
         return Err(err);
     }
 
+    // we are not checking for duplicates, since mint is executed with created_at_time: None
     let block_index = process_transaction(
         Transaction {
             operation: Operation::Mint { to, amount },
@@ -1287,8 +1288,6 @@ fn process_block(
     let effective_fee = validate_suggested_fee(&transaction.operation)
         .map(|fee| effective_fee.or(fee))
         .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
-
-    check_duplicate(&transaction)?;
 
     let block = Block {
         transaction,

@@ -318,6 +318,9 @@ fn test_send_flow() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
+// A test to check that DuplicateError is returned on a duplicate request
+// and not InsufficientFundsError, in case when there is not enough funds
+// to execute it second time
 #[test]
 fn test_send_duplicate() {
     let env = &new_state_machine();
@@ -678,6 +681,8 @@ fn test_approve_cap() {
     );
 }
 
+// A test to check that DuplicateError is returned on a duplicate request
+// and not UnexpectedAllowanceError, in case when expected_allowance is set
 #[test]
 fn test_approve_duplicate() {
     use icrc_ledger_types::icrc2::approve::ApproveError;
@@ -1143,6 +1148,9 @@ fn test_deduplication() {
     .unwrap();
 }
 
+// A test to check that DuplicateError is returned on a duplicate request
+// and not InsufficientFundsError, in case when there is not enough funds
+// to execute it second time
 #[test]
 fn test_deduplication_with_insufficient_funds() {
     let env = &new_state_machine();
@@ -2214,6 +2222,9 @@ fn test_create_canister() {
     )
 }
 
+// A test to check that DuplicateError is returned on a duplicate request
+// and not InsufficientFundsError, in case when there is not enough funds
+// to execute it second time
 #[test]
 fn test_create_canister_duplicate() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
