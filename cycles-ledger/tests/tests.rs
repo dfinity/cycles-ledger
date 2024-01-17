@@ -2234,9 +2234,9 @@ fn test_create_canister() {
     )
 }
 
-// A test to check that DuplicateError is returned on a duplicate request
-// and not InsufficientFundsError, in case when there is not enough funds
-// to execute it second time
+// A test to check that `DuplicateError` is returned on a duplicate `create_canister` request
+// and not `InsufficientFundsError` if there are not enough funds
+// to execute it a second time
 #[test]
 fn test_create_canister_duplicate() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
