@@ -45,7 +45,7 @@ async fn deposit(arg: DepositArg) -> DepositResult {
 
 #[test]
 fn test_candid_interface_compatibility() {
-    use candid::utils::{service_equal, CandidSource};
+    use candid_parser::utils::{service_equal, CandidSource};
     use std::path::PathBuf;
 
     candid::export_service!();

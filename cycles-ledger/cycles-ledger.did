@@ -173,6 +173,7 @@ type CanisterSettings = record {
   compute_allocation : opt nat;
   memory_allocation : opt nat;
   freezing_threshold : opt nat;
+  reserved_cycles_limit : opt nat;
 };
 
 type SubnetSelection = variant {

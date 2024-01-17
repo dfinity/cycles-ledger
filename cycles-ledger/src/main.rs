@@ -461,7 +461,7 @@ fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
 
 #[test]
 fn test_candid_interface_compatibility() {
-    use candid::utils::{service_equal, CandidSource};
+    use candid_parser::utils::{service_equal, CandidSource};
     use std::path::PathBuf;
 
     candid::export_service!();

@@ -55,11 +55,11 @@ pub const CMC_PRINCIPAL: Principal = Principal::from_slice(&[0, 0, 0, 0, 0, 0, 0
 
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
-pub type AccountKey = (StorablePrincipal, [u8; 32]);
+pub type AccountKey = (Principal, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
 /// maps tx hash to block index and an optional principal, which is set if the tx produced a canister
-pub type TransactionHashes = StableBTreeMap<Hash, (u64, Option<StorablePrincipal>), VMem>;
+pub type TransactionHashes = StableBTreeMap<Hash, (u64, Option<Principal>), VMem>;
 pub type TransactionTimeStampKey = (u64, u64);
 /// maps time stamp to block index
 pub type TransactionTimeStamps = StableBTreeMap<TransactionTimeStampKey, (), VMem>;
@@ -70,46 +70,6 @@ pub type Approvals = StableBTreeMap<ApprovalKey, (u128, u64), VMem>;
 pub type ExpirationQueue = StableBTreeMap<(u64, ApprovalKey), (), VMem>;
 
 pub type Hash = [u8; 32];
-
-// TODO: once we bump candid to 0.10 this is implemented by Principal already and `StorablePrincipal` can be deleted
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct StorablePrincipal(Principal);
-
-impl Storable for StorablePrincipal {
-    fn to_bytes(&self) -> Cow<[u8]> {
-        Cow::Borrowed(self.0.as_slice())
-    }
-
-    fn from_bytes(bytes: Cow<[u8]>) -> Self {
-        Self(Principal::from_slice(&bytes))
-    }
-
-    const BOUND: ic_stable_structures::storable::Bound =
-        ic_stable_structures::storable::Bound::Bounded {
-            max_size: 29,
-            is_fixed_size: false,
-        };
-}
-
-impl From<Principal> for StorablePrincipal {
-    fn from(value: Principal) -> Self {
-        Self(value)
-    }
-}
-
-impl From<StorablePrincipal> for Principal {
-    fn from(value: StorablePrincipal) -> Self {
-        value.0
-    }
-}
-
-impl std::ops::Deref for StorablePrincipal {
-    type Target = Principal;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 pub struct Cache {
     // The hash of the last block.
@@ -656,7 +616,7 @@ where
 }
 
 pub fn to_account_key(account: &Account) -> AccountKey {
-    (account.owner.into(), *account.effective_subaccount())
+    (account.owner, *account.effective_subaccount())
 }
 
 pub fn balance_of(account: &Account) -> u128 {
@@ -795,7 +755,9 @@ pub fn transfer(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     // check allowance
@@ -1363,7 +1325,9 @@ pub fn validate_created_at_time(
     created_at_time: &Option<u64>,
     now: u64,
 ) -> Result<(), CreatedAtTimeValidationError> {
-    let Some(created_at_time) = created_at_time else { return Ok(())};
+    let Some(created_at_time) = created_at_time else {
+        return Ok(());
+    };
     if created_at_time
         .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
         .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
@@ -1462,7 +1426,9 @@ pub async fn send(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     let transaction = Transaction {
@@ -1577,7 +1543,9 @@ pub async fn create_canister(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     // check that the `from` account has enough funds
@@ -1699,7 +1667,7 @@ pub async fn create_canister(
                         if state.transaction_hashes.contains_key(&tx_hash) {
                             state
                                 .transaction_hashes
-                                .insert(tx_hash, (block_index, Some(canister_id.into())));
+                                .insert(tx_hash, (block_index, Some(canister_id)));
                         }
                     });
                 } else {
@@ -1906,7 +1874,8 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
         pruned += 1;
 
         let Some(block) = s.blocks.get(block_idx) else {
-            log!(P0,
+            log!(
+                P0,
                 "Cannot find block with id: {}. The block id was associated \
                 with the timestamp: {} and was selected for pruning from \
                 the timestamp and hashes pools",
