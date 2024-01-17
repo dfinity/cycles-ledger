@@ -337,8 +337,8 @@ fn test_send_duplicate() {
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
-    assert_eq!(deposit_res.block_index, 0);
-    assert_eq!(deposit_res.balance, 1_000_000_000);
+    assert_eq!(deposit_res.block_index, 0_u128);
+    assert_eq!(deposit_res.balance, 1_000_000_000_u128);
 
     let now = env
         .time()
@@ -704,7 +704,7 @@ fn test_approve_duplicate() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000u128
     );
 
     let now = env
@@ -715,8 +715,8 @@ fn test_approve_duplicate() {
     let args = ApproveArgs {
         from_subaccount: None,
         spender,
-        amount: Nat::from(100),
-        expected_allowance: Some(Nat::from(0)),
+        amount: Nat::from(100u128),
+        expected_allowance: Some(Nat::from(0u128)),
         expires_at: None,
         fee: Some(Nat::from(FEE)),
         memo: None,
@@ -730,7 +730,7 @@ fn test_approve_duplicate() {
     )
     .unwrap();
     let allowance = get_allowance(env, ledger_id, from, spender);
-    assert_eq!(allowance.allowance, Nat::from(100));
+    assert_eq!(allowance.allowance, Nat::from(100u128));
     assert_eq!(allowance.expires_at, None);
     assert_eq!(
         balance_of(env, ledger_id, from),
@@ -763,7 +763,7 @@ fn test_approve_duplicate() {
     assert_eq!(
         result,
         Err(ApproveError::Duplicate {
-            duplicate_of: Nat::from(1)
+            duplicate_of: Nat::from(1u128)
         })
     );
 }
@@ -1169,7 +1169,7 @@ fn test_deduplication_with_insufficient_funds() {
     };
     let deposit_amount = 1_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
-    let transfer_amount = Nat::from(600_000_000);
+    let transfer_amount = Nat::from(600_000_000u128);
 
     let now = env
         .time()
@@ -2252,7 +2252,7 @@ fn test_create_canister_duplicate() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(&env, depositor_id, user, expected_balance);
-    assert_eq!(deposit_res.block_index, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0u128));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
 
@@ -2284,7 +2284,7 @@ fn test_create_canister_duplicate() {
 
     assert_eq!(
         CreateCanisterError::Duplicate {
-            duplicate_of: Nat::from(1),
+            duplicate_of: Nat::from(1u128),
             canister_id: Some(canister)
         },
         create_canister(
