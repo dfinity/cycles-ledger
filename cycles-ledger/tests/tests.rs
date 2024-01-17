@@ -1151,9 +1151,9 @@ fn test_deduplication() {
     .unwrap();
 }
 
-// A test to check that DuplicateError is returned on a duplicate request
-// and not InsufficientFundsError, in case when there is not enough funds
-// to execute it second time
+// A test to check that `DuplicateError` is returned on a duplicate `transfer` request
+// and not `InsufficientFundsError` if there are not enough funds
+// to execute it a second time
 #[test]
 fn test_deduplication_with_insufficient_funds() {
     let env = &new_state_machine();
