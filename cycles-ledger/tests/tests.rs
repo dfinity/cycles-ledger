@@ -321,9 +321,9 @@ fn test_send_flow() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
-// A test to check that DuplicateError is returned on a duplicate request
-// and not InsufficientFundsError, in case when there is not enough funds
-// to execute it second time
+// A test to check that `DuplicateError` is returned on a duplicate `send` request
+// and not `InsufficientFundsError`, in case when there is not enough funds
+// to execute it a second time
 #[test]
 fn test_send_duplicate() {
     let env = &new_state_machine();
