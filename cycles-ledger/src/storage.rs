@@ -686,6 +686,7 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
         return Err(err);
     }
 
+    // we are not checking for duplicates, since mint is executed with created_at_time: None
     let block_index = process_transaction(
         Transaction {
             operation: Operation::Mint { to, amount },
@@ -725,6 +726,19 @@ pub fn transfer(
     suggested_fee: Option<u128>,
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
+
+    let transaction = Transaction {
+        operation: Operation::Transfer {
+            from,
+            to,
+            spender,
+            amount,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+    check_duplicate(&transaction)?;
 
     // check that no account is owned by a denied principal
     if is_denied_account_owner(&from.owner) {
@@ -774,18 +788,6 @@ pub fn transfer(
         })
         .map_err(transfer_from::anyhow_error)?;
 
-    let transaction = Transaction {
-        operation: Operation::Transfer {
-            from,
-            to,
-            spender,
-            amount,
-            fee: suggested_fee,
-        },
-        created_at_time,
-        memo,
-    };
-
     let block_index = process_transaction(transaction.clone(), now)?;
 
     // The operations below should not return an error because of the checks
@@ -829,6 +831,20 @@ pub fn approve(
     expected_allowance: Option<u128>,
     expires_at: Option<u64>,
 ) -> Result<Nat, ApproveError> {
+    let transaction = Transaction {
+        operation: Operation::Approve {
+            from,
+            spender,
+            amount,
+            expected_allowance,
+            expires_at,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+    check_duplicate(&transaction)?;
+
     // check that this isn't a self approval
     if from.owner == spender.owner {
         ic_cdk::trap("self approval is not allowed");
@@ -872,19 +888,6 @@ pub fn approve(
             )
         })
         .map_err(approve::anyhow_error)?;
-
-    let transaction = Transaction {
-        operation: Operation::Approve {
-            from,
-            spender,
-            amount,
-            expected_allowance,
-            expires_at,
-            fee: suggested_fee,
-        },
-        created_at_time,
-        memo,
-    };
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
@@ -1200,6 +1203,31 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
     }
 }
 
+fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionError> {
+    use ProcessTransactionError as PTErr;
+    // sanity check that the transaction can be hashed
+    let tx_hash = match transaction.hash() {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            let err = err.context(format!("Unable to process transaction {:?}", transaction));
+            log!(P0, "{:#}", err);
+            return Err(PTErr::from(err));
+        }
+    };
+
+    // check whether transaction is a duplicate
+    if let Some((block_index, maybe_canister)) =
+        read_state(|state| state.transaction_hashes.get(&tx_hash))
+    {
+        return Err(PTErr::Duplicate {
+            duplicate_of: block_index,
+            canister_id: maybe_canister.map(Into::into),
+        });
+    }
+
+    Ok(())
+}
+
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
     process_block(transaction, now, None)
 }
@@ -1222,26 +1250,6 @@ fn process_block(
     let effective_fee = validate_suggested_fee(&transaction.operation)
         .map(|fee| effective_fee.or(fee))
         .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
-
-    // sanity check that the transaction can be hashed
-    let tx_hash = match transaction.hash() {
-        Ok(tx_hash) => tx_hash,
-        Err(err) => {
-            let err = err.context(format!("Unable to process transaction {:?}", transaction));
-            log!(P0, "{:#}", err);
-            return Err(PTErr::from(err));
-        }
-    };
-
-    // check whether transaction is a duplicate
-    if let Some((block_index, maybe_canister)) =
-        read_state(|state| state.transaction_hashes.get(&tx_hash))
-    {
-        return Err(PTErr::Duplicate {
-            duplicate_of: block_index,
-            canister_id: maybe_canister.map(Into::into),
-        });
-    }
 
     let block = Block {
         transaction,
@@ -1423,6 +1431,13 @@ pub async fn send(
         });
     };
 
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(encode_send_memo(&to)),
+    };
+    check_duplicate(&transaction)?;
+
     // check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
         |balance| InsufficientFunds {
@@ -1441,12 +1456,6 @@ pub async fn send(
     // 3. if 2. fails then mint cycles
 
     // 1. burn cycles + fee
-
-    let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
-        created_at_time,
-        memo: Some(encode_send_memo(&to)),
-    };
 
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
@@ -1525,6 +1534,13 @@ pub async fn create_canister(
 ) -> Result<CreateCanisterSuccess, CreateCanisterError> {
     use CreateCanisterError::*;
 
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+    };
+    check_duplicate(&transaction)?;
+
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
         return Err(InsufficientFunds {
@@ -1550,12 +1566,6 @@ pub async fn create_canister(
     // 3. if 2. fails then mint cycles
 
     // 1. burn cycles + fee
-
-    let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
-        created_at_time,
-        memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
-    };
 
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 

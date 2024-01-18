@@ -321,6 +321,73 @@ fn test_send_flow() {
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
+// A test to check that `DuplicateError` is returned on a duplicate `send` request
+// and not `InsufficientFundsError`, in case when there is not enough funds
+// to execute it a second time
+#[test]
+fn test_send_duplicate() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user_main_account = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let send_receiver = env.create_canister(None);
+
+    // make deposits to the user and check the result
+    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
+    assert_eq!(deposit_res.block_index, 0_u128);
+    assert_eq!(deposit_res.balance, 1_000_000_000_u128);
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // send cycles from main account
+    let send_receiver_balance = env.cycle_balance(send_receiver);
+    let send_amount = 900_000_000_u128;
+    let send_idx = send(
+        env,
+        ledger_id,
+        user_main_account,
+        SendArgs {
+            from_subaccount: None,
+            to: send_receiver,
+            created_at_time: Some(now),
+            amount: Nat::from(send_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        send_receiver_balance + send_amount,
+        env.cycle_balance(send_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_main_account),
+        1_000_000_000 - send_amount - FEE
+    );
+
+    assert_eq!(
+        SendError::Duplicate {
+            duplicate_of: send_idx
+        },
+        send(
+            env,
+            ledger_id,
+            user_main_account,
+            SendArgs {
+                from_subaccount: None,
+                to: send_receiver,
+                created_at_time: Some(now),
+                amount: Nat::from(send_amount),
+            },
+        )
+        .unwrap_err()
+    );
+}
+
 #[test]
 fn test_send_fails() {
     let env = &new_state_machine();
@@ -614,6 +681,90 @@ fn test_approve_cap() {
     assert_eq!(
         balance_of(env, ledger_id, from),
         Nat::from(1_000_000_000 - FEE)
+    );
+}
+
+// A test to check that `DuplicateError` is returned on a duplicate `approve` request
+// and not `UnexpectedAllowanceError` if `expected_allowance` is set
+#[test]
+fn test_approve_duplicate() {
+    use icrc_ledger_types::icrc2::approve::ApproveError;
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000u128
+    );
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: Nat::from(100u128),
+        expected_allowance: Some(Nat::from(0u128)),
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: Some(now),
+    };
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(100u128));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
+    );
+
+    // re-submit should error with duplicate
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+
+    let result = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            from.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, ApproveError>).unwrap()
+    } else {
+        panic!("icrc2_approve rejected")
+    };
+
+    assert_eq!(
+        result,
+        Err(ApproveError::Duplicate {
+            duplicate_of: Nat::from(1u128)
+        })
     );
 }
 
@@ -998,6 +1149,67 @@ fn test_deduplication() {
         },
     )
     .unwrap();
+}
+
+// A test to check that `DuplicateError` is returned on a duplicate `transfer` request
+// and not `InsufficientFundsError` if there are not enough funds
+// to execute it a second time
+#[test]
+fn test_deduplication_with_insufficient_funds() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+    let transfer_amount = Nat::from(600_000_000u128);
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // Make a transfer with created_at_time set
+    let tx: Nat = transfer(
+        env,
+        ledger_id,
+        user1.owner,
+        TransferArgs {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: Some(now),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    // Should not be able send the same transfer twice if created_at_time is set
+    assert_eq!(
+        TransferError::Duplicate { duplicate_of: tx },
+        transfer(
+            env,
+            ledger_id,
+            user1.owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: user2,
+                fee: None,
+                created_at_time: Some(now),
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
 }
 
 #[test]
@@ -2020,4 +2232,72 @@ fn test_create_canister() {
         canister, duplicate_canister_id,
         "Different canister id returned"
     )
+}
+
+// A test to check that `DuplicateError` is returned on a duplicate `create_canister` request
+// and not `InsufficientFundsError` if there are not enough funds
+// to execute it a second time
+#[test]
+fn test_create_canister_duplicate() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    let env = new_state_machine();
+    install_fake_cmc(&env);
+    let ledger_id = install_ledger(&env);
+    let depositor_id = install_depositor(&env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[10]),
+        subaccount: Some([0; 32]),
+    };
+    let mut expected_balance = 1_500_000_000_000_u128;
+
+    // make the first deposit to the user and check the result
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    assert_eq!(deposit_res.block_index, Nat::from(0u128));
+    assert_eq!(deposit_res.balance, expected_balance);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // successful create
+    let canister = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: Some(now),
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap()
+    .canister_id;
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    // no canister creation fee on system subnet (where the StateMachine is by default)
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+
+    assert_eq!(
+        CreateCanisterError::Duplicate {
+            duplicate_of: Nat::from(1u128),
+            canister_id: Some(canister)
+        },
+        create_canister(
+            &env,
+            ledger_id,
+            user,
+            CreateCanisterArgs {
+                from_subaccount: user.subaccount,
+                created_at_time: Some(now),
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+            },
+        )
+        .unwrap_err()
+    );
 }
