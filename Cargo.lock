@@ -516,6 +516,7 @@ name = "fake-cmc"
 version = "0.2.1"
 dependencies = [
  "candid",
+ "candid_parser",
  "cycles-ledger",
  "ic-cdk",
  "ic-cdk-macros",

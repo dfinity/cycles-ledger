@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 cycles-ledger = { path = "../cycles-ledger" }
 candid.workspace = true
+candid_parser.workspace = true
 ic-cdk.workspace = true
 ic-cdk-macros.workspace = true
 icrc-ledger-types.workspace = true

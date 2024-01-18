@@ -13,6 +13,13 @@
       "package": "depositor",
       "optimize": "cycles",
       "gzip": true
+    },
+    "fake-cmc": {
+      "type": "rust",
+      "candid": "./fake-cmc/fake-cmc.did",
+      "package": "fake-cmc",
+      "optimize": "cycles",
+      "gzip": true
     }
-  } 
+  }
 }

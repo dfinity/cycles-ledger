@@ -85,3 +85,31 @@ fn last_create_canister_args() -> CmcCreateCanisterArgs {
             .expect("No create_canister call recorded")
     })
 }
+
+#[test]
+fn test_candid_interface_compatibility() {
+    use candid_parser::utils::{service_equal, CandidSource};
+    use std::path::PathBuf;
+
+    candid::export_service!();
+    let exported_interface = __export_service();
+
+    let expected_interface =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("fake-cmc.did");
+
+    println!(
+        "Expected interface: {}\n\n",
+        CandidSource::File(expected_interface.as_path())
+            .load()
+            .unwrap()
+            .1
+            .unwrap()
+    );
+    println!("Exported interface: {}\n\n", exported_interface);
+
+    service_equal(
+        CandidSource::Text(&exported_interface),
+        CandidSource::File(expected_interface.as_path()),
+    )
+    .expect("The fake-cmc interface is not compatible with the fake-cmc.did file");
+}
