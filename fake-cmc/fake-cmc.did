@@ -1,6 +1,6 @@
 type CanisterSettings = record {
-    freezing_threshold : opt nat;
     controllers : opt vec principal;
+    freezing_threshold : opt nat;
     reserved_cycles_limit : opt nat;
     memory_allocation : opt nat;
     compute_allocation : opt nat;
@@ -13,14 +13,17 @@ type CmcCreateCanisterError = variant {
     Refunded : record { create_error : text; refund_amount : nat };
     RefundFailed : record { create_error : text; refund_error : text };
 };
-type Result = variant { Ok : principal; Err : CmcCreateCanisterError };
+type CmcCreateCanisterResult = variant {
+    Ok : principal;
+    Err : CmcCreateCanisterError;
+};
 type SubnetFilter = record { subnet_type : opt text };
 type SubnetSelection = variant {
     Filter : SubnetFilter;
     Subnet : record { subnet : principal };
 };
 service : {
-    create_canister : (CmcCreateCanisterArgs) -> (Result);
+    create_canister : (CmcCreateCanisterArgs) -> (CmcCreateCanisterResult);
     fail_next_create_canister_with : (CmcCreateCanisterError) -> ();
     last_create_canister_args : () -> (CmcCreateCanisterArgs) query;
 };
