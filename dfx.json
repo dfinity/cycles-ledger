@@ -7,7 +7,7 @@
       "optimize": "cycles",
       "gzip": true
     },
-    "cycles-depositor": {
+    "depositor": {
       "type": "rust",
       "candid": "./depositor/depositor.did",
       "package": "depositor",
