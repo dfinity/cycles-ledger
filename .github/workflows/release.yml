@@ -86,7 +86,7 @@ jobs:
           echo "Cycles ledger:"
           ls .dfx/local/canisters/cycles-ledger
           echo "Depositor:"
-          ls .dfx/local/depositor/depositor
+          ls .dfx/local/canisters/depositor
           echo "Fake CMC:"
           ls .dfx/local/canisters/fake-cmc
           (cd .dfx/local/canisters/cycles-ledger && shasum -a 256 cycles-ledger.wasm.gz > cycles-ledger.wasm.gz.sha256)
