@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Use Rust version from rust-toolchain.toml
-        uses: rustup show
+        run: rustup show
       - uses: cargo-bins/cargo-binstall@main
       - name: Install dependencies
         run: cargo binstall cargo-release ripgrep -y
