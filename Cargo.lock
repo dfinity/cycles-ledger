@@ -369,7 +369,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "proptest",
- "scopeguard",
  "serde",
  "serde_bytes",
  "serde_cbor",

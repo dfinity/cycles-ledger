@@ -36,7 +36,6 @@ use icrc_ledger_types::{
     },
 };
 use num_traits::ToPrimitive;
-use scopeguard::ScopeGuard;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -1465,47 +1464,12 @@ pub async fn send(
 
     prune(now);
 
-    // set a guard in case deposit_cycles panics
-
-    // Callback for the guard and in case of [deposit_cycles] error.
-    // This panics if a mint block has been recorded but the credit
-    // function didn't go through.
-    let reimburse = || -> Result<u64, ProcessTransactionError> {
-        let transaction = Transaction {
-            operation: Operation::Mint { to: from, amount },
-            created_at_time: None,
-            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
-        };
-
-        let block_index = process_transaction(transaction.clone(), now)?;
-
-        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
-            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
-        };
-
-        prune(now);
-
-        Ok(block_index)
-    };
-
     // 2. call deposit_cycles on the management canister
-
-    // add a guard to reimburse if [deposit_cycles]
-    // panics.
-    let guard = scopeguard::guard_on_unwind((), |()| {
-        let _ = reimburse();
-    });
-
     let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
 
-    // 3. if 2. fails but doesn't panic then mint cycles
-
-    // defuse the guard because 2. didn't panic
-    // to avoid reimbursing twice.
-    ScopeGuard::into_inner(guard);
-
+    // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        match reimburse() {
+        match reimburse(from, amount, now) {
             Ok(fee_block) => {
                 prune(now);
                 return Err(FailedToSend {
@@ -1578,36 +1542,7 @@ pub async fn create_canister(
 
     prune(now);
 
-    // set a guard in case create_canister panics
-
-    // Callback for the guard and in case of [create_canister] error.
-    // This panics if a mint block has been recorded but the credit
-    // function didn't go through.
-    let reimburse = || -> Result<u64, ProcessTransactionError> {
-        let transaction = Transaction {
-            operation: Operation::Mint { to: from, amount },
-            created_at_time: None,
-            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
-        };
-
-        let block_index = process_transaction(transaction.clone(), now)?;
-
-        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
-            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
-        };
-
-        prune(now);
-
-        Ok(block_index)
-    };
-
     // 2. call create_canister on the CMC
-
-    // add a guard to reimburse if [create_canister]
-    // panics.
-    let guard = scopeguard::guard_on_unwind((), |()| {
-        let _ = reimburse();
-    });
 
     let argument = argument
         .map(|arg| CmcCreateCanisterArgs {
@@ -1633,15 +1568,11 @@ pub async fn create_canister(
         (RejectionCode, String),
     > = call_with_payment128(CMC_PRINCIPAL, "create_canister", (argument,), amount).await;
 
-    // 3. if 2. fails but doesn't panic then mint cycles
-
-    // defuse the guard because 2. didn't panic
-    // to avoid reimbursing twice.
-    ScopeGuard::into_inner(guard);
+    // 3. if 2. fails then mint cycles
 
     match create_canister_result {
         Err((rejection_code, rejection_reason)) => {
-            match reimburse() {
+            match reimburse(from, amount, now) {
                 Ok(fee_block) => {
                     prune(now);
                     Err(FailedToCreate {
@@ -1724,6 +1655,27 @@ pub async fn create_canister(
             },
         },
     }
+}
+
+// Reimburse an account with a given amount
+// This panics if a mint block has been recorded but the credit
+// function didn't go through.
+fn reimburse(acc: Account, amount: u128, now: u64) -> Result<u64, ProcessTransactionError> {
+    let transaction = Transaction {
+        operation: Operation::Mint { to: acc, amount },
+        created_at_time: None,
+        memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
+    };
+
+    let block_index = process_transaction(transaction.clone(), now)?;
+
+    if let Err(err) = mutate_state(|state| state.credit(&acc, amount)) {
+        log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
+    };
+
+    prune(now);
+
+    Ok(block_index)
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
