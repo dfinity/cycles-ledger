@@ -1464,33 +1464,12 @@ pub async fn send(
 
     prune(now);
 
-    // Reimburse in case of [deposit_cycles] error.
-    // This panics if a mint block has been recorded but the credit
-    // function didn't go through.
-    let reimburse = || -> Result<u64, ProcessTransactionError> {
-        let transaction = Transaction {
-            operation: Operation::Mint { to: from, amount },
-            created_at_time: None,
-            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
-        };
-
-        let block_index = process_transaction(transaction.clone(), now)?;
-
-        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
-            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
-        };
-
-        prune(now);
-
-        Ok(block_index)
-    };
-
     // 2. call deposit_cycles on the management canister
     let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        match reimburse() {
+        match reimburse(from, amount, now) {
             Ok(fee_block) => {
                 prune(now);
                 return Err(FailedToSend {
@@ -1563,27 +1542,6 @@ pub async fn create_canister(
 
     prune(now);
 
-    // Reimburse in case of [create_canister] error.
-    // This panics if a mint block has been recorded but the credit
-    // function didn't go through.
-    let reimburse = || -> Result<u64, ProcessTransactionError> {
-        let transaction = Transaction {
-            operation: Operation::Mint { to: from, amount },
-            created_at_time: None,
-            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
-        };
-
-        let block_index = process_transaction(transaction.clone(), now)?;
-
-        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
-            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
-        };
-
-        prune(now);
-
-        Ok(block_index)
-    };
-
     // 2. call create_canister on the CMC
 
     let argument = argument
@@ -1614,7 +1572,7 @@ pub async fn create_canister(
 
     match create_canister_result {
         Err((rejection_code, rejection_reason)) => {
-            match reimburse() {
+            match reimburse(from, amount, now) {
                 Ok(fee_block) => {
                     prune(now);
                     Err(FailedToCreate {
@@ -1697,6 +1655,27 @@ pub async fn create_canister(
             },
         },
     }
+}
+
+// Reimburse an account with a given amount
+// This panics if a mint block has been recorded but the credit
+// function didn't go through.
+fn reimburse(acc: Account, amount: u128, now: u64) -> Result<u64, ProcessTransactionError> {
+    let transaction = Transaction {
+        operation: Operation::Mint { to: acc, amount },
+        created_at_time: None,
+        memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
+    };
+
+    let block_index = process_transaction(transaction.clone(), now)?;
+
+    if let Err(err) = mutate_state(|state| state.credit(&acc, amount)) {
+        log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
+    };
+
+    prune(now);
+
+    Ok(block_index)
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
