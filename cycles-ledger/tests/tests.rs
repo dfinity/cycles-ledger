@@ -1441,7 +1441,7 @@ fn validate_certificate(
         _ => panic!("Unable to find the certificate_data_hash for the ledger canister in the hash_tree (hash_tree: {:?}, path: {:?})", certificate.tree, certified_data_path),
     };
 
-    let hash_tree: HashTree = serde_cbor::de::from_slice(hash_tree.as_slice())
+    let hash_tree: HashTree = ciborium::de::from_reader(hash_tree.as_slice())
         .expect("Unable to deserialize CBOR encoded hash_tree");
 
     assert_eq!(certified_data_hash, hash_tree.digest());
