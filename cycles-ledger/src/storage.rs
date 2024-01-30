@@ -421,17 +421,18 @@ impl State {
             Some(certificate) => ByteBuf::from(certificate),
             None => return None,
         };
-        let hash_tree = ByteBuf::from(
-            serde_cbor::to_vec(
-                &self
-                    .cache
-                    .hash_tree
-                    .value_range(b"last_block_hash", b"last_block_index"),
-            )
-            .expect(
-                "Bug: unable to write last_block_hash and last_block_index values in the hash_tree",
-            ),
+        let mut hash_tree_buf = vec![];
+        ciborium::ser::into_writer(
+            &self
+                .cache
+                .hash_tree
+                .value_range(b"last_block_hash", b"last_block_index"),
+            &mut hash_tree_buf,
+        )
+        .expect(
+            "Bug: unable to write last_block_hash and last_block_index values in the hash_tree",
         );
+        let hash_tree = ByteBuf::from(hash_tree_buf);
         Some(DataCertificate {
             certificate,
             hash_tree,
