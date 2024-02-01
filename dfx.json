@@ -5,7 +5,13 @@
       "candid": "./cycles-ledger/cycles-ledger.did",
       "package": "cycles-ledger",
       "optimize": "cycles",
-      "gzip": true
+      "gzip": true,
+      "pullable": {
+        "dependencies": [],
+        "wasm_url": "https://github.com/dfinity/cycles-ledger/releases/latest/download/cycles-ledger.wasm.gz",
+        "wasm_hash_url": "https://github.com/dfinity/cycles-ledger/releases/latest/download/cycles-ledger.wasm.gz.sha256",
+        "init_guide": "(variant{Init=record{max_transactions_per_request=1000}})"
+      }
     },
     "depositor": {
       "type": "rust",
