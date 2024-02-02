@@ -14,7 +14,7 @@ use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
 };
 use cycles_ledger::{
-    config::{self, Config as LedgerConfig, FEE},
+    config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
         ChangeIndexId, DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError,
         UpgradeArgs,
@@ -2300,4 +2300,30 @@ fn test_create_canister_duplicate() {
         )
         .unwrap_err()
     );
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Attempt deposit with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let arg = Encode!(&depositor::endpoints::DepositArg {
+        cycles: 10 * FEE,
+        to: user,
+        memo: Some(Memo(ByteBuf::from(large_memo))),
+    })
+    .unwrap();
+
+    let _res = env
+        .update_call(depositor_id, user.owner, "deposit", arg)
+        .unwrap();
 }
