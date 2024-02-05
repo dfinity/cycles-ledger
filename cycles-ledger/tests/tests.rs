@@ -43,7 +43,10 @@ use icrc_ledger_types::{
         transfer::TransferArg as TransferArgs,
         transfer::{Memo, TransferError},
     },
-    icrc2::approve::ApproveArgs,
+    icrc2::{
+        approve::ApproveArgs,
+        transfer_from::{TransferFromArgs, TransferFromError},
+    },
 };
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
@@ -2326,4 +2329,100 @@ fn test_deposit_invalid_memo() {
     let _res = env
         .update_call(depositor_id, user.owner, "deposit", arg)
         .unwrap();
+}
+
+#[test]
+#[should_panic]
+fn test_icrc1_transfer_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let transfer_amount = Nat::from(100_000_u128);
+    let _res = transfer(
+        env,
+        ledger_id,
+        user1.owner,
+        TransferArgs {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: Some(Memo(ByteBuf::from(large_memo))),
+            amount: transfer_amount.clone(),
+        },
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_icrc2_transfer_from_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let transfer_amount = Nat::from(100_000_u128);
+
+    approve(
+        env,
+        ledger_id,
+        /*from:*/ user1,
+        /*spender:*/ user2,
+        /*amount:*/ 1_000_000_000 + FEE,
+        /*expected_allowance:*/ Some(0),
+        /*expires_at:*/ None,
+    )
+    .expect("Approve failed");
+
+    let args = TransferFromArgs {
+        spender_subaccount: None,
+        from: user1,
+        to: user2,
+        amount: transfer_amount.into(),
+        fee: Some(Nat::from(FEE)),
+        memo: Some(Memo(ByteBuf::from(large_memo))),
+        created_at_time: None,
+    };
+
+    let res = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            user2.owner,
+            "icrc2_transfer_from",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, TransferFromError>).unwrap()
+    } else {
+        panic!("icrc2_transfer_from rejected")
+    };
+
+    res.unwrap();
 }
