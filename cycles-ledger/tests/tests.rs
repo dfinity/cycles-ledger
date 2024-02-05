@@ -44,7 +44,7 @@ use icrc_ledger_types::{
         transfer::{Memo, TransferError},
     },
     icrc2::{
-        approve::ApproveArgs,
+        approve::{ApproveArgs, ApproveError},
         transfer_from::{TransferFromArgs, TransferFromError},
     },
 };
@@ -2306,7 +2306,7 @@ fn test_create_canister_duplicate() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "memo length exceeds the maximum")]
 fn test_deposit_invalid_memo() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
@@ -2332,7 +2332,7 @@ fn test_deposit_invalid_memo() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "memo length exceeds the maximum")]
 fn test_icrc1_transfer_invalid_memo() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
@@ -2368,8 +2368,8 @@ fn test_icrc1_transfer_invalid_memo() {
 }
 
 #[test]
-#[should_panic]
-fn test_icrc2_transfer_from_invalid_memo() {
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_approve_invalid_memo() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
@@ -2384,7 +2384,54 @@ fn test_icrc2_transfer_from_invalid_memo() {
     let deposit_amount = 1_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
 
-    // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    // Attempt approve with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender: user2,
+        amount: (1_000_000_000 + FEE).into(),
+        expected_allowance: Some(Nat::from(0u128)),
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: Some(Memo(ByteBuf::from(large_memo))),
+        created_at_time: None,
+    };
+    let res = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            user1.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, ApproveError>).unwrap()
+    } else {
+        panic!("icrc2_approve rejected")
+    };
+
+    res.unwrap();
+}
+
+#[test]
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_icrc2_transfer_from_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 10_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // Attempt transfer_from with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
 
     let transfer_amount = Nat::from(100_000_u128);
