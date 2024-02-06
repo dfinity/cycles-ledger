@@ -2451,7 +2451,7 @@ fn test_icrc2_transfer_from_invalid_memo() {
         spender_subaccount: None,
         from: user1,
         to: user2,
-        amount: transfer_amount.into(),
+        amount: transfer_amount,
         fee: Some(Nat::from(FEE)),
         memo: Some(Memo(ByteBuf::from(large_memo))),
         created_at_time: None,
