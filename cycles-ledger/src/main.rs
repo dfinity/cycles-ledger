@@ -40,9 +40,9 @@ fn init(ledger_args: LedgerArgs) {
 fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     match ledger_args {
         Some(LedgerArgs::Upgrade(Some(upgrade_args))) => {
-            if let Some(max_transactions_per_request) = upgrade_args.max_blocks_per_request {
+            if let Some(max_blocks_per_request) = upgrade_args.max_blocks_per_request {
                 mutate_config(|config| {
-                    config.max_blocks_per_request = max_transactions_per_request;
+                    config.max_blocks_per_request = max_blocks_per_request;
                 })
             }
             if let Some(change_index_id) = upgrade_args.change_index_id {
