@@ -18,10 +18,10 @@ pub const REMOTE_FUTURE: u64 = u64::MAX;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Config {
-    /// The maximum number of transactions
-    /// returned by the [icrc3_get_transactions]
+    /// The maximum number of blocks
+    /// returned by the [icrc3_get_blocks]
     /// endpoint
-    pub max_transactions_per_request: u64,
+    pub max_blocks_per_request: u64,
 
     /// The principal of the index canister
     /// for this ledger
@@ -31,7 +31,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_transactions_per_request: 1000,
+            max_blocks_per_request: 1000,
             index_id: None,
         }
     }
@@ -57,7 +57,7 @@ impl Storable for Config {
 fn test_config_ser_de() {
     // do not use default
     let config = Config {
-        max_transactions_per_request: 10,
+        max_blocks_per_request: 10,
         index_id: None,
     };
     assert_eq!(Config::from_bytes(config.to_bytes()), config);

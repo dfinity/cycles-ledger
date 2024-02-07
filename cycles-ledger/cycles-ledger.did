@@ -107,20 +107,20 @@ type Value = variant {
   Array : vec Value;
 };
 
-type GetTransactionsArgs = vec record { start : nat; length : nat };
+type GetBlocksArgs = vec record { start : nat; length : nat };
 
-type GetTransactionsResult = record {
-  // Total number of transactions in the
-  // transaction log.
+type GetBlocksResult = record {
+  // Total number of blocks in the
+  // block log.
   log_length : nat;
 
-  transactions : vec record { id : nat; transaction : Value };
+  blocks : vec record { id : nat; block : Value };
 
-  // The archived_transactions vector is always going to be empty
+  // The archived_blocks vector is always going to be empty
   // for this ledger because there is no archive node.
-  archived_transactions : vec record {
-    args : GetTransactionsArgs;
-    callback : func(GetTransactionsArgs) -> (GetTransactionsResult) query;
+  archived_blocks : vec record {
+    args : GetBlocksArgs;
+    callback : func(GetBlocksArgs) -> (GetBlocksResult) query;
   };
 };
 
@@ -133,7 +133,7 @@ type DataCertificate = record {
 };
 
 type InitArgs = record {
-  max_transactions_per_request : nat64;
+  max_blocks_per_request : nat64;
   index_id : opt principal;
 };
 
@@ -143,7 +143,7 @@ type ChangeIndexId = variant {
 };
 
 type UpgradeArgs = record {
-  max_transactions_per_request : opt nat64;
+  max_blocks_per_request : opt nat64;
   change_index_id : opt ChangeIndexId;
 };
 
@@ -248,7 +248,7 @@ service : (ledger_args : LedgerArgs) -> {
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
   icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
-  icrc3_get_transactions : (GetTransactionsArgs) -> (GetTransactionsResult) query;
+  icrc3_get_blocks : (GetBlocksArgs) -> (GetBlocksResult) query;
   send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
   create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
 };

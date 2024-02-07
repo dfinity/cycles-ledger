@@ -30,7 +30,7 @@ impl From<ChangeIndexId> for Option<Principal> {
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeArgs {
-    pub max_transactions_per_request: Option<u64>,
+    pub max_blocks_per_request: Option<u64>,
     pub change_index_id: Option<ChangeIndexId>,
 }
 
@@ -102,13 +102,13 @@ pub enum SendError {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(try_from = "candid::types::reference::Func")]
-pub struct GetTransactionsFn {
+pub struct GetBlocksFn {
     pub canister_id: Principal,
     pub method: String,
-    pub _marker: PhantomData<(GetTransactionsArgs, GetTransactionsResult)>,
+    pub _marker: PhantomData<(GetBlocksArgs, GetBlocksResult)>,
 }
 
-impl GetTransactionsFn {
+impl GetBlocksFn {
     pub fn new(canister_id: Principal, method: impl Into<String>) -> Self {
         Self {
             canister_id,
@@ -118,8 +118,8 @@ impl GetTransactionsFn {
     }
 }
 
-impl From<GetTransactionsFn> for candid::Func {
-    fn from(archive_fn: GetTransactionsFn) -> Self {
+impl From<GetBlocksFn> for candid::Func {
+    fn from(archive_fn: GetBlocksFn) -> Self {
         let principal = Principal::try_from(archive_fn.canister_id.as_ref())
             .expect("could not deserialize principal");
         Self {
@@ -129,12 +129,12 @@ impl From<GetTransactionsFn> for candid::Func {
     }
 }
 
-impl TryFrom<candid::Func> for GetTransactionsFn {
+impl TryFrom<candid::Func> for GetBlocksFn {
     type Error = String;
     fn try_from(func: candid::types::reference::Func) -> Result<Self, Self::Error> {
         let canister_id = Principal::try_from(func.principal.as_slice())
             .map_err(|e| format!("principal is not a canister id: {}", e))?;
-        Ok(GetTransactionsFn {
+        Ok(GetBlocksFn {
             canister_id,
             method: func.method,
             _marker: PhantomData,
@@ -142,9 +142,9 @@ impl TryFrom<candid::Func> for GetTransactionsFn {
     }
 }
 
-impl CandidType for GetTransactionsFn {
+impl CandidType for GetBlocksFn {
     fn _ty() -> candid::types::Type {
-        candid::func!((GetTransactionsArgs) -> (GetTransactionsResult) query)
+        candid::func!((GetBlocksArgs) -> (GetBlocksResult) query)
     }
 
     fn idl_serialize<S>(&self, serializer: S) -> Result<(), S::Error>
@@ -156,34 +156,34 @@ impl CandidType for GetTransactionsFn {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct GetTransactionsArg {
+pub struct GetBlocksArg {
     pub start: Nat,
     pub length: Nat,
 }
 
-pub type GetTransactionsArgs = Vec<GetTransactionsArg>;
+pub type GetBlocksArgs = Vec<GetBlocksArg>;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct TransactionWithId {
+pub struct BlockWithId {
     pub id: Nat,
-    pub transaction: Value,
+    pub block: Value,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ArchivedTransactions {
-    pub args: GetTransactionsArgs,
-    pub callback: GetTransactionsFn,
+pub struct ArchivedBlocks {
+    pub args: GetBlocksArgs,
+    pub callback: GetBlocksFn,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct GetTransactionsResult {
-    // Total number of transactions in the
-    // transaction log.
+pub struct GetBlocksResult {
+    // Total number of blocks in the
+    // block log.
     pub log_length: Nat,
 
-    pub transactions: Vec<TransactionWithId>,
+    pub blocks: Vec<BlockWithId>,
 
-    pub archived_transactions: Vec<ArchivedTransactions>,
+    pub archived_blocks: Vec<ArchivedBlocks>,
 }
 
 #[derive(CandidType, Deserialize, Debug)]

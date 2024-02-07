@@ -7,16 +7,14 @@ use std::{
 
 use assert_matches::assert_matches;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
-use client::{
-    deposit, get_metadata, get_raw_transactions, transaction_hashes, transfer, transfer_from,
-};
+use client::{deposit, get_metadata, get_raw_blocks, transaction_hashes, transfer, transfer_from};
 use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
 };
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE},
     endpoints::{
-        ChangeIndexId, DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError,
+        ChangeIndexId, DataCertificate, GetBlocksResult, LedgerArgs, SendArgs, SendError,
         UpgradeArgs,
     },
     memo::encode_send_memo,
@@ -1468,20 +1466,20 @@ fn validate_certificate(
 }
 
 #[test]
-fn test_icrc3_get_transactions() {
-    // Utility to extract all IDs and the corresponding transactions from the given [GetTransactionsResult].
-    let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Block)> {
-        res.transactions
+fn test_icrc3_get_blocks() {
+    // Utility to extract all IDs and the corresponding blcks from the given [GetBlocksResult].
+    let get_txs = |res: &GetBlocksResult| -> Vec<(u64, Block)> {
+        res.blocks
             .iter()
-            .map(|tx| {
-                let tx_id = tx.id.0.to_u64().unwrap();
-                let tx_decoded = Block::from_value(tx.transaction.clone()).unwrap_or_else(|e| {
+            .map(|b| {
+                let block_id = b.id.0.to_u64().unwrap();
+                let block_decoded = Block::from_value(b.block.clone()).unwrap_or_else(|e| {
                     panic!(
                         "Unable to decode block at index:{} value:{:?} : {}",
-                        tx_id, tx.transaction, e
+                        block_id, b.block, e
                     )
                 });
-                (tx_id, tx_decoded)
+                (block_id, block_decoded)
             })
             .collect()
     };
@@ -1489,9 +1487,9 @@ fn test_icrc3_get_transactions() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 0_u128);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.archived_blocks.len(), 0);
     assert_eq!(get_txs(&txs), vec![]);
 
     let depositor_id = install_depositor(env, ledger_id);
@@ -1502,9 +1500,9 @@ fn test_icrc3_get_transactions() {
     // add the first mint block
     deposit(env, depositor_id, user1, 5_000_000_000);
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 1_u128);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let mut block0 = block(
         Mint {
             to: user1,
@@ -1526,9 +1524,9 @@ fn test_icrc3_get_transactions() {
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 2_u128);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let mut block1 = block(
         Mint {
             to: user2,
@@ -1548,9 +1546,9 @@ fn test_icrc3_get_transactions() {
     validate_certificate(env, ledger_id, 1, block1.hash().unwrap());
 
     // check retrieving a subset of the transactions
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 1)]);
     assert_eq!(txs.log_length, 2_u128);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
@@ -1569,9 +1567,9 @@ fn test_icrc3_get_transactions() {
     )
     .expect("Send failed");
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 3_u128);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let send_memo = encode_send_memo(&depositor_id);
     let mut block2 = block(
         Burn {
@@ -1630,9 +1628,9 @@ fn test_icrc3_get_transactions() {
     )
     .expect("Transfer from failed");
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 6_u128);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let actual_txs = get_txs(&txs);
     let block3 = block(
         Transfer {
@@ -1759,18 +1757,18 @@ fn block(
 }
 
 #[test]
-fn test_get_transactions_max_length() {
+fn test_get_blocks_max_length() {
     // Check that the ledger doesn't return more blocks
-    // than configured. We set the max number of transactions
+    // than configured. We set the max number of blocks
     // per request to 2 instead of the default because
     // it's much faster to test.
 
     let env = new_state_machine();
-    let max_transactions_per_request = 2;
+    let max_blocks_per_request = 2;
     let ledger_id = install_ledger_with_conf(
         &env,
         LedgerConfig {
-            max_transactions_per_request,
+            max_blocks_per_request,
             index_id: None,
         },
     );
@@ -1783,18 +1781,18 @@ fn test_get_transactions_max_length() {
     let _ = deposit(&env, depositor_id, user, 4_000_000_000);
     let _ = deposit(&env, depositor_id, user, 5_000_000_000);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(3, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(3, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 }
 
 #[test]
-fn test_set_max_transactions_per_request_in_upgrade() {
+fn test_set_max_blocks_per_request_in_upgrade() {
     let env = new_state_machine();
     let ledger_id = install_ledger_with_conf(&env, LedgerConfig::default());
     let depositor_id = install_depositor(&env, ledger_id);
@@ -1806,26 +1804,26 @@ fn test_set_max_transactions_per_request_in_upgrade() {
     let _ = deposit(&env, depositor_id, user, 4_000_000_000);
     let _ = deposit(&env, depositor_id, user, 5_000_000_000);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
-    assert_eq!(5, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(5, res.blocks.len() as u64);
 
-    let max_transactions_per_request = 2;
+    let max_blocks_per_request = 2;
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
-        max_transactions_per_request: Some(max_transactions_per_request),
+        max_blocks_per_request: Some(max_blocks_per_request),
         change_index_id: None,
     }))))
     .unwrap();
     env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
         .unwrap();
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(3, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(3, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 }
 
 #[test]
@@ -1858,7 +1856,7 @@ fn test_change_index_id() {
     // set the index_id
     let index_id = Principal::from_slice(&[111]);
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
-        max_transactions_per_request: None,
+        max_blocks_per_request: None,
         change_index_id: Some(ChangeIndexId::SetTo(index_id)),
     }))))
     .unwrap();
@@ -1874,7 +1872,7 @@ fn test_change_index_id() {
 
     // unset the index_id
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
-        max_transactions_per_request: None,
+        max_blocks_per_request: None,
         change_index_id: Some(ChangeIndexId::Unset),
     }))))
     .unwrap();

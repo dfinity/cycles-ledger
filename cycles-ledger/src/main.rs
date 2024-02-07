@@ -1,6 +1,6 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
-    DataCertificate, GetTransactionsArgs, GetTransactionsResult, LedgerArgs, SendError,
+    DataCertificate, GetBlocksArgs, GetBlocksResult, LedgerArgs, SendError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -40,9 +40,9 @@ fn init(ledger_args: LedgerArgs) {
 fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     match ledger_args {
         Some(LedgerArgs::Upgrade(Some(upgrade_args))) => {
-            if let Some(max_transactions_per_request) = upgrade_args.max_transactions_per_request {
+            if let Some(max_transactions_per_request) = upgrade_args.max_blocks_per_request {
                 mutate_config(|config| {
-                    config.max_transactions_per_request = max_transactions_per_request;
+                    config.max_blocks_per_request = max_transactions_per_request;
                 })
             }
             if let Some(change_index_id) = upgrade_args.change_index_id {
@@ -230,8 +230,8 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
 
 #[query]
 #[candid_method(query)]
-fn icrc3_get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
-    storage::get_transactions(args)
+fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
+    storage::get_blocks(args)
 }
 
 #[update]
