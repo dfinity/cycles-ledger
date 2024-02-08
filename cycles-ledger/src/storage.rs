@@ -8,9 +8,7 @@ use crate::memo::{encode_send_memo, validate_memo};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
-    endpoints::{
-        GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult, TransactionWithId,
-    },
+    endpoints::{BlockWithId, GetBlocksArg, GetBlocksArgs, GetBlocksResult},
     generic_to_ciborium_value,
 };
 use anyhow::{anyhow, bail, Context, Error};
@@ -1881,12 +1879,12 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
     }
 }
 
-pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     let log_length = read_state(|state| state.blocks.len());
-    let max_length = read_state(|state| state.config.get().max_transactions_per_request);
-    let mut transactions = Vec::new();
-    for GetTransactionsArg { start, length } in args {
-        let remaining_length = max_length.saturating_sub(transactions.len() as u64);
+    let max_length = read_state(|state| state.config.get().max_blocks_per_request);
+    let mut blocks = Vec::new();
+    for GetBlocksArg { start, length } in args {
+        let remaining_length = max_length.saturating_sub(blocks.len() as u64);
         if remaining_length == 0 {
             break;
         }
@@ -1900,25 +1898,25 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
         };
         read_state(|state| {
             for id in start..end_excluded {
-                let transaction = state
+                let block = state
                     .blocks
                     .get(id)
                     .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
                     .0
                     .to_value()
                     .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
-                let transaction_with_id = TransactionWithId {
+                let block_with_id = BlockWithId {
                     id: Nat::from(id),
-                    transaction,
+                    block,
                 };
-                transactions.push(transaction_with_id);
+                blocks.push(block_with_id);
             }
         });
     }
-    GetTransactionsResult {
+    GetBlocksResult {
         log_length: Nat::from(log_length),
-        transactions,
-        archived_transactions: vec![],
+        blocks,
+        archived_blocks: vec![],
     }
 }
 

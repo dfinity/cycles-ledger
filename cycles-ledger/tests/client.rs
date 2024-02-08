@@ -6,8 +6,8 @@ use cycles_ledger::{
     config::FEE,
     endpoints::{
         self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterError,
-        CreateCanisterSuccess, DataCertificate, DepositResult, GetTransactionsArg,
-        GetTransactionsArgs, GetTransactionsResult, SendArgs,
+        CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
+        GetBlocksResult, SendArgs,
     },
     storage::{Block, CMC_PRINCIPAL},
 };
@@ -76,32 +76,27 @@ pub fn total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
 }
 
 pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> Block {
-    let arg = Encode!(&vec![GetTransactionsArg {
+    let arg = Encode!(&vec![GetBlocksArg {
         start: block_index,
         length: Nat::from(1_u128),
     }])
     .unwrap();
     if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "icrc3_get_transactions",
-            arg,
-        )
+        .query_call(ledger_id, Principal::anonymous(), "icrc3_get_blocks", arg)
         .unwrap()
     {
         Block::from_value(
-            Decode!(&res, GetTransactionsResult)
+            Decode!(&res, GetBlocksResult)
                 .unwrap()
-                .transactions
+                .blocks
                 .get(0)
                 .unwrap()
                 .clone()
-                .transaction,
+                .block,
         )
         .unwrap()
     } else {
-        panic!("icrc3_get_transactions rejected")
+        panic!("icrc3_get_blocks rejected")
     }
 }
 
@@ -305,29 +300,24 @@ pub fn get_metadata(env: &StateMachine, ledger_id: Principal) -> Vec<(String, Me
     }
 }
 
-pub fn get_raw_transactions(
+pub fn get_raw_blocks(
     env: &StateMachine,
     ledger_id: Principal,
     start_lengths: Vec<(u64, u64)>,
-) -> GetTransactionsResult {
-    let get_transactions_args: GetTransactionsArgs = start_lengths
+) -> GetBlocksResult {
+    let get_blocks_args: GetBlocksArgs = start_lengths
         .iter()
-        .map(|(start, length)| GetTransactionsArg {
+        .map(|(start, length)| GetBlocksArg {
             start: Nat::from(*start),
             length: Nat::from(*length),
         })
         .collect();
-    let arg = Encode!(&get_transactions_args).unwrap();
+    let arg = Encode!(&get_blocks_args).unwrap();
     if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "icrc3_get_transactions",
-            arg,
-        )
+        .query_call(ledger_id, Principal::anonymous(), "icrc3_get_blocks", arg)
         .unwrap()
     {
-        Decode!(&res, GetTransactionsResult).unwrap()
+        Decode!(&res, GetBlocksResult).unwrap()
     } else {
         panic!("fee call rejected")
     }
