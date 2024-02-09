@@ -14,10 +14,10 @@ use cycles_ledger::endpoints::{
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
-        ChangeIndexId, DataCertificate, GetBlocksResult, LedgerArgs, SendArgs, SendError,
-        UpgradeArgs,
+        ChangeIndexId, DataCertificate, GetBlocksResult, LedgerArgs, UpgradeArgs, WithdrawArgs,
+        WithdrawError,
     },
-    memo::encode_send_memo,
+    memo::encode_withdraw_memo,
     storage::{
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
@@ -52,7 +52,7 @@ use serde_bytes::ByteBuf;
 
 use crate::client::{
     approve, balance_of, canister_status, create_canister, fail_next_create_canister_with, fee,
-    get_allowance, get_block, get_tip_certificate, send, total_supply, transaction_timestamps,
+    get_allowance, get_block, get_tip_certificate, total_supply, transaction_timestamps, withdraw,
 };
 
 mod client;
@@ -199,7 +199,7 @@ fn test_deposit_amount_below_fee() {
 }
 
 #[test]
-fn test_send_flow() {
+fn test_withdraw_flow() {
     // TODO(SDK-1145): Add re-entrancy test
 
     let env = &new_state_machine();
@@ -225,7 +225,7 @@ fn test_send_flow() {
         owner: Principal::from_slice(&[1]),
         subaccount: Some([4; 32]),
     };
-    let send_receiver = env.create_canister(None);
+    let withdraw_receiver = env.create_canister(None);
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
@@ -238,95 +238,95 @@ fn test_send_flow() {
     let mut expected_total_supply = 5_000_000_000;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from main account
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 500_000_000_u128;
-    let _send_idx = send(
+    // withdraw cycles from main account
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 500_000_000_u128;
+    let _withdraw_idx = withdraw(
         env,
         ledger_id,
         user_main_account,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: None,
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_main_account),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
-    expected_total_supply -= send_amount + FEE;
+    expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from subaccount
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 100_000_000_u128;
-    let _send_idx = send(
+    // withdraw cycles from subaccount
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 100_000_000_u128;
+    let _withdraw_idx = withdraw(
         env,
         ledger_id,
         user_subaccount_1,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: None,
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_subaccount_1),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
-    expected_total_supply -= send_amount + FEE;
+    expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from subaccount with created_at_time set
+    // withdraw cycles from subaccount with created_at_time set
     let now = env
         .time()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64;
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 300_000_000_u128;
-    let _send_idx = send(
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 300_000_000_u128;
+    let _withdraw_idx = withdraw(
         env,
         ledger_id,
         user_subaccount_3,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: Some(now),
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_subaccount_3),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
-    expected_total_supply -= send_amount + FEE;
+    expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
-// A test to check that `DuplicateError` is returned on a duplicate `send` request
+// A test to check that `DuplicateError` is returned on a duplicate `withdraw` request
 // and not `InsufficientFundsError`, in case when there is not enough funds
 // to execute it a second time
 #[test]
-fn test_send_duplicate() {
+fn test_withdraw_duplicate() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
@@ -334,7 +334,7 @@ fn test_send_duplicate() {
         owner: Principal::from_slice(&[1]),
         subaccount: None,
     };
-    let send_receiver = env.create_canister(None);
+    let withdraw_receiver = env.create_canister(None);
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
@@ -346,43 +346,43 @@ fn test_send_duplicate() {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64;
-    // send cycles from main account
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 900_000_000_u128;
-    let send_idx = send(
+    // withdraw cycles from main account
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 900_000_000_u128;
+    let withdraw_idx = withdraw(
         env,
         ledger_id,
         user_main_account,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: Some(now),
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_main_account),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
 
     assert_eq!(
-        SendError::Duplicate {
-            duplicate_of: send_idx
+        WithdrawError::Duplicate {
+            duplicate_of: withdraw_idx
         },
-        send(
+        withdraw(
             env,
             ledger_id,
             user_main_account,
-            SendArgs {
+            WithdrawArgs {
                 from_subaccount: None,
-                to: send_receiver,
+                to: withdraw_receiver,
                 created_at_time: Some(now),
-                amount: Nat::from(send_amount),
+                amount: Nat::from(withdraw_amount),
             },
         )
         .unwrap_err()
@@ -390,7 +390,7 @@ fn test_send_duplicate() {
 }
 
 #[test]
-fn test_send_fails() {
+fn test_withdraw_fails() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
@@ -404,13 +404,13 @@ fn test_send_fails() {
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
-    // send more than available
+    // withdraw more than available
     let balance_before_attempt = balance_of(env, ledger_id, user);
-    let send_result = send(
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -419,19 +419,19 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
+        withdraw_result,
+        WithdrawError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
     ));
     assert_eq!(balance_before_attempt, balance_of(env, ledger_id, user));
     let mut expected_total_supply = 1_000_000_000_000;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // send from empty subaccount
-    let send_result = send(
+    // withdraw from empty subaccount
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: Some([5; 32]),
             to: depositor_id,
             created_at_time: None,
@@ -440,22 +440,22 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::InsufficientFunds { balance } if balance == 0_u128
+        withdraw_result,
+        WithdrawError::InsufficientFunds { balance } if balance == 0_u128
     ));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // send cycles to user instead of canister
+    // withdraw cycles to user instead of canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
     let self_authenticating_principal = candid::Principal::from_text(
         "luwgt-ouvkc-k5rx5-xcqkq-jx5hm-r2rj2-ymqjc-pjvhb-kij4p-n4vms-gqe",
     )
     .unwrap();
-    let send_result = send(
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: self_authenticating_principal,
             created_at_time: None,
@@ -464,22 +464,22 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+        withdraw_result,
+        WithdrawError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
     ));
     assert_eq!(balance_before_attempt, balance_of(env, ledger_id, user));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // send cycles to deleted canister
+    // withdraw cycles to deleted canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
     let deleted_canister = env.create_canister(None);
     env.stop_canister(deleted_canister, None).unwrap();
     env.delete_canister(deleted_canister, None).unwrap();
-    let send_result = send(
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: deleted_canister,
             created_at_time: None,
@@ -488,8 +488,8 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::FailedToSend {
+        withdraw_result,
+        WithdrawError::FailedToWithdraw {
             rejection_code: RejectionCode::DestinationInvalid,
             ..
         }
@@ -507,11 +507,11 @@ fn test_send_fails() {
         subaccount: None,
     };
     deposit(env, depositor_id, user_2, FEE + 1);
-    send(
+    withdraw(
         env,
         ledger_id,
         user_2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -520,11 +520,11 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
-    send(
+    withdraw(
         env,
         ledger_id,
         user_2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -534,20 +534,20 @@ fn test_send_fails() {
     .unwrap_err();
     assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
 
-    // test send deduplication
+    // test withdraw deduplication
     deposit(env, depositor_id, user_2, FEE * 3);
     let created_at_time = env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
-    let args = SendArgs {
+    let args = WithdrawArgs {
         from_subaccount: None,
         to: depositor_id,
         created_at_time: Some(created_at_time),
         amount: Nat::from(FEE),
     };
-    let duplicate_of = send(env, ledger_id, user_2, args.clone()).unwrap();
-    // the same send should fail because created_at_time is set and the args are the same
+    let duplicate_of = withdraw(env, ledger_id, user_2, args.clone()).unwrap();
+    // the same withdraw should fail because created_at_time is set and the args are the same
     assert_eq!(
-        send(env, ledger_id, user_2, args),
-        Err(SendError::Duplicate { duplicate_of })
+        withdraw(env, ledger_id, user_2, args),
+        Err(WithdrawError::Duplicate { duplicate_of })
     );
 }
 
@@ -1390,11 +1390,11 @@ fn test_total_supply_after_upgrade() {
         },
     )
     .unwrap();
-    send(
+    withdraw(
         env,
         ledger_id,
         user2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -1403,7 +1403,7 @@ fn test_total_supply_after_upgrade() {
     )
     .unwrap();
 
-    // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and send
+    // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and withdraw
     let expected_total_supply = 5_000_000_000 - 1_000_000_000 - 2 * fee.0.to_u128().unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
     let upgrade_args = Encode!(&None::<LedgerArgs>).unwrap();
@@ -1557,30 +1557,30 @@ fn test_icrc3_get_blocks() {
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
 
     // add a burn block
-    send(
+    withdraw(
         env,
         ledger_id,
         user2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
             amount: Nat::from(2_000_000_000_u128),
         },
     )
-    .expect("Send failed");
+    .expect("Withdraw failed");
 
     let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 3_u128);
     assert_eq!(txs.archived_blocks.len(), 0);
-    let send_memo = encode_send_memo(&depositor_id);
+    let withdraw_memo = encode_withdraw_memo(&depositor_id);
     let mut block2 = block(
         Burn {
             from: user2,
             amount: 2_000_000_000,
         },
         None,
-        Some(send_memo),
+        Some(withdraw_memo),
         Some(block1.hash().unwrap()),
     );
     let actual_txs = get_txs(&txs);

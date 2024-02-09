@@ -1,10 +1,10 @@
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{
     CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterSuccess,
-    DataCertificate, DepositResult, SendError,
+    DataCertificate, DepositResult, WithdrawError,
 };
 use crate::logs::{P0, P1};
-use crate::memo::{encode_send_memo, validate_memo};
+use crate::memo::{encode_withdraw_memo, validate_memo};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
@@ -1036,19 +1036,19 @@ mod approve {
     }
 }
 
-mod send {
+mod withdraw {
     use candid::Nat;
 
-    use crate::endpoints::SendError;
+    use crate::endpoints::WithdrawError;
 
     use super::transfer_from::UNKNOWN_GENERIC_ERROR;
 
-    pub fn anyhow_error(error: anyhow::Error) -> SendError {
+    pub fn anyhow_error(error: anyhow::Error) -> WithdrawError {
         unknown_generic_error(format!("{:#}", error))
     }
 
-    pub fn unknown_generic_error(message: String) -> SendError {
-        SendError::GenericError {
+    pub fn unknown_generic_error(message: String) -> WithdrawError {
+        WithdrawError::GenericError {
             error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
             message,
         }
@@ -1108,7 +1108,7 @@ impl From<ProcessTransactionError> for ApproveError {
     }
 }
 
-impl From<ProcessTransactionError> for SendError {
+impl From<ProcessTransactionError> for WithdrawError {
     fn from(error: ProcessTransactionError) -> Self {
         use ProcessTransactionError::*;
 
@@ -1120,7 +1120,7 @@ impl From<ProcessTransactionError> for SendError {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
-            GenericError(err) => send::unknown_generic_error(format!("{:#}", err)),
+            GenericError(err) => withdraw::unknown_generic_error(format!("{:#}", err)),
         }
     }
 }
@@ -1286,7 +1286,7 @@ impl From<CreatedAtTimeValidationError> for TransferFromError {
     }
 }
 
-impl From<CreatedAtTimeValidationError> for SendError {
+impl From<CreatedAtTimeValidationError> for WithdrawError {
     fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
             CreatedAtTimeValidationError::TooOld => Self::TooOld,
@@ -1408,17 +1408,17 @@ fn is_self_authenticating(principal: &Principal) -> bool {
         .is_some_and(|b| *b == CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG)
 }
 
-pub async fn send(
+pub async fn withdraw(
     from: Account,
     to: Principal,
     amount: u128,
     now: u64,
     created_at_time: Option<u64>,
-) -> Result<Nat, SendError> {
-    use SendError::*;
+) -> Result<Nat, WithdrawError> {
+    use WithdrawError::*;
 
     if is_self_authenticating(&to) {
-        // if it is not an opaque principal ID, the user is trying to send to a non-canister target
+        // if it is not an opaque principal ID, the user is trying to withdraw to a non-canister target
         return Err(InvalidReceiver { receiver: to });
     }
 
@@ -1432,7 +1432,7 @@ pub async fn send(
     let transaction = Transaction {
         operation: Operation::Burn { from, amount },
         created_at_time,
-        memo: Some(encode_send_memo(&to)),
+        memo: Some(encode_withdraw_memo(&to)),
     };
     check_duplicate(&transaction)?;
 
@@ -1445,10 +1445,15 @@ pub async fn send(
 
     // sanity check that the total_supply won't underflow
     read_state(|state| state.check_total_supply_decrease(amount_with_fee))
-        .with_context(|| format!("Unable to send {} cycles from {} to {}", amount, from, to))
-        .map_err(send::anyhow_error)?;
+        .with_context(|| {
+            format!(
+                "Unable to withdraw {} cycles from {} to {}",
+                amount, from, to
+            )
+        })
+        .map_err(withdraw::anyhow_error)?;
 
-    // The send process involves 3 steps:
+    // The withdraw process involves 3 steps:
     // 1. burn cycles + fee
     // 2. call deposit_cycles on the management canister
     // 3. if 2. fails then mint cycles
@@ -1458,7 +1463,7 @@ pub async fn send(
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
-        log_error_and_trap(&err.context(format!("Unable to perform send: {:?}", transaction)))
+        log_error_and_trap(&err.context(format!("Unable to perform withdraw: {:?}", transaction)))
     };
 
     prune(now);
@@ -1471,7 +1476,7 @@ pub async fn send(
         match reimburse(from, amount, now) {
             Ok(fee_block) => {
                 prune(now);
-                return Err(FailedToSend {
+                return Err(FailedToWithdraw {
                     fee_block: Some(Nat::from(fee_block)),
                     rejection_code,
                     rejection_reason,
@@ -1669,7 +1674,7 @@ fn reimburse(acc: Account, amount: u128, now: u64) -> Result<u64, ProcessTransac
     let block_index = process_transaction(transaction.clone(), now)?;
 
     if let Err(err) = mutate_state(|state| state.credit(&acc, amount)) {
-        log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
+        log_error_and_trap(&err.context(format!("Unable to reimburse withdraw: {:?}", transaction)))
     };
 
     prune(now);

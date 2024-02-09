@@ -5,7 +5,7 @@ The cycles ledger is a global ledger canister that enables principal IDs to hold
 The cycles ledger complies with the [ICRC-2](https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md) and [ICRC-1](https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-1/README.md) token standards.
 Additionally, it implements the endpoints defined in the proposed [ICRC-3](https://github.com/dfinity/ICRC-1/pull/128) standard.
 
-The cycles ledger further provides endpoints to deposit and send out cycles, and also
+The cycles ledger further provides endpoints to deposit and withdraw cycles, and also
 to create canisters using cycles. These custom endpoints are introduced in the following.
 
 ## Depositing Cycles
@@ -27,9 +27,9 @@ When invoked with a particular account (and, optionally, a memo), the balance of
 
 > NOTE: The deposit is rejected if fewer than 100M cycles are attached to the call.
 
-## Sending Cycles
+## Withdrawing Cycles
 
-The cycles ledger has the following endpoint to send cycles to other canisters.
+The cycles ledger has the following endpoint to withdraw cycles to other canisters.
 
 ```
 type BlockIndex = nat;
@@ -44,17 +44,17 @@ type RejectionCode = variant {
   CanisterReject;
 };
 
-type SendArgs = record {
+type WithdrawArgs = record {
     amount : nat;
     from_subaccount : opt vec nat8;
     to : principal;
     created_at_time : opt nat64;
 };
 
-type SendError = variant {
+type WithdrawError = variant {
   GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
-  FailedToSend : record {
+  FailedToWithdraw : record {
     fee_block : opt nat;
     rejection_code : RejectionCode;
     rejection_reason : text;
@@ -67,14 +67,14 @@ type SendError = variant {
   InsufficientFunds : record { balance : nat };
 };
 
-send : (SendArgs) -> (variant { Ok : BlockIndex; Err : SendError });
+withdraw : (WithdrawArgs) -> (variant { Ok : BlockIndex; Err : WithdrawError });
 ```
 
 The two required parameters are the amount to be sent and the principal ID of
 the targeted canister ID. Optionally, the subaccount from which cycles are
 deducted and the time at which the transaction is created can be set as well.
 
-There is a fee of **100M cycles** for sending cycles to another canister.
+There is a fee of **100M cycles** for withdrawing cycles to another canister.
 
 > NOTE: The function returns an error when the parameter `to` is not a valid canister ID.
 
