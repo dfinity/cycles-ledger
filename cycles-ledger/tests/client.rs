@@ -7,7 +7,7 @@ use cycles_ledger::{
     endpoints::{
         self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterError,
         CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
-        GetBlocksResult, SendArgs,
+        GetBlocksResult, WithdrawArgs,
     },
     storage::{Block, CMC_PRINCIPAL},
 };
@@ -100,17 +100,20 @@ pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> 
     }
 }
 
-pub fn send(
+pub fn withdraw(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
-    args: SendArgs,
-) -> Result<Nat, endpoints::SendError> {
+    args: WithdrawArgs,
+) -> Result<Nat, endpoints::WithdrawError> {
     let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env.update_call(ledger_id, from.owner, "send", arg).unwrap() {
-        Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::SendError>).unwrap()
+    if let WasmResult::Reply(res) = env
+        .update_call(ledger_id, from.owner, "withdraw", arg)
+        .unwrap()
+    {
+        Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::WithdrawError>).unwrap()
     } else {
-        panic!("send rejected")
+        panic!("withdraw rejected")
     }
 }
 
@@ -127,7 +130,7 @@ pub fn create_canister(
     {
         Decode!(&res, Result<CreateCanisterSuccess, CreateCanisterError>).unwrap()
     } else {
-        panic!("send rejected")
+        panic!("create_canister rejected")
     }
 }
 

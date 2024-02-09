@@ -1,6 +1,6 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
-    DataCertificate, GetBlocksArgs, GetBlocksResult, LedgerArgs, SendError,
+    DataCertificate, GetBlocksArgs, GetBlocksResult, LedgerArgs, WithdrawError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -236,19 +236,19 @@ fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
 
 #[update]
 #[candid_method]
-async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
+async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
 
     let Some(amount) = args.amount.0.to_u128() else {
-        return Err(SendError::InsufficientFunds {
+        return Err(WithdrawError::InsufficientFunds {
             balance: Nat::from(balance_of(&from)),
         });
     };
 
-    storage::send(
+    storage::withdraw(
         from,
         args.to,
         amount,
