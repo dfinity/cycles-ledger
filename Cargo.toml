@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 default = "cycles-ledger"
 members = [
   # Production crates
