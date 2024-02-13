@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-default = "cycles-ledger"
+default-members = ["cycles-ledger"]
 members = [
   # Production crates
   "cycles-ledger",
