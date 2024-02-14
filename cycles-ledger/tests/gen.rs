@@ -223,7 +223,7 @@ impl<'a> IsCyclesLedger for CyclesLedgerInStateMachine<'a> {
                 )?
                 .map_err(|e| {
                     format!(
-                        "call to send(from:{}, to:{}, amount:{}) failed: {:?}",
+                        "call to withdraw(from:{}, to:{}, amount:{}) failed: {:?}",
                         Account {
                             owner: call.caller,
                             subaccount: arg.from_subaccount
