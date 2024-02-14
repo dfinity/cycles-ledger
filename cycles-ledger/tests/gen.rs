@@ -590,7 +590,7 @@ prop_compose! {
 }
 
 prop_compose! {
-    fn arb_send(arb_from: impl Strategy<Value = (Account, u128)>, depositor: Principal)
+    fn arb_withdraw(arb_from: impl Strategy<Value = (Account, u128)>, depositor: Principal)
                ((from, from_balance) in arb_from)
                (from in Just(from),
                 amount in (0..=(from_balance - FEE)).prop_map(Nat::from),
@@ -714,8 +714,8 @@ pub fn arb_cycles_ledger_call_state_from(
             arb_calls.push(arb_approve.boxed());
 
             // send
-            let arb_send = arb_send(select_account_and_balance.clone(), depositor);
-            arb_calls.push(arb_send.boxed());
+            let arb_withdraw = arb_withdraw(select_account_and_balance.clone(), depositor);
+            arb_calls.push(arb_withdraw.boxed());
 
             // transfer
             let arb_transfer = arb_transfer(select_account_and_balance);
