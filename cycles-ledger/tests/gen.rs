@@ -725,7 +725,9 @@ pub fn arb_cycles_ledger_call_state_from(
             let accounts: HashMap<_, _> = accounts.iter().copied().collect();
             let mut from_spender_amount = vec![];
             for ((from, spender), allowance) in allowances.as_ref() {
-                let Some(balance) = accounts.get(from) else { continue; };
+                let Some(balance) = accounts.get(from) else {
+                    continue;
+                };
                 from_spender_amount.push((*from, *spender, *allowance.min(balance)));
             }
             if !from_spender_amount.is_empty() {

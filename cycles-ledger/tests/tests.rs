@@ -54,7 +54,8 @@ use serde_bytes::ByteBuf;
 use crate::{
     client::{
         approve, balance_of, canister_status, create_canister, fail_next_create_canister_with, fee,
-        get_allowance, get_block, get_tip_certificate, total_supply, transaction_timestamps, withdraw,
+        get_allowance, get_block, get_tip_certificate, total_supply, transaction_timestamps,
+        withdraw,
     },
     gen::{CyclesLedgerInStateMachine, IsCyclesLedger},
 };
