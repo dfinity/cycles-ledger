@@ -1,6 +1,6 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
-    DataCertificate, GetTransactionsArgs, GetTransactionsResult, LedgerArgs, SendError,
+    DataCertificate, GetBlocksArgs, GetBlocksResult, LedgerArgs, WithdrawError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -40,9 +40,9 @@ fn init(ledger_args: LedgerArgs) {
 fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     match ledger_args {
         Some(LedgerArgs::Upgrade(Some(upgrade_args))) => {
-            if let Some(max_transactions_per_request) = upgrade_args.max_transactions_per_request {
+            if let Some(max_blocks_per_request) = upgrade_args.max_blocks_per_request {
                 mutate_config(|config| {
-                    config.max_transactions_per_request = max_transactions_per_request;
+                    config.max_blocks_per_request = max_blocks_per_request;
                 })
             }
             if let Some(change_index_id) = upgrade_args.change_index_id {
@@ -230,30 +230,56 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
 
 #[query]
 #[candid_method(query)]
-fn icrc3_get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
-    storage::get_transactions(args)
+fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
+    storage::get_blocks(args)
 }
 
 #[update]
 #[candid_method]
-async fn send(args: endpoints::SendArgs) -> Result<Nat, SendError> {
+async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
     let from = Account {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
 
     let Some(amount) = args.amount.0.to_u128() else {
-        return Err(SendError::InsufficientFunds {
+        return Err(WithdrawError::InsufficientFunds {
             balance: Nat::from(balance_of(&from)),
         });
     };
 
-    storage::send(
+    storage::withdraw(
         from,
         args.to,
         amount,
         ic_cdk::api::time(),
         args.created_at_time,
+    )
+    .await
+}
+
+#[update]
+#[candid_method]
+async fn create_canister(
+    args: endpoints::CreateCanisterArgs,
+) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterError> {
+    let from = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.from_subaccount,
+    };
+
+    let Some(amount) = args.amount.0.to_u128() else {
+        return Err(endpoints::CreateCanisterError::InsufficientFunds {
+            balance: Nat::from(balance_of(&from)),
+        });
+    };
+
+    storage::create_canister(
+        from,
+        amount,
+        ic_cdk::api::time(),
+        args.created_at_time,
+        args.creation_args,
     )
     .await
 }
@@ -413,7 +439,7 @@ fn main() {}
 fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {
-        for (key, value) in state.transaction_hashes.iter() {
+        for (key, (value, _maybe_canister)) in state.transaction_hashes.iter() {
             res.insert(key, value);
         }
     });
@@ -435,7 +461,7 @@ fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
 
 #[test]
 fn test_candid_interface_compatibility() {
-    use candid::utils::{service_equal, CandidSource};
+    use candid_parser::utils::{service_equal, CandidSource};
     use std::path::PathBuf;
 
     candid::export_service!();

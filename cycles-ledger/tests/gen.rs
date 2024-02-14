@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use candid::{CandidType, Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{DepositArg, DepositResult, SendArgs, SendError},
+    endpoints::{DepositArg, DepositResult, WithdrawArgs, WithdrawError},
 };
 use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
@@ -32,7 +32,7 @@ use serde_bytes::ByteBuf;
 pub enum CyclesLedgerCallArg {
     Approve(ApproveArgs),
     Deposit { amount: Nat, arg: DepositArg },
-    Send(SendArgs),
+    Withdraw(WithdrawArgs),
     Transfer(TransferArg),
     TransferFrom(TransferFromArgs),
 }
@@ -49,9 +49,9 @@ impl From<(Nat, DepositArg)> for CyclesLedgerCallArg {
     }
 }
 
-impl From<SendArgs> for CyclesLedgerCallArg {
-    fn from(value: SendArgs) -> Self {
-        Self::Send(value)
+impl From<WithdrawArgs> for CyclesLedgerCallArg {
+    fn from(value: WithdrawArgs) -> Self {
+        Self::Withdraw(value)
     }
 }
 
@@ -109,8 +109,8 @@ impl std::fmt::Display for CyclesLedgerCall {
                 write!(f, "memo:: {:?} ", encode_memo(&arg.memo))?;
                 write!(f, "}}")
             }
-            CyclesLedgerCallArg::Send(arg) => {
-                write!(f, "Send {{ ")?;
+            CyclesLedgerCallArg::Withdraw(arg) => {
+                write!(f, "Withdraw {{ ")?;
                 write!(
                     f,
                     "from, {}, ",
@@ -213,12 +213,12 @@ impl<'a> IsCyclesLedger for CyclesLedgerInStateMachine<'a> {
                     )
                 })?;
             }
-            Send(arg) => {
-                let _ = update_call::<_, Result<Nat, SendError>>(
+            Withdraw(arg) => {
+                let _ = update_call::<_, Result<Nat, WithdrawError>>(
                     self.env,
                     self.ledger_id,
                     call.caller,
-                    "send",
+                    "withdraw",
                     arg,
                 )?
                 .map_err(|e| {
@@ -367,7 +367,7 @@ impl IsCyclesLedger for CyclesLedgerInMemory {
                     .checked_add(amount)
                     .ok_or("total supply overflow")?;
             }
-            CyclesLedgerCallArg::Send(SendArgs {
+            CyclesLedgerCallArg::Withdraw(WithdrawArgs {
                 from_subaccount,
                 amount,
                 ..
@@ -598,7 +598,7 @@ prop_compose! {
                -> CyclesLedgerCall {
         CyclesLedgerCall {
             caller: from.owner,
-            arg: SendArgs {
+            arg: WithdrawArgs {
                 from_subaccount: from.subaccount,
                 // Destination must exist so we pass the only
                 // canister that we know exists except for the cycles ledger.

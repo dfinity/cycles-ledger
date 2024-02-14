@@ -5,14 +5,28 @@
       "candid": "./cycles-ledger/cycles-ledger.did",
       "package": "cycles-ledger",
       "optimize": "cycles",
-      "gzip": true
+      "gzip": true,
+      "pullable": {
+        "dependencies": [],
+        "wasm_url": "https://github.com/dfinity/cycles-ledger/releases/latest/download/cycles-ledger.wasm.gz",
+        "wasm_hash_url": "https://github.com/dfinity/cycles-ledger/releases/latest/download/cycles-ledger.wasm.gz.sha256",
+        "init_guide": "Set max_blocks_per_request in Init record",
+        "init_arg": "(variant{Init=record{max_blocks_per_request=1000}})"
+      }
     },
-    "cycles-depositor": {
+    "depositor": {
       "type": "rust",
       "candid": "./depositor/depositor.did",
       "package": "depositor",
       "optimize": "cycles",
       "gzip": true
+    },
+    "fake-cmc": {
+      "type": "rust",
+      "candid": "./fake-cmc/fake-cmc.did",
+      "package": "fake-cmc",
+      "optimize": "cycles",
+      "gzip": true
     }
-  } 
+  }
 }

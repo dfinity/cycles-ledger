@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ic-commit: [ a17247bd86c7aa4e87742bf74d108614580f216d ]
+        ic-commit: [ 072b2a6586c409efa88f2244d658307ff3a645d8 ]
 
     steps:
       - uses: actions/checkout@v2

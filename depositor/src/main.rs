@@ -42,3 +42,31 @@ async fn deposit(arg: DepositArg) -> DepositResult {
         .expect("Unable to call deposit");
     result
 }
+
+#[test]
+fn test_candid_interface_compatibility() {
+    use candid_parser::utils::{service_equal, CandidSource};
+    use std::path::PathBuf;
+
+    candid::export_service!();
+    let exported_interface = __export_service();
+
+    let expected_interface =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("depositor.did");
+
+    println!(
+        "Expected interface: {}\n\n",
+        CandidSource::File(expected_interface.as_path())
+            .load()
+            .unwrap()
+            .1
+            .unwrap()
+    );
+    println!("Exported interface: {}\n\n", exported_interface);
+
+    service_equal(
+        CandidSource::Text(&exported_interface),
+        CandidSource::File(expected_interface.as_path()),
+    )
+    .expect("The despositor interface is not compatible with the depositor.did file");
+}

@@ -1,26 +1,27 @@
 use crate::config::{Config, REMOTE_FUTURE};
-use crate::endpoints::{DataCertificate, DepositResult, SendError};
+use crate::endpoints::{
+    CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterSuccess,
+    DataCertificate, DepositResult, WithdrawError,
+};
 use crate::logs::{P0, P1};
-use crate::memo::{encode_send_memo, validate_memo};
+use crate::memo::{encode_withdraw_memo, validate_memo};
 use crate::{
     ciborium_to_generic_value, compact_account,
     config::{self, MAX_MEMO_LENGTH},
-    endpoints::{
-        GetTransactionsArg, GetTransactionsArgs, GetTransactionsResult, TransactionWithId,
-    },
+    endpoints::{BlockWithId, GetBlocksArg, GetBlocksArgs, GetBlocksResult},
     generic_to_ciborium_value,
 };
 use anyhow::{anyhow, bail, Context, Error};
 use candid::{Nat, Principal};
 use ic_canister_log::log;
+use ic_cdk::api::call::{call_with_payment128, RejectionCode};
 use ic_cdk::api::management_canister::main::deposit_cycles;
-use ic_cdk::api::management_canister::provisional::CanisterIdRecord;
+use ic_cdk::api::management_canister::provisional::{CanisterIdRecord, CanisterSettings};
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
     cell::Cell as StableCell,
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
-    storable::Blob,
     DefaultMemoryImpl, StableBTreeMap, StableLog, Storable,
 };
 use icrc_ledger_types::icrc2::approve::ApproveError;
@@ -33,7 +34,6 @@ use icrc_ledger_types::{
     },
 };
 use num_traits::ToPrimitive;
-use scopeguard::ScopeGuard;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -48,13 +48,17 @@ const TRANSACTION_HASH_MEMORY_ID: MemoryId = MemoryId::new(6);
 const TRANSACTION_TIMESTAMP_MEMORY_ID: MemoryId = MemoryId::new(7);
 const CONFIG_MEMORY_ID: MemoryId = MemoryId::new(8);
 
+pub const CMC_PRINCIPAL: Principal = Principal::from_slice(&[0, 0, 0, 0, 0, 0, 0, 4, 1, 1]);
+
 type VMem = VirtualMemory<DefaultMemoryImpl>;
 
-pub type AccountKey = (Blob<29>, [u8; 32]);
+pub type AccountKey = (Principal, [u8; 32]);
 pub type BlockLog = StableLog<Cbor<Block>, VMem, VMem>;
 pub type Balances = StableBTreeMap<AccountKey, u128, VMem>;
-pub type TransactionHashes = StableBTreeMap<Hash, u64, VMem>;
+/// maps tx hash to block index and an optional principal, which is set if the tx produced a canister
+pub type TransactionHashes = StableBTreeMap<Hash, (u64, Option<Principal>), VMem>;
 pub type TransactionTimeStampKey = (u64, u64);
+/// maps time stamp to block index
 pub type TransactionTimeStamps = StableBTreeMap<TransactionTimeStampKey, (), VMem>;
 pub type ConfigCell = StableCell<Config, VMem>;
 
@@ -415,17 +419,18 @@ impl State {
             Some(certificate) => ByteBuf::from(certificate),
             None => return None,
         };
-        let hash_tree = ByteBuf::from(
-            serde_cbor::to_vec(
-                &self
-                    .cache
-                    .hash_tree
-                    .value_range(b"last_block_hash", b"last_block_index"),
-            )
-            .expect(
-                "Bug: unable to write last_block_hash and last_block_index values in the hash_tree",
-            ),
+        let mut hash_tree_buf = vec![];
+        ciborium::ser::into_writer(
+            &self
+                .cache
+                .hash_tree
+                .value_range(b"last_block_hash", b"last_block_index"),
+            &mut hash_tree_buf,
+        )
+        .expect(
+            "Bug: unable to write last_block_hash and last_block_index values in the hash_tree",
         );
+        let hash_tree = ByteBuf::from(hash_tree_buf);
         Some(DataCertificate {
             certificate,
             hash_tree,
@@ -469,7 +474,7 @@ impl State {
         if let Some(ts) = created_at_time {
             // Add block index to the list of transactions and set the hash as its key
             self.transaction_hashes
-                .insert(tx_hash, self.blocks.len() - 1);
+                .insert(tx_hash, (self.blocks.len() - 1, None));
             self.transaction_timestamps
                 .insert((ts, self.blocks.len() - 1), ());
         }
@@ -603,14 +608,13 @@ where
     fn from_bytes(bytes: Cow<[u8]>) -> Self {
         Self(ciborium::de::from_reader(bytes.as_ref()).unwrap())
     }
+
+    const BOUND: ic_stable_structures::storable::Bound =
+        ic_stable_structures::storable::Bound::Unbounded;
 }
 
 pub fn to_account_key(account: &Account) -> AccountKey {
-    (
-        Blob::try_from(account.owner.as_slice())
-            .expect("principals cannot be longer than 29 bytes"),
-        *account.effective_subaccount(),
-    )
+    (account.owner, *account.effective_subaccount())
 }
 
 pub fn balance_of(account: &Account) -> u128 {
@@ -664,7 +668,7 @@ pub fn deposit(
     prune(now);
 
     Ok(DepositResult {
-        txid: Nat::from(block_index),
+        block_index: Nat::from(block_index),
         balance: Nat::from(balance_of(&to)),
     })
 }
@@ -680,6 +684,7 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
         return Err(err);
     }
 
+    // we are not checking for duplicates, since mint is executed with created_at_time: None
     let block_index = process_transaction(
         Transaction {
             operation: Operation::Mint { to, amount },
@@ -720,6 +725,19 @@ pub fn transfer(
 ) -> Result<Nat, TransferFromError> {
     use TransferFromError::*;
 
+    let transaction = Transaction {
+        operation: Operation::Transfer {
+            from,
+            to,
+            spender,
+            amount,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+    check_duplicate(&transaction)?;
+
     // check that no account is owned by a denied principal
     if is_denied_account_owner(&from.owner) {
         return Err(transfer_from::denied_owner(from));
@@ -735,7 +753,9 @@ pub fn transfer(
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
 
     // check allowance
@@ -765,18 +785,6 @@ pub fn transfer(
             )
         })
         .map_err(transfer_from::anyhow_error)?;
-
-    let transaction = Transaction {
-        operation: Operation::Transfer {
-            from,
-            to,
-            spender,
-            amount,
-            fee: suggested_fee,
-        },
-        created_at_time,
-        memo,
-    };
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
@@ -821,6 +829,20 @@ pub fn approve(
     expected_allowance: Option<u128>,
     expires_at: Option<u64>,
 ) -> Result<Nat, ApproveError> {
+    let transaction = Transaction {
+        operation: Operation::Approve {
+            from,
+            spender,
+            amount,
+            expected_allowance,
+            expires_at,
+            fee: suggested_fee,
+        },
+        created_at_time,
+        memo,
+    };
+    check_duplicate(&transaction)?;
+
     // check that this isn't a self approval
     if from.owner == spender.owner {
         ic_cdk::trap("self approval is not allowed");
@@ -865,19 +887,6 @@ pub fn approve(
         })
         .map_err(approve::anyhow_error)?;
 
-    let transaction = Transaction {
-        operation: Operation::Approve {
-            from,
-            spender,
-            amount,
-            expected_allowance,
-            expires_at,
-            fee: suggested_fee,
-        },
-        created_at_time,
-        memo,
-    };
-
     let block_index = process_transaction(transaction.clone(), now)?;
 
     // The operations below should not return an error because of the checks
@@ -896,8 +905,13 @@ pub fn approve(
 
 #[derive(Debug)]
 enum ProcessTransactionError {
-    BadFee { expected_fee: u128 },
-    Duplicate { duplicate_of: u64 },
+    BadFee {
+        expected_fee: u128,
+    },
+    Duplicate {
+        duplicate_of: u64,
+        canister_id: Option<Principal>,
+    },
     InvalidCreatedAtTime(CreatedAtTimeValidationError),
     GenericError(anyhow::Error),
 }
@@ -926,7 +940,7 @@ impl std::fmt::Display for ProcessTransactionError {
             Self::BadFee { expected_fee } => {
                 write!(f, "Invalid fee, expected fee is {}", expected_fee)
             }
-            Self::Duplicate { duplicate_of } => write!(
+            Self::Duplicate { duplicate_of, .. } => write!(
                 f,
                 "Input transaction is a duplicate of transaction at index {}",
                 duplicate_of
@@ -1022,19 +1036,38 @@ mod approve {
     }
 }
 
-mod send {
+mod withdraw {
     use candid::Nat;
 
-    use crate::endpoints::SendError;
+    use crate::endpoints::WithdrawError;
 
     use super::transfer_from::UNKNOWN_GENERIC_ERROR;
 
-    pub fn anyhow_error(error: anyhow::Error) -> SendError {
+    pub fn anyhow_error(error: anyhow::Error) -> WithdrawError {
         unknown_generic_error(format!("{:#}", error))
     }
 
-    pub fn unknown_generic_error(message: String) -> SendError {
-        SendError::GenericError {
+    pub fn unknown_generic_error(message: String) -> WithdrawError {
+        WithdrawError::GenericError {
+            error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
+            message,
+        }
+    }
+}
+
+mod create_canister {
+    use candid::Nat;
+
+    use crate::endpoints::CreateCanisterError;
+
+    use super::transfer_from::UNKNOWN_GENERIC_ERROR;
+
+    pub fn anyhow_error(error: anyhow::Error) -> CreateCanisterError {
+        unknown_generic_error(format!("{:#}", error))
+    }
+
+    pub fn unknown_generic_error(message: String) -> CreateCanisterError {
+        CreateCanisterError::GenericError {
             error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
             message,
         }
@@ -1049,7 +1082,7 @@ impl From<ProcessTransactionError> for TransferFromError {
             BadFee { expected_fee } => Self::BadFee {
                 expected_fee: Nat::from(expected_fee),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
@@ -1066,7 +1099,7 @@ impl From<ProcessTransactionError> for ApproveError {
             BadFee { expected_fee } => Self::BadFee {
                 expected_fee: Nat::from(expected_fee),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
@@ -1075,7 +1108,7 @@ impl From<ProcessTransactionError> for ApproveError {
     }
 }
 
-impl From<ProcessTransactionError> for SendError {
+impl From<ProcessTransactionError> for WithdrawError {
     fn from(error: ProcessTransactionError) -> Self {
         use ProcessTransactionError::*;
 
@@ -1083,11 +1116,36 @@ impl From<ProcessTransactionError> for SendError {
             BadFee { expected_fee } => Self::BadFee {
                 expected_fee: Nat::from(expected_fee),
             },
-            Duplicate { duplicate_of } => Self::Duplicate {
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
             InvalidCreatedAtTime(err) => err.into(),
-            GenericError(err) => send::unknown_generic_error(format!("{:#}", err)),
+            GenericError(err) => withdraw::unknown_generic_error(format!("{:#}", err)),
+        }
+    }
+}
+
+impl From<ProcessTransactionError> for CreateCanisterError {
+    fn from(error: ProcessTransactionError) -> Self {
+        use ProcessTransactionError::*;
+
+        match error {
+            BadFee { expected_fee } => Self::GenericError {
+                error_code: CreateCanisterError::BAD_FEE_ERROR.into(),
+                message: format!(
+                    "BadFee. Expected fee: {}. Should never happen.",
+                    expected_fee
+                ),
+            },
+            Duplicate {
+                duplicate_of,
+                canister_id,
+            } => Self::Duplicate {
+                duplicate_of: Nat::from(duplicate_of),
+                canister_id,
+            },
+            InvalidCreatedAtTime(err) => err.into(),
+            GenericError(err) => create_canister::unknown_generic_error(format!("{:#}", err)),
         }
     }
 }
@@ -1143,6 +1201,31 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
     }
 }
 
+fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionError> {
+    use ProcessTransactionError as PTErr;
+    // sanity check that the transaction can be hashed
+    let tx_hash = match transaction.hash() {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            let err = err.context(format!("Unable to process transaction {:?}", transaction));
+            log!(P0, "{:#}", err);
+            return Err(PTErr::from(err));
+        }
+    };
+
+    // check whether transaction is a duplicate
+    if let Some((block_index, maybe_canister)) =
+        read_state(|state| state.transaction_hashes.get(&tx_hash))
+    {
+        return Err(PTErr::Duplicate {
+            duplicate_of: block_index,
+            canister_id: maybe_canister.map(Into::into),
+        });
+    }
+
+    Ok(())
+}
+
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
     process_block(transaction, now, None)
 }
@@ -1165,23 +1248,6 @@ fn process_block(
     let effective_fee = validate_suggested_fee(&transaction.operation)
         .map(|fee| effective_fee.or(fee))
         .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
-
-    // sanity check that the transaction can be hashed
-    let tx_hash = match transaction.hash() {
-        Ok(tx_hash) => tx_hash,
-        Err(err) => {
-            let err = err.context(format!("Unable to process transaction {:?}", transaction));
-            log!(P0, "{:#}", err);
-            return Err(PTErr::from(err));
-        }
-    };
-
-    // check whether transaction is a duplicate
-    if let Some(block_index) = read_state(|state| state.transaction_hashes.get(&tx_hash)) {
-        return Err(PTErr::Duplicate {
-            duplicate_of: block_index,
-        });
-    }
 
     let block = Block {
         transaction,
@@ -1220,7 +1286,18 @@ impl From<CreatedAtTimeValidationError> for TransferFromError {
     }
 }
 
-impl From<CreatedAtTimeValidationError> for SendError {
+impl From<CreatedAtTimeValidationError> for WithdrawError {
+    fn from(value: CreatedAtTimeValidationError) -> Self {
+        match value {
+            CreatedAtTimeValidationError::TooOld => Self::TooOld,
+            CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
+                Self::CreatedInFuture { ledger_time }
+            }
+        }
+    }
+}
+
+impl From<CreatedAtTimeValidationError> for CreateCanisterError {
     fn from(value: CreatedAtTimeValidationError) -> Self {
         match value {
             CreatedAtTimeValidationError::TooOld => Self::TooOld,
@@ -1246,7 +1323,9 @@ pub fn validate_created_at_time(
     created_at_time: &Option<u64>,
     now: u64,
 ) -> Result<(), CreatedAtTimeValidationError> {
-    let Some(created_at_time) = created_at_time else { return Ok(())};
+    let Some(created_at_time) = created_at_time else {
+        return Ok(());
+    };
     if created_at_time
         .saturating_add(config::TRANSACTION_WINDOW.as_nanos() as u64)
         .saturating_add(config::PERMITTED_DRIFT.as_nanos() as u64)
@@ -1270,6 +1349,9 @@ pub fn log_error_and_trap(err: &Error) -> ! {
 }
 
 const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
+const CREATE_CANISTER_MEMO: [u8; MAX_MEMO_LENGTH as usize] =
+    [u8::MAX - 1; MAX_MEMO_LENGTH as usize];
+const REFUND_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX - 2; MAX_MEMO_LENGTH as usize];
 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
 // is lower than [crate::config::FEE].
@@ -1326,24 +1408,33 @@ fn is_self_authenticating(principal: &Principal) -> bool {
         .is_some_and(|b| *b == CANDID_PRINCIPAL_SELF_AUTHENTICATING_TAG)
 }
 
-pub async fn send(
+pub async fn withdraw(
     from: Account,
     to: Principal,
     amount: u128,
     now: u64,
     created_at_time: Option<u64>,
-) -> Result<Nat, SendError> {
-    use SendError::*;
+) -> Result<Nat, WithdrawError> {
+    use WithdrawError::*;
 
     if is_self_authenticating(&to) {
-        // if it is not an opaque principal ID, the user is trying to send to a non-canister target
+        // if it is not an opaque principal ID, the user is trying to withdraw to a non-canister target
         return Err(InvalidReceiver { receiver: to });
     }
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
-        return Err(InsufficientFunds { balance: balance_of(&from).into() });
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
     };
+
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(encode_withdraw_memo(&to)),
+    };
+    check_duplicate(&transaction)?;
 
     // check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
@@ -1354,74 +1445,38 @@ pub async fn send(
 
     // sanity check that the total_supply won't underflow
     read_state(|state| state.check_total_supply_decrease(amount_with_fee))
-        .with_context(|| format!("Unable to send {} cycles from {} to {}", amount, from, to))
-        .map_err(send::anyhow_error)?;
+        .with_context(|| {
+            format!(
+                "Unable to withdraw {} cycles from {} to {}",
+                amount, from, to
+            )
+        })
+        .map_err(withdraw::anyhow_error)?;
 
-    // The send process involves 3 steps:
+    // The withdraw process involves 3 steps:
     // 1. burn cycles + fee
     // 2. call deposit_cycles on the management canister
     // 3. if 2. fails then mint cycles
 
     // 1. burn cycles + fee
 
-    let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
-        created_at_time,
-        memo: Some(encode_send_memo(&to)),
-    };
-
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
-        log_error_and_trap(&err.context(format!("Unable to perform send: {:?}", transaction)))
+        log_error_and_trap(&err.context(format!("Unable to perform withdraw: {:?}", transaction)))
     };
 
     prune(now);
 
-    // set a guard in case deposit_cycles panics
-
-    // Callback for the guard and in case of [deposit_cycles] error.
-    // This panics if a mint block has been recorded but the credit
-    // function didn't go through.
-    let reimburse = || -> Result<u64, ProcessTransactionError> {
-        let transaction = Transaction {
-            operation: Operation::Mint { to: from, amount },
-            created_at_time: None,
-            memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
-        };
-
-        let block_index = process_transaction(transaction.clone(), now)?;
-
-        if let Err(err) = mutate_state(|state| state.credit(&from, amount)) {
-            log_error_and_trap(&err.context(format!("Unable to reimburse send: {:?}", transaction)))
-        };
-
-        prune(now);
-
-        Ok(block_index)
-    };
-
     // 2. call deposit_cycles on the management canister
-
-    // add a guard to reimburse if [deposit_cycles]
-    // panics.
-    let guard = scopeguard::guard_on_unwind((), |()| {
-        let _ = reimburse();
-    });
-
     let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
 
-    // 3. if 2. fails but doesn't panic then mint cycles
-
-    // defuse the guard because 2. didn't panic
-    // to avoid reimbursing twice.
-    ScopeGuard::into_inner(guard);
-
+    // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        match reimburse() {
+        match reimburse(from, amount, now) {
             Ok(fee_block) => {
                 prune(now);
-                return Err(FailedToSend {
+                return Err(FailedToWithdraw {
                     fee_block: Some(Nat::from(fee_block)),
                     rejection_code,
                     rejection_reason,
@@ -1436,6 +1491,195 @@ pub async fn send(
     }
 
     Ok(Nat::from(block_index))
+}
+
+pub async fn create_canister(
+    from: Account,
+    amount: u128,
+    now: u64,
+    created_at_time: Option<u64>,
+    argument: Option<CmcCreateCanisterArgs>,
+) -> Result<CreateCanisterSuccess, CreateCanisterError> {
+    use CreateCanisterError::*;
+
+    let transaction = Transaction {
+        operation: Operation::Burn { from, amount },
+        created_at_time,
+        memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+    };
+    check_duplicate(&transaction)?;
+
+    // if `amount` + `fee` overflows then the user doesn't have enough funds
+    let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
+        return Err(InsufficientFunds {
+            balance: balance_of(&from).into(),
+        });
+    };
+
+    // check that the `from` account has enough funds
+    read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
+        |balance: u128| InsufficientFunds {
+            balance: balance.into(),
+        },
+    )?;
+
+    // sanity check that the total_supply won't underflow
+    read_state(|state| state.check_total_supply_decrease(amount_with_fee))
+        .with_context(|| format!("Unable to deduct {} cycles from {}", amount, from))
+        .map_err(create_canister::anyhow_error)?;
+
+    // The canister creation process involves 3 steps:
+    // 1. burn cycles + fee
+    // 2. call create_cycles on the CMC
+    // 3. if 2. fails then mint cycles
+
+    // 1. burn cycles + fee
+
+    let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
+
+    if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
+        log_error_and_trap(&err.context(format!(
+            "Unable to perform create_canister: {:?}",
+            transaction
+        )))
+    };
+
+    prune(now);
+
+    // 2. call create_canister on the CMC
+
+    let argument = argument
+        .map(|arg| CmcCreateCanisterArgs {
+            settings: arg.settings.map(|settings| CanisterSettings {
+                controllers: Some(
+                    settings
+                        .controllers
+                        .unwrap_or_else(|| vec![ic_cdk::api::caller()]),
+                ),
+                ..settings
+            }),
+            ..arg
+        })
+        .unwrap_or_else(|| CmcCreateCanisterArgs {
+            settings: Some(CanisterSettings {
+                controllers: Some(vec![ic_cdk::api::caller()]),
+                ..Default::default()
+            }),
+            subnet_selection: None,
+        });
+    let create_canister_result: Result<
+        (Result<Principal, CmcCreateCanisterError>,),
+        (RejectionCode, String),
+    > = call_with_payment128(CMC_PRINCIPAL, "create_canister", (argument,), amount).await;
+
+    // 3. if 2. fails then mint cycles
+
+    match create_canister_result {
+        Err((rejection_code, rejection_reason)) => {
+            match reimburse(from, amount, now) {
+                Ok(fee_block) => {
+                    prune(now);
+                    Err(FailedToCreate {
+                        fee_block: Some(Nat::from(block_index)),
+                        refund_block: Some(Nat::from(fee_block)),
+                        error: format!(
+                            "CMC rejected canister creation with code {:?} and reason {}",
+                            rejection_code, rejection_reason
+                        ),
+                    })
+                }
+                Err(err) => {
+                    // this is a critical error that should not
+                    // happen because minting should never fail.
+                    log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err))
+                }
+            }
+        }
+        Ok((cmc_result,)) => match cmc_result {
+            Ok(canister_id) => {
+                if let Ok(tx_hash) = transaction.hash() {
+                    mutate_state(|state| {
+                        if state.transaction_hashes.contains_key(&tx_hash) {
+                            state
+                                .transaction_hashes
+                                .insert(tx_hash, (block_index, Some(canister_id)));
+                        }
+                    });
+                } else {
+                    // this should not happen because processing the transaction already checks if it can be hashed
+                    log_error_and_trap(&anyhow!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
+                }
+                Ok(CreateCanisterSuccess {
+                    block_id: Nat::from(block_index),
+                    canister_id,
+                })
+            }
+            Err(err) => match err {
+                CmcCreateCanisterError::Refunded {
+                    refund_amount,
+                    create_error,
+                } => {
+                    let transaction = Transaction {
+                        operation: Operation::Mint {
+                            to: from,
+                            amount: refund_amount,
+                        },
+                        created_at_time: None,
+                        memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
+                    };
+
+                    let refund_index = process_transaction(transaction.clone(), now)?;
+
+                    if let Err(err) = mutate_state(|state| state.credit(&from, refund_amount)) {
+                        log_error_and_trap(&err.context(format!(
+                            "Unable to refund create_canister: {:?}",
+                            transaction
+                        )))
+                    };
+
+                    prune(now);
+
+                    Err(CreateCanisterError::FailedToCreate {
+                        fee_block: Some(Nat::from(block_index)),
+                        refund_block: Some(Nat::from(refund_index)),
+                        error: create_error,
+                    })
+                }
+                CmcCreateCanisterError::RefundFailed {
+                    create_error,
+                    refund_error,
+                } => Err(FailedToCreate {
+                    fee_block: Some(Nat::from(block_index)),
+                    refund_block: None,
+                    error: format!(
+                        "create_canister error: {}, refund error: {}",
+                        create_error, refund_error
+                    ),
+                }),
+            },
+        },
+    }
+}
+
+// Reimburse an account with a given amount
+// This panics if a mint block has been recorded but the credit
+// function didn't go through.
+fn reimburse(acc: Account, amount: u128, now: u64) -> Result<u64, ProcessTransactionError> {
+    let transaction = Transaction {
+        operation: Operation::Mint { to: acc, amount },
+        created_at_time: None,
+        memo: Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
+    };
+
+    let block_index = process_transaction(transaction.clone(), now)?;
+
+    if let Err(err) = mutate_state(|state| state.credit(&acc, amount)) {
+        log_error_and_trap(&err.context(format!("Unable to reimburse withdraw: {:?}", transaction)))
+    };
+
+    prune(now);
+
+    Ok(block_index)
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
@@ -1586,7 +1830,8 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
         pruned += 1;
 
         let Some(block) = s.blocks.get(block_idx) else {
-            log!(P0,
+            log!(
+                P0,
                 "Cannot find block with id: {}. The block id was associated \
                 with the timestamp: {} and was selected for pruning from \
                 the timestamp and hashes pools",
@@ -1622,7 +1867,7 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
             // ´block_index´ cannot point to two blocks with identical transaction hashes within the deduplication window.
             // Example: if the ´transaction_timestamp´ storage has the entries [(time_a,block_a),(time_a,block_b)] then
             // the hashes of the transactions in block_a and block_b cannot be identical
-            Some(found_block_idx) if found_block_idx != block_idx => {
+            Some((found_block_idx, _maybe_canister)) if found_block_idx != block_idx => {
                 log!(
                     P0,
                     "Block id: {} associated with the transaction hash: {} in the \
@@ -1639,12 +1884,12 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
     }
 }
 
-pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
+pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     let log_length = read_state(|state| state.blocks.len());
-    let max_length = read_state(|state| state.config.get().max_transactions_per_request);
-    let mut transactions = Vec::new();
-    for GetTransactionsArg { start, length } in args {
-        let remaining_length = max_length.saturating_sub(transactions.len() as u64);
+    let max_length = read_state(|state| state.config.get().max_blocks_per_request);
+    let mut blocks = Vec::new();
+    for GetBlocksArg { start, length } in args {
+        let remaining_length = max_length.saturating_sub(blocks.len() as u64);
         if remaining_length == 0 {
             break;
         }
@@ -1658,25 +1903,25 @@ pub fn get_transactions(args: GetTransactionsArgs) -> GetTransactionsResult {
         };
         read_state(|state| {
             for id in start..end_excluded {
-                let transaction = state
+                let block = state
                     .blocks
                     .get(id)
                     .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
                     .0
                     .to_value()
                     .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
-                let transaction_with_id = TransactionWithId {
+                let block_with_id = BlockWithId {
                     id: Nat::from(id),
-                    transaction,
+                    block,
                 };
-                transactions.push(transaction_with_id);
+                blocks.push(block_with_id);
             }
         });
     }
-    GetTransactionsResult {
+    GetBlocksResult {
         log_length: Nat::from(log_length),
-        transactions,
-        archived_transactions: vec![],
+        blocks,
+        archived_blocks: vec![],
     }
 }
 
@@ -1933,7 +2178,7 @@ mod tests {
                 // the fist 6 blocks are old and will be pruned, the last 4 are in the tx window
                 block.transaction.created_at_time = Some(if i < 6 { old } else { curr });
                 state.blocks.append(&crate::storage::Cbor(block.clone())).unwrap();
-                state.transaction_hashes.insert(block.transaction.hash().unwrap(), i as u64);
+                state.transaction_hashes.insert(block.transaction.hash().unwrap(), (i as u64, None));
                 if let Some(created_at_time) = block.transaction.created_at_time {
                     state.transaction_timestamps.insert((created_at_time, i as u64), ());
                 }

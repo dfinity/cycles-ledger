@@ -1,25 +1,27 @@
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use assert_matches::assert_matches;
-use candid::{Encode, Nat, Principal};
-use client::{
-    deposit, get_metadata, get_raw_transactions, transaction_hashes, transfer, transfer_from,
+use candid::{CandidType, Decode, Encode, Nat, Principal};
+use client::{deposit, get_metadata, get_raw_blocks, transaction_hashes, transfer, transfer_from};
+use cycles_ledger::endpoints::{
+    CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
 };
 use cycles_ledger::{
-    config::{self, Config as LedgerConfig, FEE},
+    config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
-        ChangeIndexId, DataCertificate, GetTransactionsResult, LedgerArgs, SendArgs, SendError,
-        UpgradeArgs,
+        ChangeIndexId, DataCertificate, GetBlocksResult, LedgerArgs, UpgradeArgs, WithdrawArgs,
+        WithdrawError,
     },
-    memo::encode_send_memo,
+    memo::encode_withdraw_memo,
     storage::{
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
-        Transaction,
+        Transaction, CMC_PRINCIPAL,
     },
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
@@ -27,20 +29,23 @@ use escargot::CargoBuild;
 use futures::FutureExt;
 use gen::CyclesLedgerInMemory;
 use ic_cbor::CertificateToCbor;
-use ic_cdk::api::call::RejectionCode;
+use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
     Certificate, HashTree, LookupResult,
 };
-use ic_test_state_machine_client::{ErrorCode, StateMachine};
+use ic_test_state_machine_client::{ErrorCode, StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc1::{
         account::Account,
         transfer::TransferArg as TransferArgs,
         transfer::{Memo, TransferError},
     },
-    icrc2::approve::ApproveArgs,
+    icrc2::{
+        approve::{ApproveArgs, ApproveError},
+        transfer_from::{TransferFromArgs, TransferFromError},
+    },
 };
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
@@ -48,8 +53,8 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     client::{
-        approve, balance_of, fee, get_allowance, get_tip_certificate, send, total_supply,
-        transaction_timestamps,
+        approve, balance_of, canister_status, create_canister, fail_next_create_canister_with, fee,
+        get_allowance, get_block, get_tip_certificate, total_supply, transaction_timestamps, withdraw,
     },
     gen::{CyclesLedgerInStateMachine, IsCyclesLedger},
 };
@@ -70,7 +75,7 @@ fn new_state_machine() -> StateMachine {
         let platform: &str = "darwin";
         #[cfg(target_os = "linux")]
         let platform: &str = "linux";
-        let suggested_ic_commit = "a17247bd86c7aa4e87742bf74d108614580f216d";
+        let suggested_ic_commit = "072b2a6586c409efa88f2244d658307ff3a645d8";
 
         // not run automatically because parallel test execution screws this up
         panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
@@ -110,6 +115,40 @@ fn install_depositor(env: &StateMachine, ledger_id: Principal) -> Principal {
     canister
 }
 
+fn install_fake_cmc(env: &StateMachine) {
+    #[derive(CandidType, Default)]
+    struct ProvisionalCreateArg {
+        specified_id: Option<Principal>,
+    }
+    #[derive(CandidType, candid::Deserialize)]
+    struct ProvisionalCreateResponse {
+        canister_id: Principal,
+    }
+    let WasmResult::Reply(response) = env
+        .update_call(
+            Principal::from_text("aaaaa-aa").unwrap(),
+            Principal::anonymous(),
+            "provisional_create_canister_with_cycles",
+            Encode!(&ProvisionalCreateArg {
+                specified_id: Some(CMC_PRINCIPAL),
+            })
+            .unwrap(),
+        )
+        .unwrap()
+    else {
+        panic!("Failed to create CMC")
+    };
+    let response = Decode!(&response, ProvisionalCreateResponse).unwrap();
+    assert_eq!(response.canister_id, CMC_PRINCIPAL);
+    env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
+    env.install_canister(
+        CMC_PRINCIPAL,
+        get_wasm("fake-cmc"),
+        Encode!(&Vec::<u8>::new()).unwrap(),
+        None,
+    );
+}
+
 #[test]
 fn test_deposit_flow() {
     let env = &new_state_machine();
@@ -128,8 +167,8 @@ fn test_deposit_flow() {
 
     // Make the first deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
-    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
 
     // Check that the right amount of tokens have been minted
     assert_eq!(total_supply(env, ledger_id), 1_000_000_000);
@@ -139,8 +178,8 @@ fn test_deposit_flow() {
 
     // Make another deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 500_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(1));
-    assert_eq!(deposit_res.balance, Nat::from(1_500_000_000));
+    assert_eq!(deposit_res.block_index, Nat::from(1_u128));
+    assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
 
     // Check that the right amount of tokens have been minted
     assert_eq!(total_supply(env, ledger_id), 1_500_000_000);
@@ -165,7 +204,7 @@ fn test_deposit_amount_below_fee() {
 }
 
 #[test]
-fn test_send_flow() {
+fn test_withdraw_flow() {
     // TODO(SDK-1145): Add re-entrancy test
 
     let env = &new_state_machine();
@@ -191,12 +230,12 @@ fn test_send_flow() {
         owner: Principal::from_slice(&[1]),
         subaccount: Some([4; 32]),
     };
-    let send_receiver = env.create_canister(None);
+    let withdraw_receiver = env.create_canister(None);
 
     // make deposits to the user and check the result
     let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
-    assert_eq!(deposit_res.txid, 0);
-    assert_eq!(deposit_res.balance, 1_000_000_000);
+    assert_eq!(deposit_res.block_index, 0_u128);
+    assert_eq!(deposit_res.balance, 1_000_000_000_u128);
     deposit(env, depositor_id, user_subaccount_1, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_2, 1_000_000_000);
     deposit(env, depositor_id, user_subaccount_3, 1_000_000_000);
@@ -204,92 +243,159 @@ fn test_send_flow() {
     let mut expected_total_supply = 5_000_000_000;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from main account
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 500_000_000_u128;
-    let _send_idx = send(
+    // withdraw cycles from main account
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 500_000_000_u128;
+    let _withdraw_idx = withdraw(
         env,
         ledger_id,
         user_main_account,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: None,
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_main_account),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
-    expected_total_supply -= send_amount + FEE;
+    expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from subaccount
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 100_000_000_u128;
-    let _send_idx = send(
+    // withdraw cycles from subaccount
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 100_000_000_u128;
+    let _withdraw_idx = withdraw(
         env,
         ledger_id,
         user_subaccount_1,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: None,
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_subaccount_1),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
-    expected_total_supply -= send_amount + FEE;
+    expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
-    // send cycles from subaccount with created_at_time set
+    // withdraw cycles from subaccount with created_at_time set
     let now = env
         .time()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos() as u64;
-    let send_receiver_balance = env.cycle_balance(send_receiver);
-    let send_amount = 300_000_000_u128;
-    let _send_idx = send(
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 300_000_000_u128;
+    let _withdraw_idx = withdraw(
         env,
         ledger_id,
         user_subaccount_3,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
-            to: send_receiver,
+            to: withdraw_receiver,
             created_at_time: Some(now),
-            amount: Nat::from(send_amount),
+            amount: Nat::from(withdraw_amount),
         },
     )
     .unwrap();
     assert_eq!(
-        send_receiver_balance + send_amount,
-        env.cycle_balance(send_receiver)
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         balance_of(env, ledger_id, user_subaccount_3),
-        1_000_000_000 - send_amount - FEE
+        1_000_000_000 - withdraw_amount - FEE
     );
-    expected_total_supply -= send_amount + FEE;
+    expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 }
 
+// A test to check that `DuplicateError` is returned on a duplicate `withdraw` request
+// and not `InsufficientFundsError`, in case when there is not enough funds
+// to execute it a second time
 #[test]
-fn test_send_fails() {
+fn test_withdraw_duplicate() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user_main_account = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let withdraw_receiver = env.create_canister(None);
+
+    // make deposits to the user and check the result
+    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
+    assert_eq!(deposit_res.block_index, 0_u128);
+    assert_eq!(deposit_res.balance, 1_000_000_000_u128);
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // withdraw cycles from main account
+    let withdraw_receiver_balance = env.cycle_balance(withdraw_receiver);
+    let withdraw_amount = 900_000_000_u128;
+    let withdraw_idx = withdraw(
+        env,
+        ledger_id,
+        user_main_account,
+        WithdrawArgs {
+            from_subaccount: None,
+            to: withdraw_receiver,
+            created_at_time: Some(now),
+            amount: Nat::from(withdraw_amount),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        withdraw_receiver_balance + withdraw_amount,
+        env.cycle_balance(withdraw_receiver)
+    );
+    assert_eq!(
+        balance_of(env, ledger_id, user_main_account),
+        1_000_000_000 - withdraw_amount - FEE
+    );
+
+    assert_eq!(
+        WithdrawError::Duplicate {
+            duplicate_of: withdraw_idx
+        },
+        withdraw(
+            env,
+            ledger_id,
+            user_main_account,
+            WithdrawArgs {
+                from_subaccount: None,
+                to: withdraw_receiver,
+                created_at_time: Some(now),
+                amount: Nat::from(withdraw_amount),
+            },
+        )
+        .unwrap_err()
+    );
+}
+
+#[test]
+fn test_withdraw_fails() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
@@ -300,16 +406,16 @@ fn test_send_fails() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
-    // send more than available
+    // withdraw more than available
     let balance_before_attempt = balance_of(env, ledger_id, user);
-    let send_result = send(
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -318,19 +424,19 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
+        withdraw_result,
+        WithdrawError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
     ));
     assert_eq!(balance_before_attempt, balance_of(env, ledger_id, user));
     let mut expected_total_supply = 1_000_000_000_000;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // send from empty subaccount
-    let send_result = send(
+    // withdraw from empty subaccount
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: Some([5; 32]),
             to: depositor_id,
             created_at_time: None,
@@ -339,22 +445,22 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::InsufficientFunds { balance } if balance == 0
+        withdraw_result,
+        WithdrawError::InsufficientFunds { balance } if balance == 0_u128
     ));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // send cycles to user instead of canister
+    // withdraw cycles to user instead of canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
     let self_authenticating_principal = candid::Principal::from_text(
         "luwgt-ouvkc-k5rx5-xcqkq-jx5hm-r2rj2-ymqjc-pjvhb-kij4p-n4vms-gqe",
     )
     .unwrap();
-    let send_result = send(
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: self_authenticating_principal,
             created_at_time: None,
@@ -363,22 +469,22 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+        withdraw_result,
+        WithdrawError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
     ));
     assert_eq!(balance_before_attempt, balance_of(env, ledger_id, user));
     assert_eq!(total_supply(env, ledger_id), expected_total_supply,);
 
-    // send cycles to deleted canister
+    // withdraw cycles to deleted canister
     let balance_before_attempt = balance_of(env, ledger_id, user);
     let deleted_canister = env.create_canister(None);
     env.stop_canister(deleted_canister, None).unwrap();
     env.delete_canister(deleted_canister, None).unwrap();
-    let send_result = send(
+    let withdraw_result = withdraw(
         env,
         ledger_id,
         user,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: deleted_canister,
             created_at_time: None,
@@ -387,8 +493,8 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert!(matches!(
-        send_result,
-        SendError::FailedToSend {
+        withdraw_result,
+        WithdrawError::FailedToWithdraw {
             rejection_code: RejectionCode::DestinationInvalid,
             ..
         }
@@ -406,11 +512,11 @@ fn test_send_fails() {
         subaccount: None,
     };
     deposit(env, depositor_id, user_2, FEE + 1);
-    send(
+    withdraw(
         env,
         ledger_id,
         user_2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -419,11 +525,11 @@ fn test_send_fails() {
     )
     .unwrap_err();
     assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
-    send(
+    withdraw(
         env,
         ledger_id,
         user_2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
@@ -433,20 +539,20 @@ fn test_send_fails() {
     .unwrap_err();
     assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
 
-    // test send deduplication
+    // test withdraw deduplication
     deposit(env, depositor_id, user_2, FEE * 3);
     let created_at_time = env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
-    let args = SendArgs {
+    let args = WithdrawArgs {
         from_subaccount: None,
         to: depositor_id,
         created_at_time: Some(created_at_time),
         amount: Nat::from(FEE),
     };
-    let duplicate_of = send(env, ledger_id, user_2, args.clone()).unwrap();
-    // the same send should fail because created_at_time is set and the args are the same
+    let duplicate_of = withdraw(env, ledger_id, user_2, args.clone()).unwrap();
+    // the same withdraw should fail because created_at_time is set and the args are the same
     assert_eq!(
-        send(env, ledger_id, user_2, args),
-        Err(SendError::Duplicate { duplicate_of })
+        withdraw(env, ledger_id, user_2, args),
+        Err(WithdrawError::Duplicate { duplicate_of })
     );
 }
 
@@ -471,7 +577,7 @@ fn test_approve_max_allowance_size() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     // Largest possible allowance in terms of size in bytes - max amount and expiration
@@ -485,7 +591,7 @@ fn test_approve_max_allowance_size() {
         Some(u64::MAX),
     )
     .expect("approve failed");
-    assert_eq!(block_index, 1);
+    assert_eq!(block_index, 1_u128);
     let allowance = get_allowance(env, ledger_id, from, spender);
     assert_eq!(allowance.allowance, Nat::from(u128::MAX));
     assert_eq!(allowance.expires_at, Some(u64::MAX));
@@ -508,13 +614,13 @@ fn test_approve_self() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     let args = ApproveArgs {
         from_subaccount: None,
         spender: from,
-        amount: Nat::from(100),
+        amount: Nat::from(100_u128),
         expected_allowance: None,
         expires_at: None,
         fee: Some(Nat::from(FEE)),
@@ -552,7 +658,7 @@ fn test_approve_cap() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     // Approve amount capped at u128::MAX
@@ -584,6 +690,90 @@ fn test_approve_cap() {
     );
 }
 
+// A test to check that `DuplicateError` is returned on a duplicate `approve` request
+// and not `UnexpectedAllowanceError` if `expected_allowance` is set
+#[test]
+fn test_approve_duplicate() {
+    use icrc_ledger_types::icrc2::approve::ApproveError;
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let from = Account {
+        owner: Principal::from_slice(&[0]),
+        subaccount: None,
+    };
+    let spender = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Deposit funds
+    assert_eq!(
+        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        1_000_000_000u128
+    );
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: Nat::from(100u128),
+        expected_allowance: Some(Nat::from(0u128)),
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: None,
+        created_at_time: Some(now),
+    };
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+    let allowance = get_allowance(env, ledger_id, from, spender);
+    assert_eq!(allowance.allowance, Nat::from(100u128));
+    assert_eq!(allowance.expires_at, None);
+    assert_eq!(
+        balance_of(env, ledger_id, from),
+        Nat::from(1_000_000_000 - FEE)
+    );
+
+    // re-submit should error with duplicate
+    env.update_call(
+        ledger_id,
+        from.owner,
+        "icrc2_approve",
+        Encode!(&args).unwrap(),
+    )
+    .unwrap();
+
+    let result = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            from.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, ApproveError>).unwrap()
+    } else {
+        panic!("icrc2_approve rejected")
+    };
+
+    assert_eq!(
+        result,
+        Err(ApproveError::Duplicate {
+            duplicate_of: Nat::from(1u128)
+        })
+    );
+}
+
 #[test]
 fn test_approval_expiring() {
     let env = &new_state_machine();
@@ -609,7 +799,7 @@ fn test_approval_expiring() {
     // Deposit funds
     assert_eq!(
         deposit(env, depositor_id, from, 1_000_000_000).balance,
-        1_000_000_000
+        1_000_000_000_u128
     );
 
     // First approval expiring 1 hour from now.
@@ -624,7 +814,7 @@ fn test_approval_expiring() {
         Some(expiration),
     )
     .expect("approve failed");
-    assert_eq!(block_index, 1);
+    assert_eq!(block_index, 1_u128);
     let allowance = get_allowance(env, ledger_id, from, spender1);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration));
@@ -642,7 +832,7 @@ fn test_approval_expiring() {
         Some(expiration_3h),
     )
     .expect("approve failed");
-    assert_eq!(block_index, 2);
+    assert_eq!(block_index, 2_u128);
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
@@ -667,7 +857,7 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     let allowance = get_allowance(env, ledger_id, from, spender1);
-    assert_eq!(allowance.allowance, Nat::from(0));
+    assert_eq!(allowance.allowance, Nat::from(0_u128));
     assert_eq!(allowance.expires_at, None);
     let allowance = get_allowance(env, ledger_id, from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
@@ -716,7 +906,7 @@ fn test_basic_transfer() {
     let fee = fee(env, ledger_id);
     let mut expected_total_supply = deposit_amount;
 
-    let transfer_amount = Nat::from(100_000);
+    let transfer_amount = Nat::from(100_000_u128);
     transfer(
         env,
         ledger_id,
@@ -774,7 +964,7 @@ fn test_basic_transfer() {
             TransferArgs {
                 from_subaccount: None,
                 to: user1,
-                fee: Some(Nat::from(0)),
+                fee: Some(Nat::from(0_u128)),
                 created_at_time: None,
                 memo: None,
                 amount: transfer_amount.clone(),
@@ -834,7 +1024,7 @@ fn test_deduplication() {
     };
     let deposit_amount = 1_000_000_000;
     deposit(env, depositor_id, user1, deposit_amount);
-    let transfer_amount = Nat::from(100_000);
+    let transfer_amount = Nat::from(100_000_u128);
 
     // If created_at_time is not set, the same transaction should be able to be sent multiple times
     transfer(
@@ -967,6 +1157,67 @@ fn test_deduplication() {
     .unwrap();
 }
 
+// A test to check that `DuplicateError` is returned on a duplicate `transfer` request
+// and not `InsufficientFundsError` if there are not enough funds
+// to execute it a second time
+#[test]
+fn test_deduplication_with_insufficient_funds() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+    let transfer_amount = Nat::from(600_000_000u128);
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // Make a transfer with created_at_time set
+    let tx: Nat = transfer(
+        env,
+        ledger_id,
+        user1.owner,
+        TransferArgs {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: Some(now),
+            memo: None,
+            amount: transfer_amount.clone(),
+        },
+    )
+    .unwrap();
+
+    // Should not be able send the same transfer twice if created_at_time is set
+    assert_eq!(
+        TransferError::Duplicate { duplicate_of: tx },
+        transfer(
+            env,
+            ledger_id,
+            user1.owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: user2,
+                fee: None,
+                created_at_time: Some(now),
+                memo: None,
+                amount: transfer_amount.clone(),
+            },
+        )
+        .unwrap_err()
+    );
+}
+
 #[test]
 fn test_pruning_transactions() {
     let env = &new_state_machine();
@@ -980,7 +1231,7 @@ fn test_pruning_transactions() {
         owner: Principal::from_slice(&[2]),
         subaccount: None,
     };
-    let transfer_amount = Nat::from(100_000);
+    let transfer_amount = Nat::from(100_000_u128);
 
     let check_tx_hashes = |length: u64, first_block: u64, last_block: u64| {
         let tx_hashes = transaction_hashes(env, ledger_id);
@@ -1140,24 +1391,24 @@ fn test_total_supply_after_upgrade() {
             fee: None,
             created_at_time: None,
             memo: None,
-            amount: Nat::from(1_000_000_000),
+            amount: Nat::from(1_000_000_000_u128),
         },
     )
     .unwrap();
-    send(
+    withdraw(
         env,
         ledger_id,
         user2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            amount: Nat::from(1_000_000_000),
+            amount: Nat::from(1_000_000_000_u128),
         },
     )
     .unwrap();
 
-    // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and send
+    // total_supply should be 5m - 1m sent back to the depositor - twice the fee for transfer and withdraw
     let expected_total_supply = 5_000_000_000 - 1_000_000_000 - 2 * fee.0.to_u128().unwrap();
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
     let upgrade_args = Encode!(&None::<LedgerArgs>).unwrap();
@@ -1196,7 +1447,7 @@ fn validate_certificate(
         _ => panic!("Unable to find the certificate_data_hash for the ledger canister in the hash_tree (hash_tree: {:?}, path: {:?})", certificate.tree, certified_data_path),
     };
 
-    let hash_tree: HashTree = serde_cbor::de::from_slice(hash_tree.as_slice())
+    let hash_tree: HashTree = ciborium::de::from_reader(hash_tree.as_slice())
         .expect("Unable to deserialize CBOR encoded hash_tree");
 
     assert_eq!(certified_data_hash, hash_tree.digest());
@@ -1223,20 +1474,20 @@ fn validate_certificate(
 }
 
 #[test]
-fn test_icrc3_get_transactions() {
-    // Utility to extract all IDs and the corresponding transactions from the given [GetTransactionsResult].
-    let get_txs = |res: &GetTransactionsResult| -> Vec<(u64, Block)> {
-        res.transactions
+fn test_icrc3_get_blocks() {
+    // Utility to extract all IDs and the corresponding blcks from the given [GetBlocksResult].
+    let get_txs = |res: &GetBlocksResult| -> Vec<(u64, Block)> {
+        res.blocks
             .iter()
-            .map(|tx| {
-                let tx_id = tx.id.0.to_u64().unwrap();
-                let tx_decoded = Block::from_value(tx.transaction.clone()).unwrap_or_else(|e| {
+            .map(|b| {
+                let block_id = b.id.0.to_u64().unwrap();
+                let block_decoded = Block::from_value(b.block.clone()).unwrap_or_else(|e| {
                     panic!(
                         "Unable to decode block at index:{} value:{:?} : {}",
-                        tx_id, tx.transaction, e
+                        block_id, b.block, e
                     )
                 });
-                (tx_id, tx_decoded)
+                (block_id, block_decoded)
             })
             .collect()
     };
@@ -1244,9 +1495,9 @@ fn test_icrc3_get_transactions() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 0);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 0_u128);
+    assert_eq!(txs.archived_blocks.len(), 0);
     assert_eq!(get_txs(&txs), vec![]);
 
     let depositor_id = install_depositor(env, ledger_id);
@@ -1257,9 +1508,9 @@ fn test_icrc3_get_transactions() {
     // add the first mint block
     deposit(env, depositor_id, user1, 5_000_000_000);
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 1);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 1_u128);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let mut block0 = block(
         Mint {
             to: user1,
@@ -1281,9 +1532,9 @@ fn test_icrc3_get_transactions() {
     // add a second mint block
     deposit(env, depositor_id, user2, 3_000_000_000);
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 2);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 2_u128);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let mut block1 = block(
         Mint {
             to: user2,
@@ -1303,38 +1554,38 @@ fn test_icrc3_get_transactions() {
     validate_certificate(env, ledger_id, 1, block1.hash().unwrap());
 
     // check retrieving a subset of the transactions
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 1)]);
-    assert_eq!(txs.log_length, 2);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 1)]);
+    assert_eq!(txs.log_length, 2_u128);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let actual_txs = get_txs(&txs);
     let expected_txs = vec![(0, block0.clone())];
     assert_blocks_eq_except_ts(&actual_txs, &expected_txs);
 
     // add a burn block
-    send(
+    withdraw(
         env,
         ledger_id,
         user2,
-        SendArgs {
+        WithdrawArgs {
             from_subaccount: None,
             to: depositor_id,
             created_at_time: None,
-            amount: Nat::from(2_000_000_000),
+            amount: Nat::from(2_000_000_000_u128),
         },
     )
-    .expect("Send failed");
+    .expect("Withdraw failed");
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 3);
-    assert_eq!(txs.archived_transactions.len(), 0);
-    let send_memo = encode_send_memo(&depositor_id);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 3_u128);
+    assert_eq!(txs.archived_blocks.len(), 0);
+    let withdraw_memo = encode_withdraw_memo(&depositor_id);
     let mut block2 = block(
         Burn {
             from: user2,
             amount: 2_000_000_000,
         },
         None,
-        Some(send_memo),
+        Some(withdraw_memo),
         Some(block1.hash().unwrap()),
     );
     let actual_txs = get_txs(&txs);
@@ -1361,7 +1612,7 @@ fn test_icrc3_get_transactions() {
             fee: None,
             created_at_time: None,
             memo: None,
-            amount: Nat::from(1_000_000_000),
+            amount: Nat::from(1_000_000_000_u128),
         },
     )
     .expect("Transfer failed");
@@ -1385,9 +1636,9 @@ fn test_icrc3_get_transactions() {
     )
     .expect("Transfer from failed");
 
-    let txs = get_raw_transactions(env, ledger_id, vec![(0, 10)]);
-    assert_eq!(txs.log_length, 6);
-    assert_eq!(txs.archived_transactions.len(), 0);
+    let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
+    assert_eq!(txs.log_length, 6_u128);
+    assert_eq!(txs.archived_blocks.len(), 0);
     let actual_txs = get_txs(&txs);
     let block3 = block(
         Transfer {
@@ -1514,18 +1765,18 @@ fn block(
 }
 
 #[test]
-fn test_get_transactions_max_length() {
+fn test_get_blocks_max_length() {
     // Check that the ledger doesn't return more blocks
-    // than configured. We set the max number of transactions
+    // than configured. We set the max number of blocks
     // per request to 2 instead of the default because
     // it's much faster to test.
 
     let env = new_state_machine();
-    let max_transactions_per_request = 2;
+    let max_blocks_per_request = 2;
     let ledger_id = install_ledger_with_conf(
         &env,
         LedgerConfig {
-            max_transactions_per_request,
+            max_blocks_per_request,
             index_id: None,
         },
     );
@@ -1538,18 +1789,18 @@ fn test_get_transactions_max_length() {
     let _ = deposit(&env, depositor_id, user, 4_000_000_000);
     let _ = deposit(&env, depositor_id, user, 5_000_000_000);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(3, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(3, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 }
 
 #[test]
-fn test_set_max_transactions_per_request_in_upgrade() {
+fn test_set_max_blocks_per_request_in_upgrade() {
     let env = new_state_machine();
     let ledger_id = install_ledger_with_conf(&env, LedgerConfig::default());
     let depositor_id = install_depositor(&env, ledger_id);
@@ -1561,26 +1812,26 @@ fn test_set_max_transactions_per_request_in_upgrade() {
     let _ = deposit(&env, depositor_id, user, 4_000_000_000);
     let _ = deposit(&env, depositor_id, user, 5_000_000_000);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
-    assert_eq!(5, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(5, res.blocks.len() as u64);
 
-    let max_transactions_per_request = 2;
+    let max_blocks_per_request = 2;
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
-        max_transactions_per_request: Some(max_transactions_per_request),
+        max_blocks_per_request: Some(max_blocks_per_request),
         change_index_id: None,
     }))))
     .unwrap();
     env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
         .unwrap();
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(3, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(3, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 
-    let res = get_raw_transactions(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
-    assert_eq!(max_transactions_per_request, res.transactions.len() as u64);
+    let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX), (2, u64::MAX)]);
+    assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
 }
 
 #[test]
@@ -1613,7 +1864,7 @@ fn test_change_index_id() {
     // set the index_id
     let index_id = Principal::from_slice(&[111]);
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
-        max_transactions_per_request: None,
+        max_blocks_per_request: None,
         change_index_id: Some(ChangeIndexId::SetTo(index_id)),
     }))))
     .unwrap();
@@ -1629,7 +1880,7 @@ fn test_change_index_id() {
 
     // unset the index_id
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
-        max_transactions_per_request: None,
+        max_blocks_per_request: None,
         change_index_id: Some(ChangeIndexId::Unset),
     }))))
     .unwrap();
@@ -1651,10 +1902,11 @@ fn test_icrc1_test_suite() {
 
     // make the first deposit to the user and check the result
     let deposit_res = deposit(&env, depositor_id, user, 1_000_000_000_000_000);
-    assert_eq!(deposit_res.txid, Nat::from(0));
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
     assert_eq!(1_000_000_000_000_000, balance_of(&env, ledger_id, user));
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let ledger_env =
         icrc1_test_env_state_machine::SMLedger::new(Arc::new(env), ledger_id, user.owner);
     let tests = icrc1_test_suite::test_suite(ledger_env)
@@ -1709,7 +1961,7 @@ fn test_upgrade_preserves_state() {
         check_ledger_state(env, ledger_id, &expected_state);
     }
 
-    let expected_blocks = get_raw_transactions(env, ledger_id, vec![(0, u64::MAX)]);
+    let expected_blocks = get_raw_blocks(env, ledger_id, vec![(0, u64::MAX)]);
 
     // upgrade the ledger
     let arg = Encode!(&None::<LedgerArgs>).unwrap();
@@ -1721,7 +1973,7 @@ fn test_upgrade_preserves_state() {
     check_ledger_state(env, ledger_id, &expected_state);
 
     // check that the blocks are all there after the upgrade
-    let after_upgrade_blocks = get_raw_transactions(env, ledger_id, vec![(0, u64::MAX)]);
+    let after_upgrade_blocks = get_raw_blocks(env, ledger_id, vec![(0, u64::MAX)]);
     assert_eq!(expected_blocks, after_upgrade_blocks);
 }
 
@@ -1752,4 +2004,561 @@ fn check_ledger_state(
             spender
         );
     }
+}
+
+#[test]
+fn test_create_canister() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    let env = new_state_machine();
+    install_fake_cmc(&env);
+    let ledger_id = install_ledger(&env);
+    let depositor_id = install_depositor(&env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[10]),
+        subaccount: Some([0; 32]),
+    };
+    let mut expected_balance = 1_000_000_000_000_000_u128;
+
+    // make the first deposit to the user and check the result
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
+    assert_eq!(deposit_res.balance, expected_balance);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+
+    // successful create
+    let canister = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap()
+    .canister_id;
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    // no canister creation fee on system subnet (where the StateMachine is by default)
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+
+    let canister_settings = CanisterSettings {
+        controllers: Some(vec![user.owner, Principal::anonymous()]),
+        compute_allocation: Some(Nat::from(7_u128)),
+        memory_allocation: Some(Nat::from(8_u128)),
+        freezing_threshold: Some(Nat::from(9_u128)),
+        reserved_cycles_limit: Some(Nat::from(10_u128)),
+    };
+    let CreateCanisterSuccess {
+        canister_id,
+        block_id,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: Some(CmcCreateCanisterArgs {
+                subnet_selection: None,
+                settings: Some(canister_settings.clone()),
+            }),
+        },
+    )
+    .unwrap();
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister_id, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    // order is not guaranteed
+    assert_eq!(
+        HashSet::<Principal>::from_iter(status.settings.controllers.iter().cloned()),
+        HashSet::from_iter(canister_settings.controllers.unwrap().iter().cloned())
+    );
+    assert_eq!(
+        status.settings.freezing_threshold,
+        canister_settings.freezing_threshold.unwrap()
+    );
+    assert_eq!(
+        status.settings.compute_allocation,
+        canister_settings.compute_allocation.unwrap()
+    );
+    assert_eq!(
+        status.settings.memory_allocation,
+        canister_settings.memory_allocation.unwrap()
+    );
+    assert_eq!(
+        status.settings.reserved_cycles_limit,
+        canister_settings.reserved_cycles_limit.unwrap()
+    );
+    assert_matches!(
+        get_block(&env, ledger_id, block_id).transaction.operation,
+        Operation::Burn {
+            amount: CREATE_CANISTER_CYCLES,
+            ..
+        }
+    );
+
+    // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
+    let canister_settings = CanisterSettings {
+        controllers: None,
+        compute_allocation: Some(Nat::from(7_u128)),
+        memory_allocation: Some(Nat::from(8_u128)),
+        freezing_threshold: Some(Nat::from(9_u128)),
+        reserved_cycles_limit: Some(Nat::from(10_u128)),
+    };
+    let CreateCanisterSuccess { canister_id, .. } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: Some(CmcCreateCanisterArgs {
+                subnet_selection: None,
+                settings: Some(canister_settings),
+            }),
+        },
+    )
+    .unwrap();
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister_id, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(status.settings.controllers, vec![user.owner]);
+
+    // reject before `await`
+    if let CreateCanisterError::InsufficientFunds { balance } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: Nat::from(u128::MAX),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        assert_eq!(balance, expected_balance);
+    } else {
+        panic!("wrong error")
+    };
+
+    // refund successful
+    fail_next_create_canister_with(
+        &env,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: CREATE_CANISTER_CYCLES,
+            create_error: "Custom error text".to_string(),
+        },
+    );
+    if let CreateCanisterError::FailedToCreate {
+        fee_block,
+        refund_block,
+        error: _,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        expected_balance -= FEE;
+        assert_matches!(
+            get_block(&env, ledger_id, fee_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Burn {
+                amount: CREATE_CANISTER_CYCLES,
+                ..
+            }
+        );
+        assert_matches!(
+            get_block(&env, ledger_id, refund_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Mint {
+                amount: CREATE_CANISTER_CYCLES,
+                ..
+            }
+        );
+        assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    } else {
+        panic!("wrong error")
+    };
+
+    // dividing by 3 so that the number of cyles to be refunded is different from the amount of cycles consumed
+    const REFUND_AMOUNT: u128 = CREATE_CANISTER_CYCLES / 3;
+    fail_next_create_canister_with(
+        &env,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: REFUND_AMOUNT,
+            create_error: "Custom error text".to_string(),
+        },
+    );
+    if let CreateCanisterError::FailedToCreate {
+        fee_block,
+        refund_block,
+        error: _,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        expected_balance -= FEE + (CREATE_CANISTER_CYCLES - REFUND_AMOUNT);
+        assert_matches!(
+            get_block(&env, ledger_id, fee_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Burn {
+                amount: CREATE_CANISTER_CYCLES,
+                ..
+            }
+        );
+        assert_matches!(
+            get_block(&env, ledger_id, refund_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Mint {
+                amount: REFUND_AMOUNT,
+                ..
+            }
+        );
+        assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    } else {
+        panic!("wrong error")
+    };
+
+    // refund failed
+    fail_next_create_canister_with(
+        &env,
+        cycles_ledger::endpoints::CmcCreateCanisterError::RefundFailed {
+            create_error: "Create error text".to_string(),
+            refund_error: "Refund error text".to_string(),
+        },
+    );
+    if let CreateCanisterError::FailedToCreate {
+        fee_block,
+        refund_block,
+        error: _,
+    } = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap_err()
+    {
+        expected_balance -= FEE + CREATE_CANISTER_CYCLES;
+        assert_matches!(
+            get_block(&env, ledger_id, fee_block.unwrap())
+                .transaction
+                .operation,
+            Operation::Burn {
+                amount: CREATE_CANISTER_CYCLES,
+                ..
+            }
+        );
+        assert!(refund_block.is_none());
+        assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    } else {
+        panic!("wrong error")
+    };
+
+    // duplicate creation request returns the same canister twice
+    let arg = CreateCanisterArgs {
+        from_subaccount: user.subaccount,
+        created_at_time: Some(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64),
+        amount: CREATE_CANISTER_CYCLES.into(),
+        creation_args: None,
+    };
+    let canister = create_canister(&env, ledger_id, user, arg.clone())
+        .unwrap()
+        .canister_id;
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+    let duplicate = create_canister(&env, ledger_id, user, arg).unwrap_err();
+    assert_matches!(
+        duplicate,
+        CreateCanisterError::Duplicate { .. },
+        "No duplicate reported"
+    );
+    let CreateCanisterError::Duplicate {
+        canister_id: Some(duplicate_canister_id),
+        ..
+    } = duplicate
+    else {
+        panic!("No duplicate canister reported")
+    };
+    assert_eq!(
+        canister, duplicate_canister_id,
+        "Different canister id returned"
+    )
+}
+
+// A test to check that `DuplicateError` is returned on a duplicate `create_canister` request
+// and not `InsufficientFundsError` if there are not enough funds
+// to execute it a second time
+#[test]
+fn test_create_canister_duplicate() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    let env = new_state_machine();
+    install_fake_cmc(&env);
+    let ledger_id = install_ledger(&env);
+    let depositor_id = install_depositor(&env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[10]),
+        subaccount: Some([0; 32]),
+    };
+    let mut expected_balance = 1_500_000_000_000_u128;
+
+    // make the first deposit to the user and check the result
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    assert_eq!(deposit_res.block_index, Nat::from(0u128));
+    assert_eq!(deposit_res.balance, expected_balance);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+
+    let now = env
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    // successful create
+    let canister = create_canister(
+        &env,
+        ledger_id,
+        user,
+        CreateCanisterArgs {
+            from_subaccount: user.subaccount,
+            created_at_time: Some(now),
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+        },
+    )
+    .unwrap()
+    .canister_id;
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister, user.owner);
+    assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
+    // no canister creation fee on system subnet (where the StateMachine is by default)
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(vec![user.owner], status.settings.controllers);
+
+    assert_eq!(
+        CreateCanisterError::Duplicate {
+            duplicate_of: Nat::from(1u128),
+            canister_id: Some(canister)
+        },
+        create_canister(
+            &env,
+            ledger_id,
+            user,
+            CreateCanisterArgs {
+                from_subaccount: user.subaccount,
+                created_at_time: Some(now),
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+            },
+        )
+        .unwrap_err()
+    );
+}
+
+#[test]
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_deposit_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+
+    // Attempt deposit with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let arg = Encode!(&depositor::endpoints::DepositArg {
+        cycles: 10 * FEE,
+        to: user,
+        memo: Some(Memo(ByteBuf::from(large_memo))),
+    })
+    .unwrap();
+
+    let _res = env
+        .update_call(depositor_id, user.owner, "deposit", arg)
+        .unwrap();
+}
+
+#[test]
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_icrc1_transfer_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let transfer_amount = Nat::from(100_000_u128);
+    let _res = transfer(
+        env,
+        ledger_id,
+        user1.owner,
+        TransferArgs {
+            from_subaccount: None,
+            to: user2,
+            fee: None,
+            created_at_time: None,
+            memo: Some(Memo(ByteBuf::from(large_memo))),
+            amount: transfer_amount.clone(),
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_approve_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 1_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // Attempt approve with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let args = ApproveArgs {
+        from_subaccount: None,
+        spender: user2,
+        amount: (1_000_000_000 + FEE).into(),
+        expected_allowance: Some(Nat::from(0u128)),
+        expires_at: None,
+        fee: Some(Nat::from(FEE)),
+        memo: Some(Memo(ByteBuf::from(large_memo))),
+        created_at_time: None,
+    };
+    let res = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            user1.owner,
+            "icrc2_approve",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, ApproveError>).unwrap()
+    } else {
+        panic!("icrc2_approve rejected")
+    };
+
+    res.unwrap();
+}
+
+#[test]
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_icrc2_transfer_from_invalid_memo() {
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let user1 = Account {
+        owner: Principal::from_slice(&[1]),
+        subaccount: None,
+    };
+    let user2: Account = Account {
+        owner: Principal::from_slice(&[2]),
+        subaccount: None,
+    };
+    let deposit_amount = 10_000_000_000;
+    deposit(env, depositor_id, user1, deposit_amount);
+
+    // Attempt transfer_from with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
+
+    let transfer_amount = Nat::from(100_000_u128);
+
+    approve(
+        env,
+        ledger_id,
+        /*from:*/ user1,
+        /*spender:*/ user2,
+        /*amount:*/ 1_000_000_000 + FEE,
+        /*expected_allowance:*/ Some(0),
+        /*expires_at:*/ None,
+    )
+    .expect("Approve failed");
+
+    let args = TransferFromArgs {
+        spender_subaccount: None,
+        from: user1,
+        to: user2,
+        amount: transfer_amount,
+        fee: Some(Nat::from(FEE)),
+        memo: Some(Memo(ByteBuf::from(large_memo))),
+        created_at_time: None,
+    };
+
+    let res = if let WasmResult::Reply(res) = env
+        .update_call(
+            ledger_id,
+            user2.owner,
+            "icrc2_transfer_from",
+            Encode!(&args).unwrap(),
+        )
+        .unwrap()
+    {
+        Decode!(&res, Result<Nat, TransferFromError>).unwrap()
+    } else {
+        panic!("icrc2_transfer_from rejected")
+    };
+
+    res.unwrap();
 }

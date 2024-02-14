@@ -5,11 +5,16 @@ use candid::{Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     config::FEE,
     endpoints::{
-        self, DataCertificate, DepositResult, GetTransactionsArg, GetTransactionsArgs,
-        GetTransactionsResult, SendArgs,
+        self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterError,
+        CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
+        GetBlocksResult, WithdrawArgs,
     },
+    storage::{Block, CMC_PRINCIPAL},
 };
 use depositor::endpoints::DepositArg;
+use ic_cdk::api::management_canister::{
+    main::CanisterStatusResponse, provisional::CanisterIdRecord,
+};
 use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
@@ -70,17 +75,99 @@ pub fn total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
     }
 }
 
-pub fn send(
+pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> Block {
+    let arg = Encode!(&vec![GetBlocksArg {
+        start: block_index,
+        length: Nat::from(1_u128),
+    }])
+    .unwrap();
+    if let WasmResult::Reply(res) = env
+        .query_call(ledger_id, Principal::anonymous(), "icrc3_get_blocks", arg)
+        .unwrap()
+    {
+        Block::from_value(
+            Decode!(&res, GetBlocksResult)
+                .unwrap()
+                .blocks
+                .get(0)
+                .unwrap()
+                .clone()
+                .block,
+        )
+        .unwrap()
+    } else {
+        panic!("icrc3_get_blocks rejected")
+    }
+}
+
+pub fn withdraw(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
-    args: SendArgs,
-) -> Result<Nat, endpoints::SendError> {
+    args: WithdrawArgs,
+) -> Result<Nat, endpoints::WithdrawError> {
     let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env.update_call(ledger_id, from.owner, "send", arg).unwrap() {
-        Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::SendError>).unwrap()
+    if let WasmResult::Reply(res) = env
+        .update_call(ledger_id, from.owner, "withdraw", arg)
+        .unwrap()
+    {
+        Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::WithdrawError>).unwrap()
     } else {
-        panic!("send rejected")
+        panic!("withdraw rejected")
+    }
+}
+
+pub fn create_canister(
+    env: &StateMachine,
+    ledger_id: Principal,
+    from: Account,
+    args: CreateCanisterArgs,
+) -> Result<CreateCanisterSuccess, endpoints::CreateCanisterError> {
+    let arg = Encode!(&args).unwrap();
+    if let WasmResult::Reply(res) = env
+        .update_call(ledger_id, from.owner, "create_canister", arg)
+        .unwrap()
+    {
+        Decode!(&res, Result<CreateCanisterSuccess, CreateCanisterError>).unwrap()
+    } else {
+        panic!("create_canister rejected")
+    }
+}
+
+pub fn canister_status(
+    env: &StateMachine,
+    canister_id: Principal,
+    sender: Principal,
+) -> CanisterStatusResponse {
+    let arg = Encode!(&CanisterIdRecord { canister_id }).unwrap();
+    if let WasmResult::Reply(res) = env
+        .update_call(
+            Principal::management_canister(),
+            sender,
+            "canister_status",
+            arg,
+        )
+        .unwrap()
+    {
+        Decode!(&res, CanisterStatusResponse).unwrap()
+    } else {
+        panic!("canister_status rejected")
+    }
+}
+
+pub fn fail_next_create_canister_with(env: &StateMachine, error: CmcCreateCanisterError) {
+    let arg = Encode!(&error).unwrap();
+    if !matches!(
+        env.update_call(
+            CMC_PRINCIPAL,
+            Principal::anonymous(),
+            "fail_next_create_canister_with",
+            arg,
+        )
+        .unwrap(),
+        WasmResult::Reply(_)
+    ) {
+        panic!("canister_status rejected")
     }
 }
 
@@ -216,29 +303,24 @@ pub fn get_metadata(env: &StateMachine, ledger_id: Principal) -> Vec<(String, Me
     }
 }
 
-pub fn get_raw_transactions(
+pub fn get_raw_blocks(
     env: &StateMachine,
     ledger_id: Principal,
     start_lengths: Vec<(u64, u64)>,
-) -> GetTransactionsResult {
-    let get_transactions_args: GetTransactionsArgs = start_lengths
+) -> GetBlocksResult {
+    let get_blocks_args: GetBlocksArgs = start_lengths
         .iter()
-        .map(|(start, length)| GetTransactionsArg {
+        .map(|(start, length)| GetBlocksArg {
             start: Nat::from(*start),
             length: Nat::from(*length),
         })
         .collect();
-    let arg = Encode!(&get_transactions_args).unwrap();
+    let arg = Encode!(&get_blocks_args).unwrap();
     if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "icrc3_get_transactions",
-            arg,
-        )
+        .query_call(ledger_id, Principal::anonymous(), "icrc3_get_blocks", arg)
         .unwrap()
     {
-        Decode!(&res, GetTransactionsResult).unwrap()
+        Decode!(&res, GetBlocksResult).unwrap()
     } else {
         panic!("fee call rejected")
     }

@@ -79,20 +79,28 @@ jobs:
       - id: create-release
         run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ env.TAG }}" --notes="TBD"
       - name: Install dfx
-        run: sh -ci "$(curl -fsSL https://internetcomputer.org/install.sh)"
+        uses: dfinity/setup-dfx@main
       - name: Build WASM
         run: |
           dfx build --check
-          ls .dfx/local/canisters/cycles-**
+          echo "Cycles ledger:"
+          ls .dfx/local/canisters/cycles-ledger
+          echo "Depositor:"
+          ls .dfx/local/canisters/depositor
+          echo "Fake CMC:"
+          ls .dfx/local/canisters/fake-cmc
           (cd .dfx/local/canisters/cycles-ledger && shasum -a 256 cycles-ledger.wasm.gz > cycles-ledger.wasm.gz.sha256)
-          (cd .dfx/local/canisters/cycles-depositor && shasum -a 256 cycles-depositor.wasm.gz > cycles-depositor.wasm.gz.sha256)
-          cp depositor/depositor.did .dfx/local/canisters/cycles-depositor/cycles-depositor.did
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-depositor/cycles-depositor.wasm.gz
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-depositor/cycles-depositor.wasm.gz.sha256
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-depositor/cycles-depositor.did
+          (cd .dfx/local/canisters/depositor && shasum -a 256 depositor.wasm.gz > depositor.wasm.gz.sha256)
+          (cd .dfx/local/canisters/fake-cmc && shasum -a 256 fake-cmc.wasm.gz > fake-cmc.wasm.gz.sha256)
+          gh release upload ${{ env.TAG }} .dfx/local/canisters/depositor/depositor.wasm.gz
+          gh release upload ${{ env.TAG }} .dfx/local/canisters/depositor/depositor.wasm.gz.sha256
+          gh release upload ${{ env.TAG }} depositor/depositor.did
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
           gh release upload ${{ env.TAG }} .dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz.sha256
           gh release upload ${{ env.TAG }} cycles-ledger/cycles-ledger.did
+          gh release upload ${{ env.TAG }} .dfx/local/canisters/fake-cmc/fake-cmc.wasm.gz
+          gh release upload ${{ env.TAG }} .dfx/local/canisters/fake-cmc/fake-cmc.wasm.gz.sha256
+          gh release upload ${{ env.TAG }} fake-cmc/fake-cmc.did
           echo "uploaded!"
       - name: mark release as non-draft
         run: |
