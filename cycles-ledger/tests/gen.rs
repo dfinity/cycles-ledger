@@ -757,7 +757,7 @@ pub fn arb_cycles_ledger_call_state_from(
             // approve
             let select_account = select_account_and_balance.clone().prop_map(|(a, _)| a);
             let arb_expires_at = option::of(Just(
-                now_in_nanos_since_epoch.saturating_add(3600_000_000_000),
+                now_in_nanos_since_epoch.saturating_add(3_600_000_000_000),
             ));
             let arb_approve = arb_approve(
                 token_pool,
