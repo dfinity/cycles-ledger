@@ -540,38 +540,50 @@ fn arb_approve(
     token_pool: u128,
     allowances: Arc<HashMap<(Account, Account), u128>>,
     arb_approver: impl Strategy<Value = Account>,
+    arb_expires_at: impl Strategy<Value = Option<u64>>,
+    arb_created_at_time: impl Strategy<Value = Option<u64>>,
 ) -> impl Strategy<Value = CyclesLedgerCall> {
-    (arb_approver, arb_account(), arb_amount(token_pool))
-        .prop_filter("self-approve disabled", |(approver, spender, _)| {
+    (
+        arb_approver,
+        arb_account(),
+        arb_amount(token_pool),
+        arb_expires_at,
+        arb_created_at_time,
+    )
+        .prop_filter("self-approve disabled", |(approver, spender, _, _, _)| {
             approver.owner != spender.owner
         })
-        .prop_flat_map(move |(approver, spender, amount)| {
-            let allowance = allowances
-                .get(&(approver, spender))
-                .copied()
-                .unwrap_or_default();
-            let arb_expected_allowance = option::of(Just(allowance.into()));
-            let arb_suggested_fee = option::of(Just(FEE.into()));
-            (
-                option::of(arb_memo()),
-                arb_expected_allowance,
-                arb_suggested_fee,
-            )
-                .prop_map(move |(memo, expected_allowance, fee)| CyclesLedgerCall {
-                    caller: approver.owner,
-                    arg: ApproveArgs {
-                        from_subaccount: approver.subaccount,
-                        spender,
-                        amount: amount.clone(),
-                        expected_allowance,
-                        expires_at: None, // TODO
-                        fee,
-                        memo,
-                        created_at_time: None, // TODO
-                    }
-                    .into(),
-                })
-        })
+        .prop_flat_map(
+            move |(approver, spender, amount, expires_at, created_at_time)| {
+                let allowance = allowances
+                    .get(&(approver, spender))
+                    .copied()
+                    .unwrap_or_default();
+                let arb_expected_allowance = option::of(Just(allowance.into()));
+                let arb_suggested_fee = option::of(Just(FEE.into()));
+                (
+                    option::of(arb_memo()),
+                    arb_expected_allowance,
+                    arb_suggested_fee,
+                )
+                    .prop_map(move |(memo, expected_allowance, fee)| {
+                        CyclesLedgerCall {
+                            caller: approver.owner,
+                            arg: ApproveArgs {
+                                from_subaccount: approver.subaccount,
+                                spender,
+                                amount: amount.clone(),
+                                expected_allowance,
+                                expires_at,
+                                fee,
+                                memo,
+                                created_at_time,
+                            }
+                            .into(),
+                        }
+                    })
+            },
+        )
 }
 
 prop_compose! {
@@ -590,9 +602,18 @@ prop_compose! {
 }
 
 prop_compose! {
-    fn arb_withdraw(arb_from: impl Strategy<Value = (Account, u128)>, depositor: Principal)
-               ((from, from_balance) in arb_from)
-               (from in Just(from),
+    fn arb_withdraw(
+                arb_from: impl Strategy<Value = (Account, u128)>,
+                depositor: Principal,
+                arb_created_at_time: impl Strategy<Value = Option<u64>>,
+               )
+               (
+                (from, from_balance) in arb_from,
+                created_at_time in arb_created_at_time
+               )
+               (
+                from in Just(from),
+                created_at_time in Just(created_at_time),
                 amount in (0..=(from_balance - FEE)).prop_map(Nat::from),
                )
                -> CyclesLedgerCall {
@@ -603,7 +624,7 @@ prop_compose! {
                 // Destination must exist so we pass the only
                 // canister that we know exists except for the cycles ledger.
                 to: depositor,
-                created_at_time: None, // TODO
+                created_at_time,
                 amount
             }.into(),
         }
@@ -611,9 +632,17 @@ prop_compose! {
 }
 
 prop_compose! {
-    fn arb_transfer(arb_from: impl Strategy<Value = (Account, u128)>)
-                   ((from, from_balance) in arb_from)
-                   (from in Just(from),
+    fn arb_transfer(
+                    arb_from: impl Strategy<Value = (Account, u128)>,
+                    arb_created_at_time: impl Strategy<Value = Option<u64>>,
+                   )
+                   (
+                    (from, from_balance) in arb_from,
+                    created_at_time in arb_created_at_time,
+                   )
+                   (
+                    from in Just(from),
+                    created_at_time in Just(created_at_time),
                     to in arb_account().prop_filter("cannot self tranasfer", move |to| &from != to),
                     fee in option::of(Just(FEE.into())),
                     amount in (0..=(from_balance-FEE)).prop_map(Nat::from),
@@ -626,7 +655,7 @@ prop_compose! {
                 from_subaccount: from.subaccount,
                 to,
                 fee,
-                created_at_time: None,
+                created_at_time,
                 memo,
                 amount
             }.into(),
@@ -635,10 +664,17 @@ prop_compose! {
 }
 
 prop_compose! {
-    fn arb_transfer_from(arb_from_spender: impl Strategy<Value = (Account, Account, u128)>)
-                        ((from, spender, from_balance) in arb_from_spender)
+    fn arb_transfer_from(
+                         arb_from_spender: impl Strategy<Value = (Account, Account, u128)>,
+                         arb_created_at_time: impl Strategy<Value = Option<u64>>,
+                        )
+                        (
+                         (from, spender, from_balance) in arb_from_spender,
+                         created_at_time in arb_created_at_time,
+                        )
                         (from in Just(from),
                          spender in Just(spender),
+                         created_at_time in Just(created_at_time),
                          to in arb_account().prop_filter("cannot transfer to self", move |to| &from != to),
                          fee in option::of(Just(FEE.into())),
                          amount in (0..=(from_balance-FEE)).prop_map(Nat::from),
@@ -652,7 +688,7 @@ prop_compose! {
                 to,
                 spender_subaccount: spender.subaccount,
                 fee,
-                created_at_time: None,
+                created_at_time,
                 memo,
                 amount,
             }.into(),
@@ -664,6 +700,7 @@ pub fn arb_cycles_ledger_call_state(
     depositor: Principal,
     depositor_cycles: u128,
     len: u8,
+    now_in_nanos_since_epoch: u64,
 ) -> impl Strategy<Value = CyclesLedgerCallsState> {
     if depositor_cycles < FEE {
         panic!(
@@ -674,7 +711,14 @@ pub fn arb_cycles_ledger_call_state(
         CyclesLedgerCallsState::new(depositor_cycles),
         depositor,
         len,
+        now_in_nanos_since_epoch,
     )
+}
+
+fn arb_created_at_time(now_in_nanos_since_epoch: u64) -> impl Strategy<Value = Option<u64>> {
+    option::of(Just(
+        now_in_nanos_since_epoch.saturating_sub(10_000_000_000),
+    ))
 }
 
 // Note: this generator will blow up the stack for high `len`
@@ -685,10 +729,12 @@ pub fn arb_cycles_ledger_call_state_from(
     state: CyclesLedgerCallsState,
     depositor_id: Principal,
     len: u8,
+    now_in_nanos_since_epoch: u64,
 ) -> impl Strategy<Value = CyclesLedgerCallsState> {
     fn step(
         state: CyclesLedgerCallsState,
         depositor: Principal,
+        now_in_nanos_since_epoch: u64,
         n: u8,
     ) -> impl Strategy<Value = CyclesLedgerCallsState> {
         if n == 0 {
@@ -710,15 +756,31 @@ pub fn arb_cycles_ledger_call_state_from(
 
             // approve
             let select_account = select_account_and_balance.clone().prop_map(|(a, _)| a);
-            let arb_approve = arb_approve(token_pool, allowances.clone(), select_account);
+            let arb_expires_at = option::of(Just(
+                now_in_nanos_since_epoch.saturating_add(3600_000_000_000),
+            ));
+            let arb_approve = arb_approve(
+                token_pool,
+                allowances.clone(),
+                select_account,
+                arb_expires_at,
+                arb_created_at_time(now_in_nanos_since_epoch),
+            );
             arb_calls.push(arb_approve.boxed());
 
             // withdraw
-            let arb_withdraw = arb_withdraw(select_account_and_balance.clone(), depositor);
+            let arb_withdraw = arb_withdraw(
+                select_account_and_balance.clone(),
+                depositor,
+                arb_created_at_time(now_in_nanos_since_epoch),
+            );
             arb_calls.push(arb_withdraw.boxed());
 
             // transfer
-            let arb_transfer = arb_transfer(select_account_and_balance);
+            let arb_transfer = arb_transfer(
+                select_account_and_balance,
+                arb_created_at_time(now_in_nanos_since_epoch),
+            );
             arb_calls.push(arb_transfer.boxed());
 
             // transfer_from
@@ -731,7 +793,10 @@ pub fn arb_cycles_ledger_call_state_from(
                 from_spender_amount.push((*from, *spender, *allowance.min(balance)));
             }
             if !from_spender_amount.is_empty() {
-                let arb_transfer_from = arb_transfer_from(select(from_spender_amount));
+                let arb_transfer_from = arb_transfer_from(
+                    select(from_spender_amount),
+                    arb_created_at_time(now_in_nanos_since_epoch),
+                );
                 arb_calls.push(arb_transfer_from.boxed());
             }
         }
@@ -742,21 +807,25 @@ pub fn arb_cycles_ledger_call_state_from(
 
         // Union panics if arb_calls is empty but this shouldn't happen
         // as either the depositor has cycles or an account has funds.
-        (Union::new(arb_calls), Just(state))
-            .prop_flat_map(move |(call, mut state)| {
+        (
+            Union::new(arb_calls),
+            Just(state),
+            Just(now_in_nanos_since_epoch),
+        )
+            .prop_flat_map(move |(call, mut state, now_in_nanos_since_epoch)| {
                 state.execute(&call).unwrap();
-                step(state, depositor, n - 1)
+                step(state, depositor, now_in_nanos_since_epoch, n - 1)
             })
             .boxed()
     }
 
-    step(state, depositor_id, len)
+    step(state, depositor_id, now_in_nanos_since_epoch, len)
 }
 
 #[test]
 fn test() {
     // check that [arb_cycles_ledger_call_state] doesn't panic
-    proptest!(|(state in arb_cycles_ledger_call_state(Principal::anonymous(), u128::MAX, 10))| {
+    proptest!(|(state in arb_cycles_ledger_call_state(Principal::anonymous(), u128::MAX, 10, 0))| {
         prop_assert_eq!(10, state.calls.len())
     })
 }

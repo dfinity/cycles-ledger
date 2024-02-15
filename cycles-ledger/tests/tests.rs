@@ -1939,7 +1939,9 @@ fn test_upgrade_preserves_state() {
     let mut expected_state = CyclesLedgerInMemory::new(depositor_cycles);
 
     // generate a list of calls for the cycles ledger
-    let calls = gen::arb_cycles_ledger_call_state(depositor_id, depositor_cycles, 10)
+    let now =
+        (u64::MAX as u128).min(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()) as u64;
+    let calls = gen::arb_cycles_ledger_call_state(depositor_id, depositor_cycles, 10, now)
         .new_tree(&mut TestRunner::default())
         .unwrap()
         .current()
