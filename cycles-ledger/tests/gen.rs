@@ -480,7 +480,7 @@ impl CyclesLedgerCallsState {
         }
     }
 
-    // Return the number of tokens available for minting
+    // Return the number of tokens available for minting.
     fn token_pool(&self) -> u128 {
         self.state.token_pool()
     }
