@@ -713,7 +713,7 @@ pub fn arb_cycles_ledger_call_state_from(
             let arb_approve = arb_approve(token_pool, allowances.clone(), select_account);
             arb_calls.push(arb_approve.boxed());
 
-            // send
+            // withdraw
             let arb_withdraw = arb_withdraw(select_account_and_balance.clone(), depositor);
             arb_calls.push(arb_withdraw.boxed());
 
