@@ -27,6 +27,7 @@ use cycles_ledger::{
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use futures::FutureExt;
+use gen::CyclesLedgerInMemory;
 use ic_cbor::CertificateToCbor;
 use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
 use ic_certificate_verification::VerifyCertificate;
@@ -50,12 +51,17 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
 
-use crate::client::{
-    approve, balance_of, canister_status, create_canister, fail_next_create_canister_with, fee,
-    get_allowance, get_block, get_tip_certificate, total_supply, transaction_timestamps, withdraw,
+use crate::{
+    client::{
+        approve, balance_of, canister_status, create_canister, fail_next_create_canister_with, fee,
+        get_allowance, get_block, get_tip_certificate, total_supply, transaction_timestamps,
+        withdraw,
+    },
+    gen::{CyclesLedgerInStateMachine, IsCyclesLedger},
 };
 
 mod client;
+mod gen;
 
 fn new_state_machine() -> StateMachine {
     let mut state_machine_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1912,6 +1918,94 @@ fn test_icrc1_test_suite() {
         .unwrap()
     {
         panic!("The ICRC-1 test suite failed");
+    }
+}
+
+#[test]
+fn test_upgrade_preserves_state() {
+    use proptest::strategy::{Strategy, ValueTree};
+    use proptest::test_runner::TestRunner;
+
+    let env = &new_state_machine();
+    let ledger_id = install_ledger(env);
+    let depositor_id = install_depositor(env, ledger_id);
+    let depositor_cycles = env.cycle_balance(depositor_id);
+    let mut state_machine_caller = CyclesLedgerInStateMachine {
+        env,
+        ledger_id,
+        depositor_id,
+    };
+
+    let mut expected_state = CyclesLedgerInMemory::new(depositor_cycles);
+
+    // generate a list of calls for the cycles ledger
+    let now =
+        (u64::MAX as u128).min(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()) as u64;
+    let calls = gen::arb_cycles_ledger_call_state(depositor_id, depositor_cycles, 10, now)
+        .new_tree(&mut TestRunner::default())
+        .unwrap()
+        .current()
+        .calls;
+
+    println!("=== Test started ===");
+
+    println!("Running the following operations on the Ledger:");
+    for (i, call) in calls.into_iter().enumerate() {
+        println!(" #{} {}", i, call);
+
+        expected_state
+            .execute(&call)
+            .expect("Unable to perform call on in-memory state");
+        state_machine_caller
+            .execute(&call)
+            .expect("Unable to perform call on StateMachine");
+
+        // check that the state is consistent with `expected_state`
+        check_ledger_state(env, ledger_id, &expected_state);
+    }
+
+    let expected_blocks = get_raw_blocks(env, ledger_id, vec![(0, u64::MAX)]);
+
+    // upgrade the ledger
+    let arg = Encode!(&None::<LedgerArgs>).unwrap();
+    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
+        .unwrap();
+
+    // check that the state is still consistent with `expected_state`
+    // after the upgrade
+    check_ledger_state(env, ledger_id, &expected_state);
+
+    // check that the blocks are all there after the upgrade
+    let after_upgrade_blocks = get_raw_blocks(env, ledger_id, vec![(0, u64::MAX)]);
+    assert_eq!(expected_blocks, after_upgrade_blocks);
+}
+
+#[track_caller]
+fn check_ledger_state(
+    env: &StateMachine,
+    ledger_id: Principal,
+    expected_state: &CyclesLedgerInMemory,
+) {
+    assert_eq!(expected_state.total_supply, total_supply(env, ledger_id));
+
+    for (account, balance) in &expected_state.balances {
+        assert_eq!(
+            balance,
+            &balance_of(env, ledger_id, *account),
+            "balance_of({})",
+            account
+        );
+    }
+
+    for ((from, spender), allowance) in &expected_state.allowances {
+        let actual_allowance = get_allowance(env, ledger_id, *from, *spender).allowance;
+        assert_eq!(
+            allowance,
+            &actual_allowance.0.to_u128().unwrap(),
+            "allowance({}, {})",
+            from,
+            spender
+        );
     }
 }
 
