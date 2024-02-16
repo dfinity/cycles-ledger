@@ -26,7 +26,6 @@ use cycles_ledger::{
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
-use futures::FutureExt;
 use gen::CyclesLedgerInMemory;
 use ic_cbor::CertificateToCbor;
 use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
@@ -1891,8 +1890,8 @@ fn test_change_index_id() {
     assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
 }
 
-#[test]
-fn test_icrc1_test_suite() {
+#[tokio::test]
+async fn test_icrc1_test_suite() {
     let env = new_state_machine();
     let ledger_id = install_ledger(&env);
     let depositor_id = install_depositor(&env, ledger_id);
@@ -1910,13 +1909,8 @@ fn test_icrc1_test_suite() {
     #[allow(clippy::arc_with_non_send_sync)]
     let ledger_env =
         icrc1_test_env_state_machine::SMLedger::new(Arc::new(env), ledger_id, user.owner);
-    let tests = icrc1_test_suite::test_suite(ledger_env)
-        .now_or_never()
-        .unwrap();
-    if !icrc1_test_suite::execute_tests(tests)
-        .now_or_never()
-        .unwrap()
-    {
+    let tests = icrc1_test_suite::test_suite(ledger_env).await;
+    if !icrc1_test_suite::execute_tests(tests).await {
         panic!("The ICRC-1 test suite failed");
     }
 }
