@@ -18,9 +18,10 @@ use ic_cdk::api::management_canister::{
 use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
-    icrc1::account::Account,
-    icrc1::transfer::TransferArg as TransferArgs,
-    icrc1::transfer::TransferError,
+    icrc1::{
+        account::Account,
+        transfer::{Memo, TransferArg as TransferArgs, TransferError},
+    },
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},
@@ -34,13 +35,9 @@ pub fn deposit(
     depositor_id: Principal,
     to: Account,
     cycles: u128,
+    memo: Option<Memo>,
 ) -> DepositResult {
-    let arg = Encode!(&DepositArg {
-        cycles,
-        to,
-        memo: None
-    })
-    .unwrap();
+    let arg = Encode!(&DepositArg { cycles, to, memo }).unwrap();
     if let WasmResult::Reply(res) = env
         .update_call(depositor_id, to.owner, "deposit", arg)
         .unwrap()
