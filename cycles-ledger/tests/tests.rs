@@ -185,7 +185,7 @@ fn test_deposit_flow() {
     // Check that the user has the right balance.
     assert_eq!(balance_of(env, ledger_id, user), 1_000_000_000);
 
-    // Check that the block created is correct
+    // Check that the block created is correct:
     let block0 = get_block(env, ledger_id, deposit_res.block_index);
     // ..first block has no parent hash.
     assert_eq!(block0.phash, None);
