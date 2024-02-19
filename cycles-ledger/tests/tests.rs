@@ -222,7 +222,7 @@ fn test_deposit_flow() {
     // Check that the user has the right balance after both deposits.
     assert_eq!(balance_of(env, ledger_id, user), 1_500_000_000);
 
-    // Check that the block created is correct
+    // Check that the block created is correct:
     let block1 = get_block(env, ledger_id, deposit_res.block_index);
     // ..second block has the first block hash as parent hash.
     assert_eq!(block1.phash, Some(block0.hash().unwrap()));
