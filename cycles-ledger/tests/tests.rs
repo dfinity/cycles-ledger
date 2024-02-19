@@ -168,80 +168,80 @@ fn test_deposit_flow() {
     let depositor_id = install_depositor(env, ledger_id);
     let user = account(0, None);
 
-    // Check that the total supply is 0.
+    // 0.0 Check that the total supply is 0.
     assert_eq!(total_supply(env, ledger_id), 0u128);
 
-    // Check that the user doesn't have any tokens before the first deposit.
+    // 0.1 Check that the user doesn't have any tokens before the first deposit.
     assert_eq!(balance_of(env, ledger_id, user), 0u128);
 
-    // Make the first deposit to the user and check the result.
+    // 1 Make the first deposit to the user and check the result.
     let deposit_res = deposit(env, depositor_id, user, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
 
-    // Check that the right amount of tokens have been minted.
+    // 1.0 Check that the right amount of tokens have been minted.
     assert_eq!(total_supply(env, ledger_id), 1_000_000_000);
 
-    // Check that the user has the right balance.
+    // 1.1 Check that the user has the right balance.
     assert_eq!(balance_of(env, ledger_id, user), 1_000_000_000);
 
-    // Check that the block created is correct
+    // 1.2 Check that the block created is correct
     let block0 = get_block(env, ledger_id, deposit_res.block_index);
-    // ..first block has no parent hash.
+    // 1.2.0 first block has no parent hash.
     assert_eq!(block0.phash, None);
-    // ..effective fee of mint blocks is 0.
+    // 1.2.1 effective fee of mint blocks is 0.
     assert_eq!(block0.effective_fee, Some(0));
-    // ..timestamp is set by the ledger.
+    // 1.2.2 timestamp is set by the ledger.
     assert_eq!(
         block0.timestamp as u128,
         env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()
     );
-    // ..transaction.created_at_time is not set.
+    // 1.2.3 transaction.created_at_time is not set.
     assert_eq!(block0.transaction.created_at_time, None);
-    // ..transaction.memo is not set because the user didn't set it.
+    // 1.2.4 transaction.memo is not set because the user didn't set it.
     assert_eq!(block0.transaction.memo, None);
-    // ..transaction.operation is mint
+    // 1.2.5 transaction.operation is mint
     if let Operation::Mint { to, amount } = block0.transaction.operation {
-        // ..transaction.operation.to is the user.
+        // 1.2.6 transaction.operation.to is the user.
         assert_eq!(to, user);
-        // ..transaction.operation.amount is the one deposited.
+        // 1.2.7 transaction.operation.amount is the one deposited.
         assert_eq!(amount, 1_000_000_000);
     } else {
         panic!("deposit shoult create a mint block, found {:?}", block0);
     };
 
-    // Make another deposit to the user and check the result.
+    // 2 Make another deposit to the user and check the result.
     let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
     let deposit_res = deposit(env, depositor_id, user, 500_000_000, Some(memo.clone()));
     assert_eq!(deposit_res.block_index, Nat::from(1_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
 
-    // Check that the right amount of tokens have been minted
+    // 2.0 Check that the right amount of tokens have been minted
     assert_eq!(total_supply(env, ledger_id), 1_500_000_000);
 
-    // Check that the user has the right balance after both deposits.
+    // 2.1 Check that the user has the right balance after both deposits.
     assert_eq!(balance_of(env, ledger_id, user), 1_500_000_000);
 
-    // Check that the block created is correct
+    // 2.2 Check that the block created is correct
     let block1 = get_block(env, ledger_id, deposit_res.block_index);
-    // ..second block has the first block hash as parent hash.
+    // 2.2.0 second block has the first block hash as parent hash.
     assert_eq!(block1.phash, Some(block0.hash().unwrap()));
-    // ..effective fee of mint blocks is 0.
+    // 2.2.1 effective fee of mint blocks is 0.
     assert_eq!(block1.effective_fee, Some(0));
-    // ..timestamp is set by the ledger.
+    // 2.2.2 timestamp is set by the ledger.
     assert_eq!(
         block1.timestamp as u128,
         env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()
     );
-    // ..transaction.created_at_time is not set.
+    // 2.2.3 transaction.created_at_time is not set.
     assert_eq!(block1.transaction.created_at_time, None);
-    // ..transaction.memo not set because the user set it.
+    // 2.2.4 transaction.memo not set because the user set it.
     assert_eq!(block1.transaction.memo, Some(memo));
-    // ..transaction.operation is mint
+    // 2.2.5 transaction.operation is mint
     if let Operation::Mint { to, amount } = block1.transaction.operation {
-        // ..transaction.operation.to is the user.
+        // 2.2.6 transaction.operation.to is the user.
         assert_eq!(to, user);
-        // ..transaction.operation.amount is the one deposited.
+        // 2.2.7 transaction.operation.amount is the one deposited.
         assert_eq!(amount, 500_000_000);
     } else {
         panic!("deposit shoult create a mint block, found {:?}", block1);
