@@ -185,7 +185,7 @@ fn test_deposit_flow() {
     // 1.1 Check that the user has the right balance.
     assert_eq!(balance_of(env, ledger_id, user), 1_000_000_000);
 
-    // 1.2 Check that the block created is correct
+    // 1.2 Check that the block created is correct:
     let block0 = get_block(env, ledger_id, deposit_res.block_index);
     // 1.2.0 first block has no parent hash.
     assert_eq!(block0.phash, None);
@@ -200,7 +200,7 @@ fn test_deposit_flow() {
     assert_eq!(block0.transaction.created_at_time, None);
     // 1.2.4 transaction.memo is not set because the user didn't set it.
     assert_eq!(block0.transaction.memo, None);
-    // 1.2.5 transaction.operation is mint
+    // 1.2.5 transaction.operation is mint.
     if let Operation::Mint { to, amount } = block0.transaction.operation {
         // 1.2.6 transaction.operation.to is the user.
         assert_eq!(to, user);
@@ -222,7 +222,7 @@ fn test_deposit_flow() {
     // 2.1 Check that the user has the right balance after both deposits.
     assert_eq!(balance_of(env, ledger_id, user), 1_500_000_000);
 
-    // 2.2 Check that the block created is correct
+    // 2.2 Check that the block created is correct:
     let block1 = get_block(env, ledger_id, deposit_res.block_index);
     // 2.2.0 second block has the first block hash as parent hash.
     assert_eq!(block1.phash, Some(block0.hash().unwrap()));
@@ -237,7 +237,7 @@ fn test_deposit_flow() {
     assert_eq!(block1.transaction.created_at_time, None);
     // 2.2.4 transaction.memo not set because the user set it.
     assert_eq!(block1.transaction.memo, Some(memo));
-    // 2.2.5 transaction.operation is mint
+    // 2.2.5 transaction.operation is mint.
     if let Operation::Mint { to, amount } = block1.transaction.operation {
         // 2.2.6 transaction.operation.to is the user.
         assert_eq!(to, user);
