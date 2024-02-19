@@ -8,9 +8,6 @@ use std::{
 use assert_matches::assert_matches;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
 use client::{deposit, get_metadata, get_raw_blocks, transaction_hashes, transfer, transfer_from};
-use cycles_ledger::endpoints::{
-    CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
-};
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
@@ -21,8 +18,14 @@ use cycles_ledger::{
     storage::{
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
-        Transaction, CMC_PRINCIPAL,
+        Transaction,
     },
+};
+use cycles_ledger::{
+    endpoints::{
+        CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
+    },
+    storage::CMC_PRINCIPAL,
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
@@ -149,43 +152,100 @@ fn install_fake_cmc(env: &StateMachine) {
     );
 }
 
+/** Create an ICRC-1 Account from two numbers by using their big-endian representation */
+pub fn account(owner: u64, subaccount: Option<u64>) -> Account {
+    Account {
+        owner: Principal::from_slice(owner.to_be_bytes().as_slice()),
+        subaccount: subaccount
+            .map(|subaccount| subaccount.to_be_bytes().as_slice().try_into().unwrap()),
+    }
+}
+
 #[test]
 fn test_deposit_flow() {
     let env = &new_state_machine();
     let ledger_id = install_ledger(env);
     let depositor_id = install_depositor(env, ledger_id);
-    let user = Account {
-        owner: Principal::from_slice(&[0]),
-        subaccount: None,
-    };
+    let user = account(0, None);
 
-    // Check that the total supply is 0
+    // 0.0 Check that the total supply is 0.
     assert_eq!(total_supply(env, ledger_id), 0u128);
 
-    // Check that the user doesn't have any tokens before the first deposit.
+    // 0.1 Check that the user doesn't have any tokens before the first deposit.
     assert_eq!(balance_of(env, ledger_id, user), 0u128);
 
-    // Make the first deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000);
+    // 1 Make the first deposit to the user and check the result.
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
 
-    // Check that the right amount of tokens have been minted
+    // 1.0 Check that the right amount of tokens have been minted.
     assert_eq!(total_supply(env, ledger_id), 1_000_000_000);
 
-    // Check that the user has the right balance.
+    // 1.1 Check that the user has the right balance.
     assert_eq!(balance_of(env, ledger_id, user), 1_000_000_000);
 
-    // Make another deposit to the user and check the result.
-    let deposit_res = deposit(env, depositor_id, user, 500_000_000);
+    // 1.2 Check that the block created is correct:
+    let block0 = get_block(env, ledger_id, deposit_res.block_index);
+    // 1.2.0 first block has no parent hash.
+    assert_eq!(block0.phash, None);
+    // 1.2.1 effective fee of mint blocks is 0.
+    assert_eq!(block0.effective_fee, Some(0));
+    // 1.2.2 timestamp is set by the ledger.
+    assert_eq!(
+        block0.timestamp as u128,
+        env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    );
+    // 1.2.3 transaction.created_at_time is not set.
+    assert_eq!(block0.transaction.created_at_time, None);
+    // 1.2.4 transaction.memo is not set because the user didn't set it.
+    assert_eq!(block0.transaction.memo, None);
+    // 1.2.5 transaction.operation is mint.
+    if let Operation::Mint { to, amount } = block0.transaction.operation {
+        // 1.2.6 transaction.operation.to is the user.
+        assert_eq!(to, user);
+        // 1.2.7 transaction.operation.amount is the one deposited.
+        assert_eq!(amount, 1_000_000_000);
+    } else {
+        panic!("deposit shoult create a mint block, found {:?}", block0);
+    };
+
+    // 2 Make another deposit to the user and check the result.
+    let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
+    let deposit_res = deposit(env, depositor_id, user, 500_000_000, Some(memo.clone()));
     assert_eq!(deposit_res.block_index, Nat::from(1_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
 
-    // Check that the right amount of tokens have been minted
+    // 2.0 Check that the right amount of tokens have been minted
     assert_eq!(total_supply(env, ledger_id), 1_500_000_000);
 
-    // Check that the user has the right balance after both deposits.
+    // 2.1 Check that the user has the right balance after both deposits.
     assert_eq!(balance_of(env, ledger_id, user), 1_500_000_000);
+
+    // 2.2 Check that the block created is correct:
+    let block1 = get_block(env, ledger_id, deposit_res.block_index);
+    // 2.2.0 second block has the first block hash as parent hash.
+    assert_eq!(block1.phash, Some(block0.hash().unwrap()));
+    // 2.2.1 effective fee of mint blocks is 0.
+    assert_eq!(block1.effective_fee, Some(0));
+    // 2.2.2 timestamp is set by the ledger.
+    assert_eq!(
+        block1.timestamp as u128,
+        env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    );
+    // 2.2.3 transaction.created_at_time is not set.
+    assert_eq!(block1.transaction.created_at_time, None);
+    // 2.2.4 transaction.memo not set because the user set it.
+    assert_eq!(block1.transaction.memo, Some(memo));
+    // 2.2.5 transaction.operation is mint.
+    if let Operation::Mint { to, amount } = block1.transaction.operation {
+        // 2.2.6 transaction.operation.to is the user.
+        assert_eq!(to, user);
+        // 2.2.7 transaction.operation.amount is the one deposited.
+        assert_eq!(amount, 500_000_000);
+    } else {
+        panic!("deposit shoult create a mint block, found {:?}", block1);
+    };
 }
 
 #[test]
@@ -200,7 +260,7 @@ fn test_deposit_amount_below_fee() {
     };
 
     // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
-    let _deposit_result = deposit(env, depositor_id, user, config::FEE - 1);
+    let _deposit_result = deposit(env, depositor_id, user, config::FEE - 1, None);
 }
 
 #[test]
@@ -233,13 +293,13 @@ fn test_withdraw_flow() {
     let withdraw_receiver = env.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
-    deposit(env, depositor_id, user_subaccount_1, 1_000_000_000);
-    deposit(env, depositor_id, user_subaccount_2, 1_000_000_000);
-    deposit(env, depositor_id, user_subaccount_3, 1_000_000_000);
-    deposit(env, depositor_id, user_subaccount_4, 1_000_000_000);
+    deposit(env, depositor_id, user_subaccount_1, 1_000_000_000, None);
+    deposit(env, depositor_id, user_subaccount_2, 1_000_000_000, None);
+    deposit(env, depositor_id, user_subaccount_3, 1_000_000_000, None);
+    deposit(env, depositor_id, user_subaccount_4, 1_000_000_000, None);
     let mut expected_total_supply = 5_000_000_000;
     assert_eq!(total_supply(env, ledger_id), expected_total_supply);
 
@@ -342,7 +402,7 @@ fn test_withdraw_duplicate() {
     let withdraw_receiver = env.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user_main_account, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
 
@@ -405,7 +465,7 @@ fn test_withdraw_fails() {
     };
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000_000);
+    let deposit_res = deposit(env, depositor_id, user, 1_000_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
@@ -511,7 +571,7 @@ fn test_withdraw_fails() {
         owner: Principal::from_slice(&[2]),
         subaccount: None,
     };
-    deposit(env, depositor_id, user_2, FEE + 1);
+    deposit(env, depositor_id, user_2, FEE + 1, None);
     withdraw(
         env,
         ledger_id,
@@ -540,7 +600,7 @@ fn test_withdraw_fails() {
     assert_eq!(FEE + 1, balance_of(env, ledger_id, user_2));
 
     // test withdraw deduplication
-    deposit(env, depositor_id, user_2, FEE * 3);
+    deposit(env, depositor_id, user_2, FEE * 3, None);
     let created_at_time = env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
     let args = WithdrawArgs {
         from_subaccount: None,
@@ -576,7 +636,7 @@ fn test_approve_max_allowance_size() {
 
     // Deposit funds
     assert_eq!(
-        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        deposit(env, depositor_id, from, 1_000_000_000, None).balance,
         1_000_000_000_u128
     );
 
@@ -613,7 +673,7 @@ fn test_approve_self() {
 
     // Deposit funds
     assert_eq!(
-        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        deposit(env, depositor_id, from, 1_000_000_000, None).balance,
         1_000_000_000_u128
     );
 
@@ -657,7 +717,7 @@ fn test_approve_cap() {
 
     // Deposit funds
     assert_eq!(
-        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        deposit(env, depositor_id, from, 1_000_000_000, None).balance,
         1_000_000_000_u128
     );
 
@@ -709,7 +769,7 @@ fn test_approve_duplicate() {
 
     // Deposit funds
     assert_eq!(
-        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        deposit(env, depositor_id, from, 1_000_000_000, None).balance,
         1_000_000_000u128
     );
 
@@ -798,7 +858,7 @@ fn test_approval_expiring() {
 
     // Deposit funds
     assert_eq!(
-        deposit(env, depositor_id, from, 1_000_000_000).balance,
+        deposit(env, depositor_id, from, 1_000_000_000, None).balance,
         1_000_000_000_u128
     );
 
@@ -902,7 +962,7 @@ fn test_basic_transfer() {
         subaccount: None,
     };
     let deposit_amount = 1_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
     let fee = fee(env, ledger_id);
     let mut expected_total_supply = deposit_amount;
 
@@ -1023,7 +1083,7 @@ fn test_deduplication() {
         subaccount: None,
     };
     let deposit_amount = 1_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
     let transfer_amount = Nat::from(100_000_u128);
 
     // If created_at_time is not set, the same transaction should be able to be sent multiple times
@@ -1174,7 +1234,7 @@ fn test_deduplication_with_insufficient_funds() {
         subaccount: None,
     };
     let deposit_amount = 1_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
     let transfer_amount = Nat::from(600_000_000u128);
 
     let now = env
@@ -1260,7 +1320,7 @@ fn test_pruning_transactions() {
     assert!(tx_hashes.is_empty());
 
     let deposit_amount = 100_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
 
     // A deposit does not have a `created_at_time` argument and is therefore not recorded
     let tx_hashes = transaction_hashes(env, ledger_id);
@@ -1378,8 +1438,8 @@ fn test_total_supply_after_upgrade() {
     let user1 = Account::from(Principal::from_slice(&[1]));
     let user2 = Account::from(Principal::from_slice(&[2]));
 
-    deposit(env, depositor_id, user1, 2_000_000_000);
-    deposit(env, depositor_id, user2, 3_000_000_000);
+    deposit(env, depositor_id, user1, 2_000_000_000, None);
+    deposit(env, depositor_id, user2, 3_000_000_000, None);
     let fee = fee(env, ledger_id);
     transfer(
         env,
@@ -1506,7 +1566,7 @@ fn test_icrc3_get_blocks() {
     let user3 = Account::from(Principal::from_slice(&[3]));
 
     // add the first mint block
-    deposit(env, depositor_id, user1, 5_000_000_000);
+    deposit(env, depositor_id, user1, 5_000_000_000, None);
 
     let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 1_u128);
@@ -1530,7 +1590,7 @@ fn test_icrc3_get_blocks() {
     validate_certificate(env, ledger_id, 0, block0.hash().unwrap());
 
     // add a second mint block
-    deposit(env, depositor_id, user2, 3_000_000_000);
+    deposit(env, depositor_id, user2, 3_000_000_000, None);
 
     let txs = get_raw_blocks(env, ledger_id, vec![(0, 10)]);
     assert_eq!(txs.log_length, 2_u128);
@@ -1783,11 +1843,11 @@ fn test_get_blocks_max_length() {
     let depositor_id = install_depositor(&env, ledger_id);
 
     let user = Account::from(Principal::from_slice(&[10]));
-    let _ = deposit(&env, depositor_id, user, 1_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 2_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 3_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 4_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 5_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 1_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 2_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 3_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 4_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 5_000_000_000, None);
 
     let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
     assert_eq!(max_blocks_per_request, res.blocks.len() as u64);
@@ -1806,11 +1866,11 @@ fn test_set_max_blocks_per_request_in_upgrade() {
     let depositor_id = install_depositor(&env, ledger_id);
 
     let user = Account::from(Principal::from_slice(&[10]));
-    let _ = deposit(&env, depositor_id, user, 1_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 2_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 3_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 4_000_000_000);
-    let _ = deposit(&env, depositor_id, user, 5_000_000_000);
+    let _ = deposit(&env, depositor_id, user, 1_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 2_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 3_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 4_000_000_000, None);
+    let _ = deposit(&env, depositor_id, user, 5_000_000_000, None);
 
     let res = get_raw_blocks(&env, ledger_id, vec![(0, u64::MAX)]);
     assert_eq!(5, res.blocks.len() as u64);
@@ -1901,7 +1961,7 @@ async fn test_icrc1_test_suite() {
     };
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, user, 1_000_000_000_000_000);
+    let deposit_res = deposit(&env, depositor_id, user, 1_000_000_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
     assert_eq!(1_000_000_000_000_000, balance_of(&env, ledger_id, user));
@@ -2017,7 +2077,7 @@ fn test_create_canister() {
     let mut expected_balance = 1_000_000_000_000_000_u128;
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
@@ -2340,7 +2400,7 @@ fn test_create_canister_duplicate() {
     let mut expected_balance = 1_500_000_000_000_u128;
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, user, expected_balance);
+    let deposit_res = deposit(&env, depositor_id, user, expected_balance, None);
     assert_eq!(deposit_res.block_index, Nat::from(0u128));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(expected_balance, balance_of(&env, ledger_id, user));
@@ -2432,7 +2492,7 @@ fn test_icrc1_transfer_invalid_memo() {
         subaccount: None,
     };
     let deposit_amount = 1_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
 
     // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
@@ -2468,7 +2528,7 @@ fn test_approve_invalid_memo() {
         subaccount: None,
     };
     let deposit_amount = 1_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
 
     // Attempt approve with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
@@ -2515,7 +2575,7 @@ fn test_icrc2_transfer_from_invalid_memo() {
         subaccount: None,
     };
     let deposit_amount = 10_000_000_000;
-    deposit(env, depositor_id, user1, deposit_amount);
+    deposit(env, depositor_id, user1, deposit_amount, None);
 
     // Attempt transfer_from with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let large_memo = [0; MAX_MEMO_LENGTH as usize + 1];
