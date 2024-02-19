@@ -237,7 +237,7 @@ fn test_deposit_flow() {
     assert_eq!(block1.transaction.created_at_time, None);
     // ..transaction.memo not set because the user set it.
     assert_eq!(block1.transaction.memo, Some(memo));
-    // ..transaction.operation is mint
+    // ..transaction.operation is mint.
     if let Operation::Mint { to, amount } = block1.transaction.operation {
         // ..transaction.operation.to is the user.
         assert_eq!(to, user);
