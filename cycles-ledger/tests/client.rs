@@ -1,13 +1,11 @@
 use core::panic;
 use std::collections::BTreeMap;
 
-use candid::{Decode, Encode, Nat, Principal};
+use candid::{CandidType, Decode, Encode, Nat, Principal};
 use cycles_ledger::{
-    config::FEE,
     endpoints::{
-        self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterError,
-        CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
-        GetBlocksResult, WithdrawArgs,
+        self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterSuccess, DataCertificate,
+        DepositResult, GetBlocksArg, GetBlocksArgs, GetBlocksResult, WithdrawArgs,
     },
     storage::{Block, CMC_PRINCIPAL},
 };
@@ -29,6 +27,55 @@ use icrc_ledger_types::{
     },
 };
 use num_traits::ToPrimitive;
+use serde::Deserialize;
+
+// panics in case the canister is unreachable or it has rejected the query
+pub fn query_or_panic<I, O>(
+    env: &StateMachine,
+    canister_id: Principal,
+    caller: Principal,
+    method: &str,
+    arg: I,
+) -> O
+where
+    I: CandidType,
+    O: CandidType + for<'a> Deserialize<'a>,
+{
+    let arg = Encode!(&arg).unwrap();
+    match env.query_call(canister_id, caller, method, arg) {
+        Err(err) => {
+            panic!("{canister_id}.{method} query failed with error {err} (caller: {caller})");
+        }
+        Ok(WasmResult::Reject(err)) => {
+            panic!("{canister_id}.{method} query rejected with error {err} (caller: {caller})");
+        }
+        Ok(WasmResult::Reply(res)) => Decode!(&res, O).unwrap(),
+    }
+}
+
+// panics in case the canister is unreachable or it has rejected the update
+pub fn update_or_panic<I, O>(
+    env: &StateMachine,
+    canister_id: Principal,
+    caller: Principal,
+    method: &str,
+    arg: I,
+) -> O
+where
+    I: CandidType,
+    O: CandidType + for<'a> Deserialize<'a>,
+{
+    let arg = Encode!(&arg).unwrap();
+    match env.update_call(canister_id, caller, method, arg) {
+        Err(err) => {
+            panic!("{canister_id}.{method} failed with error {err} (caller: {caller})");
+        }
+        Ok(WasmResult::Reject(err)) => {
+            panic!("{canister_id}.{method} rejected with error {err} (caller: {caller})");
+        }
+        Ok(WasmResult::Reply(res)) => Decode!(&res, O).unwrap(),
+    }
+}
 
 pub fn deposit(
     env: &StateMachine,
@@ -37,64 +84,48 @@ pub fn deposit(
     cycles: u128,
     memo: Option<Memo>,
 ) -> DepositResult {
-    let arg = Encode!(&DepositArg { cycles, to, memo }).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(depositor_id, to.owner, "deposit", arg)
-        .unwrap()
-    {
-        Decode!(&res, DepositResult).unwrap()
-    } else {
-        panic!("deposit rejected")
-    }
+    update_or_panic(
+        env,
+        depositor_id,
+        to.owner,
+        "deposit",
+        DepositArg { cycles, to, memo },
+    )
 }
 
-pub fn balance_of(env: &StateMachine, ledger_id: Principal, account: Account) -> u128 {
-    let arg = Encode!(&account).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(ledger_id, Principal::anonymous(), "icrc1_balance_of", arg)
-        .unwrap()
-    {
-        Decode!(&res, Nat).unwrap().0.to_u128().unwrap()
-    } else {
-        panic!("icrc1_balance_of rejected")
-    }
+pub fn icrc1_balance_of(env: &StateMachine, ledger_id: Principal, account: Account) -> u128 {
+    let res: Nat = query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc1_balance_of",
+        account,
+    );
+    res.0.to_u128().unwrap()
 }
 
-pub fn total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
-    let arg = Encode!(&()).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(ledger_id, Principal::anonymous(), "icrc1_total_supply", arg)
-        .unwrap()
-    {
-        Decode!(&res, Nat).unwrap().0.to_u128().unwrap()
-    } else {
-        panic!("icrc1_total_supply rejected")
-    }
+pub fn icrc1_fee(env: &StateMachine, ledger_id: Principal) -> u128 {
+    let res: Nat = query_or_panic(env, ledger_id, Principal::anonymous(), "icrc1_fee", ());
+    res.0.to_u128().unwrap()
+}
+
+pub fn icrc1_total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
+    let res: Nat = query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc1_total_supply",
+        (),
+    );
+    res.0.to_u128().unwrap()
 }
 
 pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> Block {
-    let arg = Encode!(&vec![GetBlocksArg {
-        start: block_index,
-        length: Nat::from(1_u128),
-    }])
-    .unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(ledger_id, Principal::anonymous(), "icrc3_get_blocks", arg)
-        .unwrap()
-    {
-        Block::from_value(
-            Decode!(&res, GetBlocksResult)
-                .unwrap()
-                .blocks
-                .get(0)
-                .unwrap()
-                .clone()
-                .block,
-        )
-        .unwrap()
-    } else {
-        panic!("icrc3_get_blocks rejected")
-    }
+    let value = icrc3_get_blocks(env, ledger_id, vec![(block_index, Nat::from(1u64))])
+        .blocks
+        .remove(0)
+        .block;
+    Block::from_value(value).unwrap()
 }
 
 pub fn withdraw(
@@ -103,15 +134,7 @@ pub fn withdraw(
     from: Account,
     args: WithdrawArgs,
 ) -> Result<Nat, endpoints::WithdrawError> {
-    let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(ledger_id, from.owner, "withdraw", arg)
-        .unwrap()
-    {
-        Decode!(&res, Result<candid::Nat, cycles_ledger::endpoints::WithdrawError>).unwrap()
-    } else {
-        panic!("withdraw rejected")
-    }
+    update_or_panic(env, ledger_id, from.owner, "withdraw", args)
 }
 
 pub fn create_canister(
@@ -120,36 +143,21 @@ pub fn create_canister(
     from: Account,
     args: CreateCanisterArgs,
 ) -> Result<CreateCanisterSuccess, endpoints::CreateCanisterError> {
-    let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(ledger_id, from.owner, "create_canister", arg)
-        .unwrap()
-    {
-        Decode!(&res, Result<CreateCanisterSuccess, CreateCanisterError>).unwrap()
-    } else {
-        panic!("create_canister rejected")
-    }
+    update_or_panic(env, ledger_id, from.owner, "create_canister", args)
 }
 
 pub fn canister_status(
     env: &StateMachine,
     canister_id: Principal,
-    sender: Principal,
+    caller: Principal,
 ) -> CanisterStatusResponse {
-    let arg = Encode!(&CanisterIdRecord { canister_id }).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(
-            Principal::management_canister(),
-            sender,
-            "canister_status",
-            arg,
-        )
-        .unwrap()
-    {
-        Decode!(&res, CanisterStatusResponse).unwrap()
-    } else {
-        panic!("canister_status rejected")
-    }
+    update_or_panic(
+        env,
+        Principal::management_canister(),
+        caller,
+        "canister_status",
+        CanisterIdRecord { canister_id },
+    )
 }
 
 pub fn fail_next_create_canister_with(env: &StateMachine, error: CmcCreateCanisterError) {
@@ -168,213 +176,106 @@ pub fn fail_next_create_canister_with(env: &StateMachine, error: CmcCreateCanist
     }
 }
 
-pub fn get_allowance(
+pub fn icrc2_allowance(
     env: &StateMachine,
     ledger_id: Principal,
     from: Account,
     spender: Account,
 ) -> Allowance {
-    let args = AllowanceArgs {
-        account: from,
-        spender,
-    };
-    if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "icrc2_allowance",
-            Encode!(&args).unwrap(),
-        )
-        .unwrap()
-    {
-        Decode!(&res, Allowance).unwrap()
-    } else {
-        panic!("allowance rejected")
-    }
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc2_allowance",
+        AllowanceArgs {
+            account: from,
+            spender,
+        },
+    )
 }
 
-pub fn approve(
+pub fn icrc2_approve(
     env: &StateMachine,
     ledger_id: Principal,
-    from: Account,
-    spender: Account,
-    amount: u128,
-    expected_allowance: Option<u128>,
-    expires_at: Option<u64>,
+    caller: Principal,
+    args: ApproveArgs,
 ) -> Result<Nat, ApproveError> {
-    let args = ApproveArgs {
-        from_subaccount: from.subaccount,
-        spender,
-        amount: amount.into(),
-        expected_allowance: expected_allowance.map(Nat::from),
-        expires_at,
-        fee: Some(Nat::from(FEE)),
-        memo: None,
-        created_at_time: None,
-    };
-    if let WasmResult::Reply(res) = env
-        .update_call(
-            ledger_id,
-            from.owner,
-            "icrc2_approve",
-            Encode!(&args).unwrap(),
-        )
-        .unwrap()
-    {
-        Decode!(&res, Result<Nat, ApproveError>).unwrap()
-    } else {
-        panic!("icrc2_approve rejected")
-    }
+    update_or_panic(env, ledger_id, caller, "icrc2_approve", args)
 }
 
-pub fn transfer(
+pub fn icrc1_transfer(
     env: &StateMachine,
     ledger_id: Principal,
     from_owner: Principal,
     args: TransferArgs,
 ) -> Result<Nat, TransferError> {
-    let arg = Encode!(&args).unwrap();
-    if let WasmResult::Reply(res) = env
-        .update_call(ledger_id, from_owner, "icrc1_transfer", arg)
-        .unwrap()
-    {
-        Decode!(&res, Result<candid::Nat, TransferError>).unwrap()
-    } else {
-        panic!("transfer rejected")
-    }
+    update_or_panic(env, ledger_id, from_owner, "icrc1_transfer", args)
 }
 
-pub fn transfer_from(
+pub fn icrc2_transfer_from(
     env: &StateMachine,
     ledger_id: Principal,
-    from: Account,
-    to: Account,
-    spender: Account,
-    amount: u128,
+    caller: Principal,
+    args: TransferFromArgs,
 ) -> Result<Nat, TransferFromError> {
-    let args = TransferFromArgs {
-        spender_subaccount: spender.subaccount,
-        from,
-        to,
-        amount: amount.into(),
-        fee: Some(Nat::from(FEE)),
-        memo: None,
-        created_at_time: None,
-    };
-    if let WasmResult::Reply(res) = env
-        .update_call(
-            ledger_id,
-            spender.owner,
-            "icrc2_transfer_from",
-            Encode!(&args).unwrap(),
-        )
-        .unwrap()
-    {
-        Decode!(&res, Result<Nat, TransferFromError>).unwrap()
-    } else {
-        panic!("icrc2_transfer_from rejected")
-    }
+    update_or_panic(env, ledger_id, caller, "icrc2_transfer_from", args)
 }
 
-pub fn fee(env: &StateMachine, ledger_id: Principal) -> Nat {
-    let arg = Encode!(&()).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(ledger_id, Principal::anonymous(), "icrc1_fee", arg)
-        .unwrap()
-    {
-        Decode!(&res, Nat).unwrap()
-    } else {
-        panic!("fee call rejected")
-    }
+pub fn icrc1_metadata(env: &StateMachine, ledger_id: Principal) -> Vec<(String, MetadataValue)> {
+    query_or_panic(env, ledger_id, Principal::anonymous(), "icrc1_metadata", ())
 }
 
-pub fn get_metadata(env: &StateMachine, ledger_id: Principal) -> Vec<(String, MetadataValue)> {
-    let arg = Encode!(&()).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(ledger_id, Principal::anonymous(), "icrc1_metadata", arg)
-        .unwrap()
-    {
-        Decode!(&res, Vec<(String, MetadataValue)>).unwrap()
-    } else {
-        panic!("metadata call rejected")
-    }
-}
-
-pub fn get_raw_blocks(
+pub fn icrc3_get_blocks<N: Into<Nat>>(
     env: &StateMachine,
     ledger_id: Principal,
-    start_lengths: Vec<(u64, u64)>,
+    start_lengths: Vec<(N, N)>,
 ) -> GetBlocksResult {
-    let get_blocks_args: GetBlocksArgs = start_lengths
-        .iter()
+    let args: GetBlocksArgs = start_lengths
+        .into_iter()
         .map(|(start, length)| GetBlocksArg {
-            start: Nat::from(*start),
-            length: Nat::from(*length),
+            start: start.into(),
+            length: length.into(),
         })
         .collect();
-    let arg = Encode!(&get_blocks_args).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(ledger_id, Principal::anonymous(), "icrc3_get_blocks", arg)
-        .unwrap()
-    {
-        Decode!(&res, GetBlocksResult).unwrap()
-    } else {
-        panic!("fee call rejected")
-    }
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc3_get_blocks",
+        args,
+    )
 }
 
 pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<[u8; 32], u64> {
-    let arg = Encode!(&()).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "get_transaction_hashes",
-            arg,
-        )
-        .unwrap()
-    {
-        Decode!(&res, BTreeMap<[u8; 32],u64>).unwrap()
-    } else {
-        panic!("fee call rejected")
-    }
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "get_transaction_hashes",
+        (),
+    )
 }
 
 pub fn transaction_timestamps(
     env: &StateMachine,
     ledger_id: Principal,
 ) -> BTreeMap<(u64, u64), ()> {
-    let arg = Encode!(&()).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "get_transaction_timestamps",
-            arg,
-        )
-        .unwrap()
-    {
-        Decode!(&res, BTreeMap<(u64, u64),()>).unwrap()
-    } else {
-        panic!("fee call rejected")
-    }
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "get_transaction_timestamps",
+        (),
+    )
 }
 
 pub fn get_tip_certificate(env: &StateMachine, ledger_id: Principal) -> DataCertificate {
-    let arg = Encode!(&()).unwrap();
-    if let WasmResult::Reply(res) = env
-        .query_call(
-            ledger_id,
-            Principal::anonymous(),
-            "icrc3_get_tip_certificate",
-            arg,
-        )
-        .unwrap()
-    {
-        Decode!(&res, Option<DataCertificate>)
-            .unwrap()
-            .expect("icrc3_get_tip_certificate should return a non-null result for query calls")
-    } else {
-        panic!("icrc3_get_tip_certificate call rejected")
-    }
+    let res: Option<DataCertificate> = query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc3_get_tip_certificate",
+        (),
+    );
+    res.expect("icrc3_get_tip_certificate should return a non-null result for query calls")
 }
