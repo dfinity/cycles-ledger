@@ -131,10 +131,10 @@ pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> 
 pub fn withdraw(
     env: &StateMachine,
     ledger_id: Principal,
-    from: Account,
+    caller: Principal,
     args: WithdrawArgs,
 ) -> Result<Nat, endpoints::WithdrawError> {
-    update_or_panic(env, ledger_id, from.owner, "withdraw", args)
+    update_or_panic(env, ledger_id, caller, "withdraw", args)
 }
 
 pub fn create_canister(

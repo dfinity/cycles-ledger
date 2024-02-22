@@ -7,7 +7,7 @@ use std::{
 
 use assert_matches::assert_matches;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
-use client::{deposit, icrc3_get_blocks};
+use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
@@ -29,7 +29,7 @@ use cycles_ledger::{
 };
 use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
-use gen::CyclesLedgerInMemory;
+use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
 use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
 use ic_certificate_verification::VerifyCertificate;
@@ -57,9 +57,9 @@ use serde_bytes::ByteBuf;
 use crate::{
     client::{
         canister_status, create_canister, fail_next_create_canister_with, get_block,
-        icrc1_balance_of, icrc1_total_supply, icrc2_allowance,
+        icrc1_balance_of,
     },
-    gen::{CyclesLedgerInStateMachine, IsCyclesLedger},
+    gen::IsCyclesLedger,
 };
 
 mod client;
@@ -229,8 +229,11 @@ impl TestEnv {
 
     fn icrc1_transfer_or_trap(&self, caller: Principal, args: TransferArgs) -> Nat {
         self.icrc1_transfer(caller, args.clone())
-            .unwrap_or_else(|err|
-                panic!("Call to icrc1_transfer({args:?}) from caller {caller} failed with error {err}"))
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Call to icrc1_transfer({args:?}) from caller {caller} failed with error {err}"
+                )
+            })
     }
 
     fn icrc2_allowance(&self, from: Account, spender: Account) -> Allowance {
@@ -284,14 +287,14 @@ impl TestEnv {
             .unwrap()
     }
 
-    fn withdraw(&self, from: Account, args: WithdrawArgs) -> Result<Nat, WithdrawError> {
-        client::withdraw(&self.state_machine, self.ledger_id, from, args)
+    fn withdraw(&self, caller: Principal, args: WithdrawArgs) -> Result<Nat, WithdrawError> {
+        client::withdraw(&self.state_machine, self.ledger_id, caller, args)
     }
 
-    fn withdraw_or_trap(&self, from: Account, args: WithdrawArgs) -> Nat {
-        self.withdraw(from, args.clone())
-            .unwrap_or_else(|err|
-                panic!("Call to withdraw({args:?}) from caller {from} failed with error {err:?}"))
+    fn withdraw_or_trap(&self, caller: Principal, args: WithdrawArgs) -> Nat {
+        self.withdraw(caller, args.clone()).unwrap_or_else(|err| {
+            panic!("Call to withdraw({args:?}) from caller {caller} failed with error {err:?}")
+        })
     }
 
     fn transaction_hashes(&self) -> BTreeMap<[u8; 32], u64> {
@@ -352,6 +355,67 @@ impl TestEnv {
             _ => panic!("last_block_hash not found in the response hash_tree"),
         };
         assert_eq!(last_block_index, expected_last_block_index);
+    }
+}
+
+impl IsCyclesLedger for TestEnv {
+    fn execute(&mut self, call: &CyclesLedgerCall) -> Result<(), String> {
+        use gen::CyclesLedgerCallArg::*;
+
+        match &call.arg {
+            Approve(args) => {
+                let _approve_res = self
+                    .icrc2_approve(call.caller.to_owned(), args.to_owned())
+                    .map_err(|err| {
+                        format!(
+                            "Call to icrc2_approve({args:?}) from \
+                                     caller {} failed with error {err:?}",
+                            call.caller
+                        )
+                    })?;
+            }
+            Withdraw(args) => {
+                let _withdraw_res = self
+                    .withdraw(call.caller.to_owned(), args.to_owned())
+                    .map_err(|err| {
+                        format!(
+                            "Call to withdraw({args:?}) from caller \
+                                     {} failed with error {err:?})",
+                            call.caller
+                        )
+                    })?;
+            }
+            Transfer(args) => {
+                let _transfer_res = self
+                    .icrc1_transfer(call.caller.to_owned(), args.to_owned())
+                    .map_err(|err| {
+                        format!(
+                            "Call to icrc1_transfer({args:?}) from \
+                                     caller {} failed with error {err}",
+                            call.caller
+                        )
+                    })?;
+            }
+            TransferFrom(args) => {
+                let _transfer_from_res = self
+                    .icrc2_transfer_from(call.caller.to_owned(), args.to_owned())
+                    .map_err(|err| {
+                        format!(
+                            "Call to icrc2_transfer_from({args:?}) \
+                                     from caller {} failed with error {err:?}",
+                            call.caller
+                        )
+                    })?;
+            }
+            Deposit { amount, arg } => {
+                let _deposit_res = self.deposit(
+                    arg.to.to_owned(),
+                    amount.0.to_u128().unwrap(),
+                    arg.memo.to_owned(),
+                );
+            }
+        };
+        Ok(())
     }
 }
 
@@ -472,9 +536,9 @@ fn test_withdraw_flow() {
     let withdraw_amount = 500_000_000_u128;
     let _withdraw_idx = env
         .withdraw(
-            user_main_account,
+            user_main_account.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user_main_account.subaccount,
                 to: withdraw_receiver,
                 created_at_time: None,
                 amount: Nat::from(withdraw_amount),
@@ -497,7 +561,7 @@ fn test_withdraw_flow() {
     let withdraw_amount = 100_000_000_u128;
     let _withdraw_idx = env
         .withdraw(
-            user_subaccount_1,
+            user_subaccount_1.owner,
             WithdrawArgs {
                 from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
                 to: withdraw_receiver,
@@ -523,7 +587,7 @@ fn test_withdraw_flow() {
     let withdraw_amount = 300_000_000_u128;
     let _withdraw_idx = env
         .withdraw(
-            user_subaccount_3,
+            user_subaccount_3.owner,
             WithdrawArgs {
                 from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
                 to: withdraw_receiver,
@@ -564,7 +628,7 @@ fn test_withdraw_duplicate() {
     let withdraw_amount = 900_000_000_u128;
     let withdraw_idx = env
         .withdraw(
-            user_main_account,
+            user_main_account.owner,
             WithdrawArgs {
                 from_subaccount: None,
                 to: withdraw_receiver,
@@ -587,7 +651,7 @@ fn test_withdraw_duplicate() {
             duplicate_of: withdraw_idx
         },
         env.withdraw(
-            user_main_account,
+            user_main_account.owner,
             WithdrawArgs {
                 from_subaccount: None,
                 to: withdraw_receiver,
@@ -613,9 +677,9 @@ fn test_withdraw_fails() {
     let balance_before_attempt = env.icrc1_balance_of(user);
     let withdraw_result = env
         .withdraw(
-            user,
+            user.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(u128::MAX),
@@ -633,7 +697,7 @@ fn test_withdraw_fails() {
     // withdraw from empty subaccount
     let withdraw_result = env
         .withdraw(
-            user,
+            user.owner,
             WithdrawArgs {
                 from_subaccount: Some([5; 32]),
                 to: env.depositor_id,
@@ -655,9 +719,9 @@ fn test_withdraw_fails() {
             .unwrap();
     let withdraw_result = env
         .withdraw(
-            user,
+            user.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user.subaccount,
                 to: self_authenticating_principal,
                 created_at_time: None,
                 amount: Nat::from(500_000_000_u128),
@@ -682,9 +746,9 @@ fn test_withdraw_fails() {
         .unwrap();
     let withdraw_result = env
         .withdraw(
-            user,
+            user.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user.subaccount,
                 to: deleted_canister,
                 created_at_time: None,
                 amount: Nat::from(500_000_000_u128),
@@ -707,9 +771,9 @@ fn test_withdraw_fails() {
     let _deposit_res = env.deposit(user_2, FEE + 1, None);
     let _withdraw_res = env
         .withdraw(
-            user_2,
+            user_2.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user_2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(u128::MAX),
@@ -719,9 +783,9 @@ fn test_withdraw_fails() {
     assert_eq!(FEE + 1, env.icrc1_balance_of(user_2));
     let _withdraw_res = env
         .withdraw(
-            user_2,
+            user_2.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user_2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(u128::MAX),
@@ -739,10 +803,10 @@ fn test_withdraw_fails() {
         created_at_time: Some(created_at_time),
         amount: Nat::from(FEE),
     };
-    let duplicate_of = env.withdraw_or_trap(user_2, args.clone());
+    let duplicate_of = env.withdraw_or_trap(user_2.owner, args.clone());
     // the same withdraw should fail because created_at_time is set and the args are the same
     assert_eq!(
-        env.withdraw(user_2, args),
+        env.withdraw(user_2.owner, args),
         Err(WithdrawError::Duplicate { duplicate_of })
     );
 }
@@ -1393,9 +1457,9 @@ fn test_total_supply_after_upgrade() {
         .unwrap();
     let _withdraw_res = env
         .withdraw(
-            user2,
+            user2.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(1_000_000_000_u128),
@@ -1499,9 +1563,9 @@ fn test_icrc3_get_blocks() {
     // add a burn block
     let _withdraw_res = env
         .withdraw(
-            user2,
+            user2.owner,
             WithdrawArgs {
-                from_subaccount: None,
+                from_subaccount: user2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(2_000_000_000_u128),
@@ -1845,22 +1909,13 @@ fn test_upgrade_preserves_state() {
     use proptest::strategy::{Strategy, ValueTree};
     use proptest::test_runner::TestRunner;
 
-    let env = &new_state_machine();
-    let ledger_id = install_ledger(env);
-    let depositor_id = install_depositor(env, ledger_id);
-    let depositor_cycles = env.cycle_balance(depositor_id);
-    let mut state_machine_caller = CyclesLedgerInStateMachine {
-        env,
-        ledger_id,
-        depositor_id,
-    };
-
+    let mut env = TestEnv::setup();
+    let depositor_cycles = env.state_machine.cycle_balance(env.depositor_id);
     let mut expected_state = CyclesLedgerInMemory::new(depositor_cycles);
 
     // generate a list of calls for the cycles ledger
-    let now =
-        (u64::MAX as u128).min(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos()) as u64;
-    let calls = gen::arb_cycles_ledger_call_state(depositor_id, depositor_cycles, 10, now)
+    let now = env.nanos_since_epoch_u64();
+    let calls = gen::arb_cycles_ledger_call_state(env.depositor_id, depositor_cycles, 10, now)
         .new_tree(&mut TestRunner::default())
         .unwrap()
         .current()
@@ -1875,54 +1930,41 @@ fn test_upgrade_preserves_state() {
         expected_state
             .execute(&call)
             .expect("Unable to perform call on in-memory state");
-        state_machine_caller
-            .execute(&call)
+        env.execute(&call)
             .expect("Unable to perform call on StateMachine");
 
         // check that the state is consistent with `expected_state`
-        check_ledger_state(env, ledger_id, &expected_state);
+        check_ledger_state(&env, &expected_state);
     }
 
-    let expected_blocks =
-        icrc3_get_blocks(env, ledger_id, vec![(Nat::from(0u64), Nat::from(u64::MAX))]);
+    let expected_blocks = env.icrc3_get_blocks(vec![(0u64, u64::MAX)]);
 
-    // upgrade the ledger
-    let arg = Encode!(&None::<LedgerArgs>).unwrap();
-    env.upgrade_canister(ledger_id, get_wasm("cycles-ledger"), arg, None)
-        .unwrap();
+    env.upgrade_ledger(None).unwrap();
 
     // check that the state is still consistent with `expected_state`
     // after the upgrade
-    check_ledger_state(env, ledger_id, &expected_state);
+    check_ledger_state(&env, &expected_state);
 
     // check that the blocks are all there after the upgrade
-    let after_upgrade_blocks =
-        icrc3_get_blocks(env, ledger_id, vec![(Nat::from(0u64), Nat::from(u64::MAX))]);
+    let after_upgrade_blocks = env.icrc3_get_blocks(vec![(0u64, u64::MAX)]);
     assert_eq!(expected_blocks, after_upgrade_blocks);
 }
 
 #[track_caller]
-fn check_ledger_state(
-    env: &StateMachine,
-    ledger_id: Principal,
-    expected_state: &CyclesLedgerInMemory,
-) {
-    assert_eq!(
-        expected_state.total_supply,
-        icrc1_total_supply(env, ledger_id)
-    );
+fn check_ledger_state(env: &TestEnv, expected_state: &CyclesLedgerInMemory) {
+    assert_eq!(expected_state.total_supply, env.icrc1_total_supply());
 
     for (account, balance) in &expected_state.balances {
         assert_eq!(
             balance,
-            &icrc1_balance_of(env, ledger_id, *account),
+            &env.icrc1_balance_of(*account),
             "balance_of({})",
             account
         );
     }
 
     for ((from, spender), allowance) in &expected_state.allowances {
-        let actual_allowance = icrc2_allowance(env, ledger_id, *from, *spender).allowance;
+        let actual_allowance = env.icrc2_allowance(*from, *spender).allowance;
         assert_eq!(
             allowance,
             &actual_allowance.0.to_u128().unwrap(),
