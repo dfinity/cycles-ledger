@@ -422,16 +422,16 @@ impl IsCyclesLedger for TestEnv {
 #[test]
 fn test_deposit_flow() {
     let env = TestEnv::setup();
-    let user = account(0, None);
+    let account0 = account(0, None);
 
     // 0.0 Check that the total supply is 0.
     assert_eq!(env.icrc1_total_supply(), 0u128);
 
     // 0.1 Check that the user doesn't have any tokens before the first deposit.
-    assert_eq!(env.icrc1_balance_of(user), 0u128);
+    assert_eq!(env.icrc1_balance_of(account0), 0u128);
 
     // 1 Make the first deposit to the user and check the result.
-    let deposit_res = env.deposit(user, 1_000_000_000, None);
+    let deposit_res = env.deposit(account0, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
 
@@ -439,7 +439,7 @@ fn test_deposit_flow() {
     assert_eq!(env.icrc1_total_supply(), 1_000_000_000);
 
     // 1.1 Check that the user has the right balance.
-    assert_eq!(env.icrc1_balance_of(user), 1_000_000_000);
+    assert_eq!(env.icrc1_balance_of(account0), 1_000_000_000);
 
     // 1.2 Check that the block created is correct:
     let block0 = env.get_block(deposit_res.block_index);
@@ -456,7 +456,7 @@ fn test_deposit_flow() {
     // 1.2.5 transaction.operation is mint.
     if let Operation::Mint { to, amount } = block0.transaction.operation {
         // 1.2.6 transaction.operation.to is the user.
-        assert_eq!(to, user);
+        assert_eq!(to, account0);
         // 1.2.7 transaction.operation.amount is the one deposited.
         assert_eq!(amount, 1_000_000_000);
     } else {
@@ -465,7 +465,7 @@ fn test_deposit_flow() {
 
     // 2 Make another deposit to the user and check the result.
     let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
-    let deposit_res = env.deposit(user, 500_000_000, Some(memo.clone()));
+    let deposit_res = env.deposit(account0, 500_000_000, Some(memo.clone()));
     assert_eq!(deposit_res.block_index, Nat::from(1_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
 
@@ -473,7 +473,7 @@ fn test_deposit_flow() {
     assert_eq!(env.icrc1_total_supply(), 1_500_000_000);
 
     // 2.1 Check that the user has the right balance after both deposits.
-    assert_eq!(env.icrc1_balance_of(user), 1_500_000_000);
+    assert_eq!(env.icrc1_balance_of(account0), 1_500_000_000);
 
     // 2.2 Check that the block created is correct:
     let block1 = env.get_block(deposit_res.block_index);
@@ -490,7 +490,7 @@ fn test_deposit_flow() {
     // 2.2.5 transaction.operation is mint.
     if let Operation::Mint { to, amount } = block1.transaction.operation {
         // 2.2.6 transaction.operation.to is the user.
-        assert_eq!(to, user);
+        assert_eq!(to, account0);
         // 2.2.7 transaction.operation.amount is the one deposited.
         assert_eq!(amount, 500_000_000);
     } else {
@@ -502,10 +502,10 @@ fn test_deposit_flow() {
 #[should_panic]
 fn test_deposit_amount_below_fee() {
     let env = TestEnv::setup();
-    let user = account(1, None);
+    let account1 = account(1, None);
 
     // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
-    let _deposit_result = env.deposit(user, config::FEE - 1, None);
+    let _deposit_result = env.deposit(account1, config::FEE - 1, None);
 }
 
 #[test]
@@ -513,21 +513,21 @@ fn test_withdraw_flow() {
     // TODO(SDK-1145): Add re-entrancy test
 
     let env = TestEnv::setup();
-    let user_main_account = account(1, None);
-    let user_subaccount_1 = account(1, Some(1));
-    let user_subaccount_2 = account(1, Some(2));
-    let user_subaccount_3 = account(1, Some(3));
-    let user_subaccount_4 = account(1, Some(4));
+    let account1 = account(1, None);
+    let account1_1 = account(1, Some(1));
+    let account1_2 = account(1, Some(2));
+    let account1_3 = account(1, Some(3));
+    let account1_4 = account(1, Some(4));
     let withdraw_receiver = env.state_machine.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = env.deposit(user_main_account, 1_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
-    let _deposit_res = env.deposit(user_subaccount_1, 1_000_000_000, None);
-    let _deposit_res = env.deposit(user_subaccount_2, 1_000_000_000, None);
-    let _deposit_res = env.deposit(user_subaccount_3, 1_000_000_000, None);
-    let _deposit_res = env.deposit(user_subaccount_4, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1_1, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1_2, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1_3, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1_4, 1_000_000_000, None);
     let mut expected_total_supply = 5_000_000_000;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
@@ -536,9 +536,9 @@ fn test_withdraw_flow() {
     let withdraw_amount = 500_000_000_u128;
     let _withdraw_idx = env
         .withdraw(
-            user_main_account.owner,
+            account1.owner,
             WithdrawArgs {
-                from_subaccount: user_main_account.subaccount,
+                from_subaccount: account1.subaccount,
                 to: withdraw_receiver,
                 created_at_time: None,
                 amount: Nat::from(withdraw_amount),
@@ -550,7 +550,7 @@ fn test_withdraw_flow() {
         env.state_machine.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
-        env.icrc1_balance_of(user_main_account),
+        env.icrc1_balance_of(account1),
         1_000_000_000 - withdraw_amount - FEE
     );
     expected_total_supply -= withdraw_amount + FEE;
@@ -561,9 +561,9 @@ fn test_withdraw_flow() {
     let withdraw_amount = 100_000_000_u128;
     let _withdraw_idx = env
         .withdraw(
-            user_subaccount_1.owner,
+            account1_1.owner,
             WithdrawArgs {
-                from_subaccount: Some(*user_subaccount_1.effective_subaccount()),
+                from_subaccount: Some(*account1_1.effective_subaccount()),
                 to: withdraw_receiver,
                 created_at_time: None,
                 amount: Nat::from(withdraw_amount),
@@ -575,7 +575,7 @@ fn test_withdraw_flow() {
         env.state_machine.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
-        env.icrc1_balance_of(user_subaccount_1),
+        env.icrc1_balance_of(account1_1),
         1_000_000_000 - withdraw_amount - FEE
     );
     expected_total_supply -= withdraw_amount + FEE;
@@ -587,9 +587,9 @@ fn test_withdraw_flow() {
     let withdraw_amount = 300_000_000_u128;
     let _withdraw_idx = env
         .withdraw(
-            user_subaccount_3.owner,
+            account1_3.owner,
             WithdrawArgs {
-                from_subaccount: Some(*user_subaccount_3.effective_subaccount()),
+                from_subaccount: Some(*account1_3.effective_subaccount()),
                 to: withdraw_receiver,
                 created_at_time: Some(now),
                 amount: Nat::from(withdraw_amount),
@@ -601,7 +601,7 @@ fn test_withdraw_flow() {
         env.state_machine.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
-        env.icrc1_balance_of(user_subaccount_3),
+        env.icrc1_balance_of(account1_3),
         1_000_000_000 - withdraw_amount - FEE
     );
     expected_total_supply -= withdraw_amount + FEE;
@@ -614,11 +614,11 @@ fn test_withdraw_flow() {
 #[test]
 fn test_withdraw_duplicate() {
     let env = TestEnv::setup();
-    let user_main_account = account(1, None);
+    let account1 = account(1, None);
     let withdraw_receiver = env.state_machine.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = env.deposit(user_main_account, 1_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
 
@@ -628,7 +628,7 @@ fn test_withdraw_duplicate() {
     let withdraw_amount = 900_000_000_u128;
     let withdraw_idx = env
         .withdraw(
-            user_main_account.owner,
+            account1.owner,
             WithdrawArgs {
                 from_subaccount: None,
                 to: withdraw_receiver,
@@ -642,7 +642,7 @@ fn test_withdraw_duplicate() {
         env.state_machine.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
-        env.icrc1_balance_of(user_main_account),
+        env.icrc1_balance_of(account1),
         1_000_000_000 - withdraw_amount - FEE
     );
 
@@ -651,7 +651,7 @@ fn test_withdraw_duplicate() {
             duplicate_of: withdraw_idx
         },
         env.withdraw(
-            user_main_account.owner,
+            account1.owner,
             WithdrawArgs {
                 from_subaccount: None,
                 to: withdraw_receiver,
@@ -666,20 +666,20 @@ fn test_withdraw_duplicate() {
 #[test]
 fn test_withdraw_fails() {
     let env = TestEnv::setup();
-    let user = account(1, None);
+    let account1 = account(1, None);
 
     // make the first deposit to the user and check the result
-    let deposit_res = env.deposit(user, 1_000_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
 
     // withdraw more than available
-    let balance_before_attempt = env.icrc1_balance_of(user);
+    let balance_before_attempt = env.icrc1_balance_of(account1);
     let withdraw_result = env
         .withdraw(
-            user.owner,
+            account1.owner,
             WithdrawArgs {
-                from_subaccount: user.subaccount,
+                from_subaccount: account1.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(u128::MAX),
@@ -690,14 +690,14 @@ fn test_withdraw_fails() {
         withdraw_result,
         WithdrawError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
     ));
-    assert_eq!(balance_before_attempt, env.icrc1_balance_of(user));
+    assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     let mut expected_total_supply = 1_000_000_000_000;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // withdraw from empty subaccount
     let withdraw_result = env
         .withdraw(
-            user.owner,
+            account1.owner,
             WithdrawArgs {
                 from_subaccount: Some([5; 32]),
                 to: env.depositor_id,
@@ -713,15 +713,15 @@ fn test_withdraw_fails() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
 
     // withdraw cycles to user instead of canister
-    let balance_before_attempt = env.icrc1_balance_of(user);
+    let balance_before_attempt = env.icrc1_balance_of(account1);
     let self_authenticating_principal =
         Principal::from_text("luwgt-ouvkc-k5rx5-xcqkq-jx5hm-r2rj2-ymqjc-pjvhb-kij4p-n4vms-gqe")
             .unwrap();
     let withdraw_result = env
         .withdraw(
-            user.owner,
+            account1.owner,
             WithdrawArgs {
-                from_subaccount: user.subaccount,
+                from_subaccount: account1.subaccount,
                 to: self_authenticating_principal,
                 created_at_time: None,
                 amount: Nat::from(500_000_000_u128),
@@ -732,11 +732,11 @@ fn test_withdraw_fails() {
         withdraw_result,
         WithdrawError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
     ));
-    assert_eq!(balance_before_attempt, env.icrc1_balance_of(user));
+    assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // withdraw cycles to deleted canister
-    let balance_before_attempt = env.icrc1_balance_of(user);
+    let balance_before_attempt = env.icrc1_balance_of(account1);
     let deleted_canister = env.state_machine.create_canister(None);
     env.state_machine
         .stop_canister(deleted_canister, None)
@@ -746,9 +746,9 @@ fn test_withdraw_fails() {
         .unwrap();
     let withdraw_result = env
         .withdraw(
-            user.owner,
+            account1.owner,
             WithdrawArgs {
-                from_subaccount: user.subaccount,
+                from_subaccount: account1.subaccount,
                 to: deleted_canister,
                 created_at_time: None,
                 amount: Nat::from(500_000_000_u128),
@@ -762,40 +762,40 @@ fn test_withdraw_fails() {
             ..
         }
     ));
-    assert_eq!(balance_before_attempt - FEE, env.icrc1_balance_of(user));
+    assert_eq!(balance_before_attempt - FEE, env.icrc1_balance_of(account1));
     expected_total_supply -= FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
 
     // user keeps the cycles if they don't have enough balance to pay the fee
-    let user_2 = account(2, None);
-    let _deposit_res = env.deposit(user_2, FEE + 1, None);
+    let account2 = account(2, None);
+    let _deposit_res = env.deposit(account2, FEE + 1, None);
     let _withdraw_res = env
         .withdraw(
-            user_2.owner,
+            account2.owner,
             WithdrawArgs {
-                from_subaccount: user_2.subaccount,
+                from_subaccount: account2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(u128::MAX),
             },
         )
         .unwrap_err();
-    assert_eq!(FEE + 1, env.icrc1_balance_of(user_2));
+    assert_eq!(FEE + 1, env.icrc1_balance_of(account2));
     let _withdraw_res = env
         .withdraw(
-            user_2.owner,
+            account2.owner,
             WithdrawArgs {
-                from_subaccount: user_2.subaccount,
+                from_subaccount: account2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(u128::MAX),
             },
         )
         .unwrap_err();
-    assert_eq!(FEE + 1, env.icrc1_balance_of(user_2));
+    assert_eq!(FEE + 1, env.icrc1_balance_of(account2));
 
     // test withdraw deduplication
-    let _deposit_res = env.deposit(user_2, FEE * 3, None);
+    let _deposit_res = env.deposit(account2, FEE * 3, None);
     let created_at_time = env.nanos_since_epoch_u64();
     let args = WithdrawArgs {
         from_subaccount: None,
@@ -803,10 +803,10 @@ fn test_withdraw_fails() {
         created_at_time: Some(created_at_time),
         amount: Nat::from(FEE),
     };
-    let duplicate_of = env.withdraw_or_trap(user_2.owner, args.clone());
+    let duplicate_of = env.withdraw_or_trap(account2.owner, args.clone());
     // the same withdraw should fail because created_at_time is set and the args are the same
     assert_eq!(
-        env.withdraw(user_2.owner, args),
+        env.withdraw(account2.owner, args),
         Err(WithdrawError::Duplicate { duplicate_of })
     );
 }
@@ -1086,20 +1086,20 @@ fn test_approval_expiring() {
 #[test]
 fn test_basic_transfer() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let user2 = account(2, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
     let deposit_amount = 1_000_000_000;
-    let _deposit_res = env.deposit(user1, deposit_amount, None);
+    let _deposit_res = env.deposit(account1, deposit_amount, None);
     let fee = env.icrc1_fee();
     let mut expected_total_supply = deposit_amount;
 
     let transfer_amount = Nat::from(100_000_u128);
     let _block_idx = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: None,
                 memo: None,
@@ -1108,9 +1108,9 @@ fn test_basic_transfer() {
         )
         .expect("Unable to make transfer");
 
-    assert_eq!(env.icrc1_balance_of(user2), transfer_amount.clone());
+    assert_eq!(env.icrc1_balance_of(account2), transfer_amount.clone());
     assert_eq!(
-        env.icrc1_balance_of(user1),
+        env.icrc1_balance_of(account1),
         Nat::from(deposit_amount) - fee - transfer_amount.clone()
     );
     expected_total_supply -= fee;
@@ -1122,10 +1122,10 @@ fn test_basic_transfer() {
             balance: transfer_amount.clone()
         }),
         env.icrc1_transfer(
-            user2.owner,
+            account2.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: None,
                 memo: None,
@@ -1141,10 +1141,10 @@ fn test_basic_transfer() {
             expected_fee: Nat::from(fee)
         }),
         env.icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user1,
+                to: account1,
                 fee: Some(Nat::from(0_u128)),
                 created_at_time: None,
                 memo: None,
@@ -1159,7 +1159,7 @@ fn test_basic_transfer() {
             owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user1,
+                to: account1,
                 fee: None,
                 created_at_time: None,
                 memo: None,
@@ -1169,7 +1169,7 @@ fn test_basic_transfer() {
         .unwrap_err();
 
         env.icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
                 to: Account::from(owner),
@@ -1185,8 +1185,8 @@ fn test_basic_transfer() {
             owner,
             TransferFromArgs {
                 spender_subaccount: None,
-                from: user1,
-                to: user2,
+                from: account1,
+                to: account2,
                 amount: Nat::from(0u32),
                 fee: None,
                 memo: None,
@@ -1200,15 +1200,15 @@ fn test_basic_transfer() {
 #[test]
 fn test_deduplication() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let user2 = account(2, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
     let deposit_amount = 1_000_000_000;
-    let _deposit_res = env.deposit(user1, deposit_amount, None);
+    let _deposit_res = env.deposit(account1, deposit_amount, None);
     let transfer_amount = Nat::from(100_000_u128);
 
     let args = TransferArgs {
         from_subaccount: None,
-        to: user2,
+        to: account2,
         fee: None,
         created_at_time: None,
         memo: None,
@@ -1216,15 +1216,15 @@ fn test_deduplication() {
     };
 
     // If created_at_time is not set, the same transaction should be able to be sent multiple times
-    let _block_index = env.icrc1_transfer_or_trap(user1.owner, args.clone());
-    let _block_index = env.icrc1_transfer_or_trap(user1.owner, args.clone());
+    let _block_index = env.icrc1_transfer_or_trap(account1.owner, args.clone());
+    let _block_index = env.icrc1_transfer_or_trap(account1.owner, args.clone());
 
     // Should not be able commit a transaction that was created in the future
     let now = env.nanos_since_epoch_u64();
     assert_eq!(
         Err(TransferError::CreatedInFuture { ledger_time: now }),
         env.icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 created_at_time: Some(u64::MAX),
                 ..args.clone()
@@ -1237,19 +1237,19 @@ fn test_deduplication() {
         created_at_time: Some(now),
         ..args
     };
-    let block_index = env.icrc1_transfer_or_trap(user1.owner, args.clone());
+    let block_index = env.icrc1_transfer_or_trap(account1.owner, args.clone());
 
     // Should not be able send the same transfer twice if created_at_time is set
     assert_eq!(
         Err(TransferError::Duplicate {
             duplicate_of: block_index
         }),
-        env.icrc1_transfer(user1.owner, args.clone())
+        env.icrc1_transfer(account1.owner, args.clone())
     );
 
     // Setting a different memo field should result in no deduplication
     env.icrc1_transfer_or_trap(
-        user1.owner,
+        account1.owner,
         TransferArgs {
             memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
             ..args.clone()
@@ -1260,7 +1260,7 @@ fn test_deduplication() {
     env.state_machine.advance_time(Duration::from_secs(1));
     let _block_index = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 created_at_time: Some(now + 1),
                 ..args
@@ -1275,37 +1275,37 @@ fn test_deduplication() {
 #[test]
 fn test_deduplication_with_insufficient_funds() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let user2 = account(2, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
     let deposit_amount = 1_000_000_000;
-    env.deposit(user1, deposit_amount, None);
+    env.deposit(account1, deposit_amount, None);
 
     let now = env.nanos_since_epoch_u64();
     let args = TransferArgs {
         from_subaccount: None,
-        to: user2,
+        to: account2,
         fee: None,
         created_at_time: Some(now),
         memo: None,
         amount: Nat::from(600_000_000u128),
     };
     // Make a transfer with created_at_time set
-    let block_index = env.icrc1_transfer_or_trap(user1.owner, args.clone());
+    let block_index = env.icrc1_transfer_or_trap(account1.owner, args.clone());
 
     // Should not be able send the same transfer twice if created_at_time is set
     assert_eq!(
         Err(TransferError::Duplicate {
             duplicate_of: block_index
         }),
-        env.icrc1_transfer(user1.owner, args)
+        env.icrc1_transfer(account1.owner, args)
     );
 }
 
 #[test]
 fn test_pruning_transactions() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let user2 = account(2, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
     let transfer_amount = Nat::from(100_000_u128);
 
     let check_tx_hashes = |length: u64, first_block: u64, last_block: u64| {
@@ -1335,7 +1335,7 @@ fn test_pruning_transactions() {
     assert!(tx_hashes.is_empty());
 
     let deposit_amount = 100_000_000_000;
-    env.deposit(user1, deposit_amount, None);
+    env.deposit(account1, deposit_amount, None);
 
     // A deposit does not have a `created_at_time` argument and is therefore not recorded
     let tx_hashes = env.transaction_hashes();
@@ -1344,10 +1344,10 @@ fn test_pruning_transactions() {
     // Create a transfer where `created_at_time` is not set
     let _block_index = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: None,
                 memo: None,
@@ -1364,10 +1364,10 @@ fn test_pruning_transactions() {
     // Create a transfer with `created_at_time` set
     let block_index = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: Some(time),
                 memo: None,
@@ -1386,10 +1386,10 @@ fn test_pruning_transactions() {
     // Create another transaction with the same timestamp but a different hash
     let transfer_idx_3 = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: Some(time),
                 memo: Some(Memo(ByteBuf::from(b"1234".to_vec()))),
@@ -1414,10 +1414,10 @@ fn test_pruning_transactions() {
     // Create another transaction to trigger pruning
     let block_index = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: Some(time),
                 memo: None,
@@ -1436,18 +1436,18 @@ fn test_pruning_transactions() {
 #[test]
 fn test_total_supply_after_upgrade() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let user2 = account(2, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
 
-    env.deposit(user1, 2_000_000_000, None);
-    env.deposit(user2, 3_000_000_000, None);
+    env.deposit(account1, 2_000_000_000, None);
+    env.deposit(account2, 3_000_000_000, None);
     let fee = env.icrc1_fee();
     let _block_index = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: None,
                 memo: None,
@@ -1457,9 +1457,9 @@ fn test_total_supply_after_upgrade() {
         .unwrap();
     let _withdraw_res = env
         .withdraw(
-            user2.owner,
+            account2.owner,
             WithdrawArgs {
-                from_subaccount: user2.subaccount,
+                from_subaccount: account2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(1_000_000_000_u128),
@@ -1500,19 +1500,19 @@ fn test_icrc3_get_blocks() {
     assert_eq!(get_blocks_res.archived_blocks.len(), 0);
     assert_eq!(decode_blocks_with_ids(get_blocks_res.blocks), vec![]);
 
-    let user1 = account(1, None);
-    let user2 = account(2, None);
-    let user3 = account(3, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
+    let account3 = account(3, None);
 
     // add the first mint block
-    env.deposit(user1, 5_000_000_000, None);
+    env.deposit(account1, 5_000_000_000, None);
 
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
     assert_eq!(get_blocks_res.log_length, 1_u128);
     assert_eq!(get_blocks_res.archived_blocks.len(), 0);
     let mut block0 = block(
         Mint {
-            to: user1,
+            to: account1,
             amount: 5_000_000_000,
         },
         None,
@@ -1529,14 +1529,14 @@ fn test_icrc3_get_blocks() {
     env.validate_certificate(0, block0.hash().unwrap());
 
     // add a second mint block
-    env.deposit(user2, 3_000_000_000, None);
+    env.deposit(account2, 3_000_000_000, None);
 
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
     assert_eq!(get_blocks_res.log_length, 2_u128);
     assert_eq!(get_blocks_res.archived_blocks.len(), 0);
     let mut block1 = block(
         Mint {
-            to: user2,
+            to: account2,
             amount: 3_000_000_000,
         },
         None,
@@ -1563,9 +1563,9 @@ fn test_icrc3_get_blocks() {
     // add a burn block
     let _withdraw_res = env
         .withdraw(
-            user2.owner,
+            account2.owner,
             WithdrawArgs {
-                from_subaccount: user2.subaccount,
+                from_subaccount: account2.subaccount,
                 to: env.depositor_id,
                 created_at_time: None,
                 amount: Nat::from(2_000_000_000_u128),
@@ -1579,7 +1579,7 @@ fn test_icrc3_get_blocks() {
     let withdraw_memo = encode_withdraw_memo(&env.depositor_id);
     let mut block2 = block(
         Burn {
-            from: user2,
+            from: account2,
             amount: 2_000_000_000,
         },
         None,
@@ -1602,10 +1602,10 @@ fn test_icrc3_get_blocks() {
     // add a couple of blocks
     let _block_index = env
         .icrc1_transfer(
-            user1.owner,
+            account1.owner,
             TransferArgs {
                 from_subaccount: None,
-                to: user2,
+                to: account2,
                 fee: None,
                 created_at_time: None,
                 memo: None,
@@ -1615,10 +1615,10 @@ fn test_icrc3_get_blocks() {
         .expect("Transfer failed");
     let _block_index = env
         .icrc2_approve(
-            user1.owner,
+            account1.owner,
             ApproveArgs {
-                from_subaccount: user1.subaccount,
-                spender: user2,
+                from_subaccount: account1.subaccount,
+                spender: account2,
                 amount: Nat::from(1_000_000_000 + FEE),
                 expected_allowance: Some(Nat::from(0u64)),
                 expires_at: None,
@@ -1629,11 +1629,11 @@ fn test_icrc3_get_blocks() {
         )
         .expect("Approve failed");
     let _block_index = env.icrc2_transfer_from_or_trap(
-        user2.owner,
+        account2.owner,
         TransferFromArgs {
-            spender_subaccount: user2.subaccount,
-            from: user1,
-            to: user3,
+            spender_subaccount: account2.subaccount,
+            from: account1,
+            to: account3,
             amount: Nat::from(1_000_000_000u64),
             fee: Some(Nat::from(FEE)),
             memo: None,
@@ -1647,8 +1647,8 @@ fn test_icrc3_get_blocks() {
     let actual_blocks = decode_blocks_with_ids(get_blocks_res.blocks);
     let block3 = block(
         Transfer {
-            from: user1,
-            to: user2,
+            from: account1,
+            to: account2,
             spender: None,
             amount: 1_000_000_000,
             fee: None,
@@ -1659,8 +1659,8 @@ fn test_icrc3_get_blocks() {
     );
     let block4 = block(
         Approve {
-            from: user1,
-            spender: user2,
+            from: account1,
+            spender: account2,
             amount: 1_000_000_000 + FEE,
             expected_allowance: Some(0),
             expires_at: None,
@@ -1672,9 +1672,9 @@ fn test_icrc3_get_blocks() {
     );
     let mut block5 = block(
         Transfer {
-            from: user1,
-            to: user3,
-            spender: Some(user2),
+            from: account1,
+            to: account3,
+            spender: Some(account2),
             amount: 1_000_000_000,
             fee: Some(FEE),
         },
@@ -1782,12 +1782,12 @@ fn test_get_blocks_max_length() {
         index_id: None,
     });
 
-    let user = account(10, None);
-    let _deposit_res = env.deposit(user, 1_000_000_000, None);
-    let _deposit_res = env.deposit(user, 2_000_000_000, None);
-    let _deposit_res = env.deposit(user, 3_000_000_000, None);
-    let _deposit_res = env.deposit(user, 4_000_000_000, None);
-    let _deposit_res = env.deposit(user, 5_000_000_000, None);
+    let account10 = account(10, None);
+    let _deposit_res = env.deposit(account10, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 2_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 3_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 4_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 5_000_000_000, None);
 
     let res = env.icrc3_get_blocks(vec![(0, u64::MAX)]);
     assert_eq!(MAX_BLOCKS_PER_REQUEST, res.blocks.len() as u64);
@@ -1803,12 +1803,12 @@ fn test_get_blocks_max_length() {
 fn test_set_max_blocks_per_request_in_upgrade() {
     let env = TestEnv::setup();
 
-    let user = account(10, None);
-    let _deposit_res = env.deposit(user, 1_000_000_000, None);
-    let _deposit_res = env.deposit(user, 2_000_000_000, None);
-    let _deposit_res = env.deposit(user, 3_000_000_000, None);
-    let _deposit_res = env.deposit(user, 4_000_000_000, None);
-    let _deposit_res = env.deposit(user, 5_000_000_000, None);
+    let account10 = account(10, None);
+    let _deposit_res = env.deposit(account10, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 2_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 3_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 4_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 5_000_000_000, None);
 
     let res = env.icrc3_get_blocks(vec![(0, u64::MAX)]);
     assert_eq!(5, res.blocks.len() as u64);
@@ -1884,19 +1884,19 @@ fn test_change_index_id() {
 #[tokio::test]
 async fn test_icrc1_test_suite() {
     let env = TestEnv::setup();
-    let user = account(10, None);
+    let account10 = account(10, None);
 
     // make the first deposit to the user and check the result
-    let deposit_res = env.deposit(user, 1_000_000_000_000_000, None);
+    let deposit_res = env.deposit(account10, 1_000_000_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
-    assert_eq!(1_000_000_000_000_000, env.icrc1_balance_of(user));
+    assert_eq!(1_000_000_000_000_000, env.icrc1_balance_of(account10));
 
     #[allow(clippy::arc_with_non_send_sync)]
     let ledger_env = icrc1_test_env_state_machine::SMLedger::new(
         Arc::new(env.state_machine),
         env.ledger_id,
-        user.owner,
+        account10.owner,
     );
     let tests = icrc1_test_suite::test_suite(ledger_env).await;
     if !icrc1_test_suite::execute_tests(tests).await {
@@ -1982,25 +1982,28 @@ fn test_create_canister() {
     install_fake_cmc(&env);
     let ledger_id = install_ledger(&env);
     let depositor_id = install_depositor(&env, ledger_id);
-    let user = Account {
+    let account10_0 = Account {
         owner: Principal::from_slice(&[10]),
         subaccount: Some([0; 32]),
     };
     let mut expected_balance = 1_000_000_000_000_000_u128;
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, user, expected_balance, None);
+    let deposit_res = deposit(&env, depositor_id, account10_0, expected_balance, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, expected_balance);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
 
     // successful create
     let canister = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: None,
@@ -2009,14 +2012,17 @@ fn test_create_canister() {
     .unwrap()
     .canister_id;
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
-    let status = canister_status(&env, canister, user.owner);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    let status = canister_status(&env, canister, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
     // no canister creation fee on system subnet (where the StateMachine is by default)
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
-    assert_eq!(vec![user.owner], status.settings.controllers);
+    assert_eq!(vec![account10_0.owner], status.settings.controllers);
 
     let canister_settings = CanisterSettings {
-        controllers: Some(vec![user.owner, Principal::anonymous()]),
+        controllers: Some(vec![account10_0.owner, Principal::anonymous()]),
         compute_allocation: Some(Nat::from(7_u128)),
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
@@ -2028,9 +2034,9 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: Some(CmcCreateCanisterArgs {
@@ -2041,8 +2047,11 @@ fn test_create_canister() {
     )
     .unwrap();
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
-    let status = canister_status(&env, canister_id, user.owner);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    let status = canister_status(&env, canister_id, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
     // order is not guaranteed
     assert_eq!(
@@ -2084,9 +2093,9 @@ fn test_create_canister() {
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: Some(CmcCreateCanisterArgs {
@@ -2097,18 +2106,21 @@ fn test_create_canister() {
     )
     .unwrap();
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
-    let status = canister_status(&env, canister_id, user.owner);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    let status = canister_status(&env, canister_id, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
-    assert_eq!(status.settings.controllers, vec![user.owner]);
+    assert_eq!(status.settings.controllers, vec![account10_0.owner]);
 
     // reject before `await`
     if let CreateCanisterError::InsufficientFunds { balance } = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: Nat::from(u128::MAX),
             creation_args: None,
@@ -2136,9 +2148,9 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: None,
@@ -2165,7 +2177,10 @@ fn test_create_canister() {
                 ..
             }
         );
-        assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+        assert_eq!(
+            expected_balance,
+            icrc1_balance_of(&env, ledger_id, account10_0)
+        );
     } else {
         panic!("wrong error")
     };
@@ -2186,9 +2201,9 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: None,
@@ -2215,7 +2230,10 @@ fn test_create_canister() {
                 ..
             }
         );
-        assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+        assert_eq!(
+            expected_balance,
+            icrc1_balance_of(&env, ledger_id, account10_0)
+        );
     } else {
         panic!("wrong error")
     };
@@ -2235,9 +2253,9 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: None,
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: None,
@@ -2256,27 +2274,33 @@ fn test_create_canister() {
             }
         );
         assert!(refund_block.is_none());
-        assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+        assert_eq!(
+            expected_balance,
+            icrc1_balance_of(&env, ledger_id, account10_0)
+        );
     } else {
         panic!("wrong error")
     };
 
     // duplicate creation request returns the same canister twice
     let arg = CreateCanisterArgs {
-        from_subaccount: user.subaccount,
+        from_subaccount: account10_0.subaccount,
         created_at_time: Some(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64),
         amount: CREATE_CANISTER_CYCLES.into(),
         creation_args: None,
     };
-    let canister = create_canister(&env, ledger_id, user, arg.clone())
+    let canister = create_canister(&env, ledger_id, account10_0, arg.clone())
         .unwrap()
         .canister_id;
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
-    let status = canister_status(&env, canister, user.owner);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    let status = canister_status(&env, canister, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
-    assert_eq!(vec![user.owner], status.settings.controllers);
-    let duplicate = create_canister(&env, ledger_id, user, arg).unwrap_err();
+    assert_eq!(vec![account10_0.owner], status.settings.controllers);
+    let duplicate = create_canister(&env, ledger_id, account10_0, arg).unwrap_err();
     assert_matches!(
         duplicate,
         CreateCanisterError::Duplicate { .. },
@@ -2305,17 +2329,20 @@ fn test_create_canister_duplicate() {
     install_fake_cmc(&env);
     let ledger_id = install_ledger(&env);
     let depositor_id = install_depositor(&env, ledger_id);
-    let user = Account {
+    let account10_0 = Account {
         owner: Principal::from_slice(&[10]),
         subaccount: Some([0; 32]),
     };
     let mut expected_balance = 1_500_000_000_000_u128;
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, user, expected_balance, None);
+    let deposit_res = deposit(&env, depositor_id, account10_0, expected_balance, None);
     assert_eq!(deposit_res.block_index, Nat::from(0u128));
     assert_eq!(deposit_res.balance, expected_balance);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
 
     let now = env
         .time()
@@ -2326,9 +2353,9 @@ fn test_create_canister_duplicate() {
     let canister = create_canister(
         &env,
         ledger_id,
-        user,
+        account10_0,
         CreateCanisterArgs {
-            from_subaccount: user.subaccount,
+            from_subaccount: account10_0.subaccount,
             created_at_time: Some(now),
             amount: CREATE_CANISTER_CYCLES.into(),
             creation_args: None,
@@ -2337,11 +2364,14 @@ fn test_create_canister_duplicate() {
     .unwrap()
     .canister_id;
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
-    let status = canister_status(&env, canister, user.owner);
-    assert_eq!(expected_balance, icrc1_balance_of(&env, ledger_id, user));
+    let status = canister_status(&env, canister, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
     // no canister creation fee on system subnet (where the StateMachine is by default)
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
-    assert_eq!(vec![user.owner], status.settings.controllers);
+    assert_eq!(vec![account10_0.owner], status.settings.controllers);
 
     assert_eq!(
         CreateCanisterError::Duplicate {
@@ -2351,9 +2381,9 @@ fn test_create_canister_duplicate() {
         create_canister(
             &env,
             ledger_id,
-            user,
+            account10_0,
             CreateCanisterArgs {
-                from_subaccount: user.subaccount,
+                from_subaccount: account10_0.subaccount,
                 created_at_time: Some(now),
                 amount: CREATE_CANISTER_CYCLES.into(),
                 creation_args: None,
@@ -2380,12 +2410,12 @@ fn test_deposit_invalid_memo() {
 #[should_panic(expected = "memo length exceeds the maximum")]
 fn test_icrc1_transfer_invalid_memo() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let _deposit_res = env.deposit(user1, 1_000_000_000, None);
+    let account1 = account(1, None);
+    let _deposit_res = env.deposit(account1, 1_000_000_000, None);
 
     // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let _res = env.icrc1_transfer(
-        user1.owner,
+        account1.owner,
         TransferArgs {
             from_subaccount: None,
             to: account(2, None),
@@ -2401,12 +2431,12 @@ fn test_icrc1_transfer_invalid_memo() {
 #[should_panic(expected = "memo length exceeds the maximum")]
 fn test_approve_invalid_memo() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let _deposit_res = env.deposit(user1, 1_000_000_000, None);
+    let account1 = account(1, None);
+    let _deposit_res = env.deposit(account1, 1_000_000_000, None);
 
     // Attempt approve with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let _approve_res = env.icrc2_approve(
-        user1.owner,
+        account1.owner,
         ApproveArgs {
             from_subaccount: None,
             spender: account(2, None),
@@ -2424,17 +2454,17 @@ fn test_approve_invalid_memo() {
 #[should_panic(expected = "memo length exceeds the maximum")]
 fn test_icrc2_transfer_from_invalid_memo() {
     let env = TestEnv::setup();
-    let user1 = account(1, None);
-    let user2 = account(2, None);
+    let account1 = account(1, None);
+    let account2 = account(2, None);
     let deposit_amount = 10_000_000_000;
-    let _deposit_res = env.deposit(user1, deposit_amount, None);
+    let _deposit_res = env.deposit(account1, deposit_amount, None);
 
     let _block_index = env
         .icrc2_approve(
-            user1.owner,
+            account1.owner,
             ApproveArgs {
-                from_subaccount: user1.subaccount,
-                spender: user2,
+                from_subaccount: account1.subaccount,
+                spender: account2,
                 amount: Nat::from(1_000_000_000 + FEE),
                 expected_allowance: Some(Nat::from(0u64)),
                 expires_at: None,
@@ -2447,11 +2477,11 @@ fn test_icrc2_transfer_from_invalid_memo() {
 
     // Attempt transfer_from with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let _transfer_from_res = env.icrc2_transfer_from(
-        user2.owner,
+        account2.owner,
         TransferFromArgs {
             spender_subaccount: None,
-            from: user1,
-            to: user2,
+            from: account1,
+            to: account2,
             amount: Nat::from(100_000_u128),
             fee: Some(Nat::from(FEE)),
             memo: Some(Memo(ByteBuf::from([0; MAX_MEMO_LENGTH as usize + 1]))),
