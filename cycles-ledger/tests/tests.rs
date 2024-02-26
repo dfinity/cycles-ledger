@@ -306,7 +306,7 @@ impl TestEnv {
     }
 
     // Validate that the given [response_certificate], [last_block_index], and [last_block_hash]
-    // match the certified data from the ledger
+    // match the certified data from the ledger.
     #[track_caller]
     fn validate_certificate(&self, last_block_index: u64, last_block_hash: Hash) {
         let DataCertificate {
