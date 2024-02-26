@@ -609,8 +609,8 @@ fn test_withdraw_flow() {
 }
 
 // A test to check that `DuplicateError` is returned on a duplicate `withdraw` request
-// and not `InsufficientFundsError`, in case when there is not enough funds
-// to execute it a second time
+// and not `InsufficientFundsError`, in case of insufficient funds
+// to execute it a second time.
 #[test]
 fn test_withdraw_duplicate() {
     let env = TestEnv::setup();
