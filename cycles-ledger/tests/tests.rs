@@ -990,7 +990,7 @@ fn test_approval_expiring() {
         )
         .expect("approve failed");
     assert_eq!(block_index, 1_u128);
-    // TODO: check the block
+    // TODO(FI-1205): check the block
     let allowance = env.icrc2_allowance(from, spender1);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration));
@@ -1014,7 +1014,7 @@ fn test_approval_expiring() {
         )
         .expect("approve failed");
     assert_eq!(block_index, 2_u128);
-    // TODO: check the block
+    // TODO(FI-1205): check the block
     let allowance = env.icrc2_allowance(from, spender2);
     assert_eq!(allowance.allowance, Nat::from(200_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
@@ -1038,7 +1038,7 @@ fn test_approval_expiring() {
             created_at_time: None,
         },
     );
-    // TODO: check the block
+    // TODO(FI-1205): check the block
     let allowance = env.icrc2_allowance(from, spender3);
     assert_eq!(allowance.allowance, Nat::from(300_000_000_u128));
     assert_eq!(allowance.expires_at, Some(expiration_3h));
@@ -1065,7 +1065,7 @@ fn test_approval_expiring() {
                 created_at_time: None,
             },
         )
-        .unwrap_err(); // TODO: check the error
+        .unwrap_err(); // TODO(FI-1206): check the error
         env.icrc2_approve(
             owner,
             ApproveArgs {
@@ -1079,7 +1079,7 @@ fn test_approval_expiring() {
                 created_at_time: None,
             },
         )
-        .unwrap_err(); // TODO: check the error
+        .unwrap_err(); // TODO(FI-1206): check the error
     }
 }
 
