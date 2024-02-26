@@ -53,7 +53,7 @@ where
     }
 }
 
-// panics in case the canister is unreachable or it has rejected the update
+// Panics if the canister is unreachable or it has rejected the update.
 pub fn update_or_panic<I, O>(
     env: &StateMachine,
     canister_id: Principal,
