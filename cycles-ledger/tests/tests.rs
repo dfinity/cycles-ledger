@@ -951,7 +951,7 @@ fn test_approve_duplicate() {
     assert_eq!(allowance.expires_at, None);
     assert_eq!(env.icrc1_balance_of(from), Nat::from(1_000_000_000 - FEE));
 
-    // second approve should fail with deduplicate
+    // second approve should fail with [ApproveError::Duplicate]
     assert_eq!(
         env.icrc2_approve(from.owner, args),
         Err(ApproveError::Duplicate { duplicate_of })
