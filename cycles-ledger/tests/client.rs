@@ -29,7 +29,7 @@ use icrc_ledger_types::{
 use num_traits::ToPrimitive;
 use serde::Deserialize;
 
-// panics in case the canister is unreachable or it has rejected the query
+// Panics if the canister is unreachable or it has rejected the query.
 pub fn query_or_panic<I, O>(
     env: &StateMachine,
     canister_id: Principal,
