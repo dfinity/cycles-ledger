@@ -1,20 +1,16 @@
 use std::{collections::HashMap, sync::Arc};
 
-use candid::{CandidType, Decode, Encode, Nat, Principal};
+use candid::{Nat, Principal};
 use cycles_ledger::{
     config::FEE,
-    endpoints::{DepositArg, DepositResult, WithdrawArgs, WithdrawError},
+    endpoints::{DepositArg, WithdrawArgs},
 };
-use ic_test_state_machine_client::{StateMachine, WasmResult};
 use icrc_ledger_types::{
     icrc1::{
         account::Account,
-        transfer::{Memo, TransferArg, TransferError},
+        transfer::{Memo, TransferArg},
     },
-    icrc2::{
-        approve::{ApproveArgs, ApproveError},
-        transfer_from::TransferFromArgs,
-    },
+    icrc2::{approve::ApproveArgs, transfer_from::TransferFromArgs},
 };
 use num_traits::ToPrimitive;
 use proptest::{
@@ -24,7 +20,6 @@ use proptest::{
     sample::select,
     strategy::{Just, Strategy, Union},
 };
-use serde::Deserialize;
 use serde_bytes::ByteBuf;
 
 // The arguments passed to an update call to the cycles ledger.
@@ -70,8 +65,8 @@ impl From<TransferFromArgs> for CyclesLedgerCallArg {
 // An update call to the cycles ledger.
 #[derive(Clone, Debug)]
 pub struct CyclesLedgerCall {
-    caller: Principal,
-    arg: CyclesLedgerCallArg,
+    pub caller: Principal,
+    pub arg: CyclesLedgerCallArg,
 }
 
 impl std::fmt::Display for CyclesLedgerCall {
@@ -156,141 +151,6 @@ impl std::fmt::Display for CyclesLedgerCall {
 
 pub trait IsCyclesLedger {
     fn execute(&mut self, call: &CyclesLedgerCall) -> Result<(), String>;
-}
-
-fn update_call<I, O>(
-    env: &StateMachine,
-    canister_id: Principal,
-    caller: Principal,
-    method: &str,
-    arg: &I,
-) -> Result<O, String>
-where
-    I: CandidType,
-    O: CandidType + for<'a> Deserialize<'a>,
-{
-    if let WasmResult::Reply(res) = env
-        .update_call(canister_id, caller, method, Encode!(arg).unwrap())
-        .map_err(|e| format!("call to {} failed: {}", method, e))?
-    {
-        Decode!(&res, O).map_err(|e| format!("call to {} failed: {}", method, e))
-    } else {
-        panic!("call to {} rejected", method)
-    }
-}
-
-// A cycles ledger and a depositor canister installed on a [StateMachine].
-#[derive(Clone)]
-pub struct CyclesLedgerInStateMachine<'a> {
-    pub env: &'a StateMachine,
-    pub ledger_id: Principal,
-    pub depositor_id: Principal,
-}
-
-impl<'a> IsCyclesLedger for CyclesLedgerInStateMachine<'a> {
-    fn execute(&mut self, call: &CyclesLedgerCall) -> Result<(), String> {
-        use CyclesLedgerCallArg::*;
-
-        match &call.arg {
-            Approve(arg) => {
-                let _ = update_call::<_, Result<Nat, ApproveError>>(
-                    self.env,
-                    self.ledger_id,
-                    call.caller.to_owned(),
-                    "icrc2_approve",
-                    arg,
-                )?
-                .map_err(|e| {
-                    format!(
-                        "call to approve(from:{}, spender:{}, amount:{}) failed: {:?}",
-                        Account {
-                            owner: call.caller,
-                            subaccount: arg.from_subaccount
-                        },
-                        arg.spender,
-                        arg.amount,
-                        e,
-                    )
-                })?;
-            }
-            Withdraw(arg) => {
-                let _ = update_call::<_, Result<Nat, WithdrawError>>(
-                    self.env,
-                    self.ledger_id,
-                    call.caller,
-                    "withdraw",
-                    arg,
-                )?
-                .map_err(|e| {
-                    format!(
-                        "call to withdraw(from:{}, to:{}, amount:{}) failed: {:?}",
-                        Account {
-                            owner: call.caller,
-                            subaccount: arg.from_subaccount
-                        },
-                        arg.to,
-                        arg.amount,
-                        e,
-                    )
-                })?;
-            }
-            Transfer(arg) => {
-                let _ = update_call::<_, Result<Nat, TransferError>>(
-                    self.env,
-                    self.ledger_id,
-                    call.caller,
-                    "icrc1_transfer",
-                    arg,
-                )?
-                .map_err(|e| {
-                    format!(
-                        "call to icrc1_transfer(from:{}, to:{}, amount:{}) failed: {}",
-                        Account {
-                            owner: call.caller,
-                            subaccount: arg.from_subaccount
-                        },
-                        arg.to,
-                        arg.amount,
-                        e,
-                    )
-                })?;
-            }
-            TransferFrom(arg) => {
-                let _ = update_call::<_, Result<Nat, TransferError>>(
-                    self.env,
-                    self.ledger_id,
-                    call.caller,
-                    "icrc2_transfer_from",
-                    arg
-                )?
-                .map_err(|e|
-                    format!("call to icrc2_transfer_from(from:{}, spender:{}, to:{}, amount:{}) failed: {}",
-                        arg.from,
-                        Account { owner: call.caller, subaccount: arg.spender_subaccount },
-                        arg.to,
-                        arg.amount,
-                        e,
-                    )
-                )?;
-            }
-            Deposit { amount, arg } => {
-                let cycles = amount.0.to_u128().unwrap();
-                let arg = depositor::endpoints::DepositArg {
-                    to: arg.to.to_owned(),
-                    memo: arg.memo.to_owned(),
-                    cycles,
-                };
-                let _ = update_call::<_, DepositResult>(
-                    self.env,
-                    self.depositor_id,
-                    call.caller,
-                    "deposit",
-                    &arg,
-                )?;
-            }
-        };
-        Ok(())
-    }
 }
 
 // An in-memory cycles ledger state.
