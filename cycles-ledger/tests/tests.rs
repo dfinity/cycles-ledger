@@ -511,25 +511,31 @@ fn test_deposit_flow() {
 
     // 1.2 Check that the block created is correct:
     let block0 = env.get_block(deposit_res.block_index);
-    // 1.2.0 first block has no parent hash.
-    assert_eq!(block0.phash, None);
-    // 1.2.1 effective fee of mint blocks is 0.
-    assert_eq!(block0.effective_fee, Some(0));
-    // 1.2.2 timestamp is set by the ledger.
-    assert_eq!(block0.timestamp as u128, env.nanos_since_epoch());
-    // 1.2.3 transaction.created_at_time is not set.
-    assert_eq!(block0.transaction.created_at_time, None);
-    // 1.2.4 transaction.memo is not set because the user didn't set it.
-    assert_eq!(block0.transaction.memo, None);
-    // 1.2.5 transaction.operation is mint.
-    if let Operation::Mint { to, amount } = block0.transaction.operation {
-        // 1.2.6 transaction.operation.to is the user.
-        assert_eq!(to, account0);
-        // 1.2.7 transaction.operation.amount is the one deposited.
-        assert_eq!(amount, 1_000_000_000);
-    } else {
-        panic!("deposit shoult create a mint block, found {:?}", block0);
-    };
+    assert_display_eq(
+        &block0,
+        &Block {
+            // 1.2.0 first block has no parent hash.
+            phash: None,
+            // 1.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
+            // 1.2.2 timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // 1.2.3 transaction.created_at_time is not set.
+                created_at_time: None,
+                // 1.2.4 transaction.memo is not set because
+                // the user didn't set it.
+                memo: None,
+                // 1.2.5 transaction.operation is mint.
+                operation: Operation::Mint {
+                    // 1.2.6 transaction.operation.to is the user.
+                    to: account0,
+                    // 1.2.7 transaction.operation.amount is the one deposited.
+                    amount: 1_000_000_000,
+                },
+            },
+        },
+    );
 
     // 2 Make another deposit to the user and check the result.
     let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
@@ -545,25 +551,30 @@ fn test_deposit_flow() {
 
     // 2.2 Check that the block created is correct:
     let block1 = env.get_block(deposit_res.block_index);
-    // 2.2.0 second block has the first block hash as parent hash.
-    assert_eq!(block1.phash, Some(block0.hash().unwrap()));
-    // 2.2.1 effective fee of mint blocks is 0.
-    assert_eq!(block1.effective_fee, Some(0));
-    // 2.2.2 timestamp is set by the ledger.
-    assert_eq!(block1.timestamp as u128, env.nanos_since_epoch());
-    // 2.2.3 transaction.created_at_time is not set.
-    assert_eq!(block1.transaction.created_at_time, None);
-    // 2.2.4 transaction.memo not set because the user set it.
-    assert_eq!(block1.transaction.memo, Some(memo));
-    // 2.2.5 transaction.operation is mint.
-    if let Operation::Mint { to, amount } = block1.transaction.operation {
-        // 2.2.6 transaction.operation.to is the user.
-        assert_eq!(to, account0);
-        // 2.2.7 transaction.operation.amount is the one deposited.
-        assert_eq!(amount, 500_000_000);
-    } else {
-        panic!("deposit shoult create a mint block, found {:?}", block1);
-    };
+    assert_display_eq(
+        &block1,
+        &Block {
+            // 2.2.0 second block has the first block hash as parent hash.
+            phash: Some(block0.hash().unwrap()),
+            // 2.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
+            // 2.2.2 timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // 2.2.3 transaction.created_at_time is not set.
+                created_at_time: None,
+                // 2.2.4 transaction.memo not set because the user set it.
+                memo: Some(memo),
+                // 2.2.5 transaction.operation is mint.
+                operation: Operation::Mint {
+                    // 2.2.6 transaction.operation.to is the user.
+                    to: account0,
+                    // 2.2.7 transaction.operation.amount is the one deposited.
+                    amount: 500_000_000,
+                },
+            },
+        },
+    );
 }
 
 #[test]
