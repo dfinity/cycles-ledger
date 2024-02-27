@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::fmt::Display;
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -103,6 +104,18 @@ impl Transaction {
     }
 }
 
+impl Display for Transaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Transaction {{ ")?;
+        write!(f, " ts: ")?;
+        display_opt(self.created_at_time, f)?;
+        write!(f, ", memo: ")?;
+        display_opt(self.memo.as_ref().map(|Memo(bs)| hex::encode(bs)), f)?;
+        write!(f, ", op: {}", self.operation)?;
+        write!(f, " }}")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     Mint {
@@ -128,6 +141,61 @@ pub enum Operation {
         expires_at: Option<u64>,
         fee: Option<u128>,
     },
+}
+
+impl Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Approve {
+                from,
+                spender,
+                amount,
+                expected_allowance,
+                expires_at,
+                fee,
+            } => {
+                write!(f, "Approve {{")?;
+                write!(f, " from: {from}")?;
+                write!(f, ", spender: {spender}")?;
+                write!(f, ", amount: {amount}")?;
+                write!(f, ", expected_allowance: ")?;
+                display_opt(expected_allowance.as_ref(), f)?;
+                display_opt(expires_at.as_ref(), f)?;
+                write!(f, ", fee: ")?;
+                display_opt(fee.as_ref(), f)?;
+                write!(f, " }}")
+            }
+            Self::Burn { from, amount } => {
+                write!(f, "Burn {{")?;
+                write!(f, " from: {from}")?;
+                write!(f, ", amount: {amount}")?;
+                write!(f, " }}")
+            }
+            Self::Mint { to, amount } => {
+                write!(f, "Mint {{")?;
+                write!(f, " to: {to}")?;
+                write!(f, ", amount: {amount}")?;
+                write!(f, " }}")
+            }
+            Self::Transfer {
+                from,
+                to,
+                spender,
+                amount,
+                fee,
+            } => {
+                write!(f, "Transfer {{")?;
+                write!(f, " from: {from}")?;
+                write!(f, ", to: {to}")?;
+                write!(f, ", spender: ")?;
+                display_opt(spender.as_ref(), f)?;
+                write!(f, ", amount: {amount}")?;
+                write!(f, ", fee: ")?;
+                display_opt(fee.as_ref(), f)?;
+                write!(f, " }}")
+            }
+        }
+    }
 }
 
 // A [Transaction] but flattened meaning that [Operation]
@@ -308,6 +376,29 @@ impl Block {
         self.to_value()
             .map(|v| v.hash())
             .context("Bug: Unable to calculate block hash")
+    }
+}
+
+fn display_opt<T>(opt: Option<T>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+where
+    T: Display,
+{
+    match opt {
+        None => write!(f, "None"),
+        Some(t) => write!(f, "Some({t})"),
+    }
+}
+
+impl Display for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Block {{ ")?;
+        write!(f, "phash: ")?;
+        display_opt(self.phash.map(hex::encode), f)?;
+        write!(f, ", ts: {}", self.timestamp)?;
+        write!(f, ", fee: ")?;
+        display_opt(self.effective_fee, f)?;
+        write!(f, ", tx: {}, ", self.transaction)?;
+        write!(f, " }}")
     }
 }
 
@@ -1348,10 +1439,10 @@ pub fn log_error_and_trap(err: &Error) -> ! {
     ic_cdk::trap(&format!("{}", err))
 }
 
-const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
-const CREATE_CANISTER_MEMO: [u8; MAX_MEMO_LENGTH as usize] =
+pub const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
+pub const CREATE_CANISTER_MEMO: [u8; MAX_MEMO_LENGTH as usize] =
     [u8::MAX - 1; MAX_MEMO_LENGTH as usize];
-const REFUND_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX - 2; MAX_MEMO_LENGTH as usize];
+pub const REFUND_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX - 2; MAX_MEMO_LENGTH as usize];
 
 // Penalize the `from` account by burning fee tokens. Do nothing if `from`'s balance
 // is lower than [crate::config::FEE].
