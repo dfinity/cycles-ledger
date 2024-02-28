@@ -530,7 +530,7 @@ fn test_deposit_flow() {
                 operation: Operation::Mint {
                     // 1.2.6 transaction.operation.to is the user.
                     to: account0,
-                    // 1.2.7 transaction.operation.amount is the one deposited.
+                    // 1.2.7 transaction.operation.amount is the deposited amount.
                     amount: 1_000_000_000,
                 },
             },
