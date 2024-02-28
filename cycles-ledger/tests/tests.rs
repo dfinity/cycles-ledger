@@ -657,7 +657,7 @@ fn test_withdraw_flow() {
                 // Withdrawals are recorded as burns.
                 operation: Operation::Burn {
                     from: account1,
-                    // The transaction.operation.amount is the one withdrew.
+                    // The transaction.operation.amount is the withdrawn amount.
                     amount: withdraw_amount,
                 },
             },
