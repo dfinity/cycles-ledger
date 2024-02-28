@@ -940,7 +940,7 @@ fn test_withdraw_fails() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
     // the destination invalid error happens after the burn block
     // was created and balances were changed. In other to fix the
-    // issue, the Ledger creates a mint block to refund the amount.
+    // issue, the ledger creates a mint block to refund the amount.
     // Therefore we expect two new blocks, a burn of amount + fee
     // and a mint of amount.
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
