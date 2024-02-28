@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
@@ -11,7 +11,7 @@ use icrc_ledger_types::{
 };
 use serde::Serialize;
 
-use crate::config::Config;
+use crate::{config::Config, storage::Block};
 
 #[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
 pub enum ChangeIndexId {
@@ -167,6 +167,16 @@ pub type GetBlocksArgs = Vec<GetBlocksArg>;
 pub struct BlockWithId {
     pub id: Nat,
     pub block: Value,
+}
+
+impl Display for BlockWithId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let block = Block::from_value(self.block.to_owned()).unwrap();
+        write!(f, "BlockWithId {{")?;
+        write!(f, " id: {}", self.id)?;
+        write!(f, ", block: {}", block)?;
+        write!(f, "}}")
+    }
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]

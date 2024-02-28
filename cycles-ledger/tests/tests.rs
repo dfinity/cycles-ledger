@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
+    fmt::Display,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -18,7 +19,7 @@ use cycles_ledger::{
     storage::{
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
-        Transaction,
+        Transaction, PENALIZE_MEMO,
     },
 };
 use cycles_ledger::{
@@ -64,6 +65,58 @@ use crate::{
 
 mod client;
 mod gen;
+
+// Like assert_eq but uses Display instead of Debug
+#[track_caller]
+fn assert_display_eq<T>(left: T, right: T)
+where
+    T: Display + PartialEq,
+{
+    if left != right {
+        panic!("The two values are different\nleft:  {left}\nright: {right}");
+    }
+}
+
+// Like assert_eq but uses Display instead of Debug
+#[track_caller]
+fn assert_vec_display_eq<T, U, V>(lefts: U, rights: V)
+where
+    T: Display + PartialEq,
+    U: AsRef<[T]>,
+    V: AsRef<[T]>,
+{
+    let diff = lefts
+        .as_ref()
+        .iter()
+        .zip(rights.as_ref().iter())
+        .enumerate()
+        .filter(|(_, (left, right))| left != right)
+        .collect::<Vec<_>>();
+    if !diff.is_empty() {
+        let diff = diff
+            .iter()
+            .map(|(i, (l, r))| format!("  at index: {i}\n    left:  {l}\n    right: {r}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let left = lefts
+            .as_ref()
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let right = rights
+            .as_ref()
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!(
+            "The two vectors of values are different. Differences are\
+            \n{diff}\n\nThe full list of values was\
+            \nleft:\n{left}\nright:\n{right}"
+        );
+    }
+}
 
 fn new_state_machine() -> StateMachine {
     let mut state_machine_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -203,8 +256,23 @@ impl TestEnv {
         client::deposit(&self.state_machine, self.depositor_id, to, amount, memo)
     }
 
+    fn get_all_blocks(&self) -> Vec<Block> {
+        self.get_all_blocks_with_ids()
+            .into_iter()
+            .map(|bid| Block::from_value(bid.block).unwrap())
+            .collect()
+    }
+
+    fn get_all_blocks_with_ids(&self) -> Vec<BlockWithId> {
+        self.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks
+    }
+
     fn get_block(&self, block_index: Nat) -> Block {
         client::get_block(&self.state_machine, self.ledger_id, block_index)
+    }
+
+    fn number_of_blocks(&self) -> Nat {
+        self.icrc3_get_blocks(vec![(0u8, 1u8)]).log_length
     }
 
     fn icrc1_balance_of(&self, account: Account) -> u128 {
@@ -443,25 +511,31 @@ fn test_deposit_flow() {
 
     // 1.2 Check that the block created is correct:
     let block0 = env.get_block(deposit_res.block_index);
-    // 1.2.0 first block has no parent hash.
-    assert_eq!(block0.phash, None);
-    // 1.2.1 effective fee of mint blocks is 0.
-    assert_eq!(block0.effective_fee, Some(0));
-    // 1.2.2 timestamp is set by the ledger.
-    assert_eq!(block0.timestamp as u128, env.nanos_since_epoch());
-    // 1.2.3 transaction.created_at_time is not set.
-    assert_eq!(block0.transaction.created_at_time, None);
-    // 1.2.4 transaction.memo is not set because the user didn't set it.
-    assert_eq!(block0.transaction.memo, None);
-    // 1.2.5 transaction.operation is mint.
-    if let Operation::Mint { to, amount } = block0.transaction.operation {
-        // 1.2.6 transaction.operation.to is the user.
-        assert_eq!(to, account0);
-        // 1.2.7 transaction.operation.amount is the one deposited.
-        assert_eq!(amount, 1_000_000_000);
-    } else {
-        panic!("deposit shoult create a mint block, found {:?}", block0);
-    };
+    assert_display_eq(
+        &block0,
+        &Block {
+            // 1.2.0 first block has no parent hash.
+            phash: None,
+            // 1.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
+            // 1.2.2 timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // 1.2.3 transaction.created_at_time is not set.
+                created_at_time: None,
+                // 1.2.4 transaction.memo is not set because
+                // the user didn't set it.
+                memo: None,
+                // 1.2.5 transaction.operation is mint.
+                operation: Operation::Mint {
+                    // 1.2.6 transaction.operation.to is the user.
+                    to: account0,
+                    // 1.2.7 transaction.operation.amount is the deposited amount.
+                    amount: 1_000_000_000,
+                },
+            },
+        },
+    );
 
     // 2 Make another deposit to the user and check the result.
     let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
@@ -477,25 +551,30 @@ fn test_deposit_flow() {
 
     // 2.2 Check that the block created is correct:
     let block1 = env.get_block(deposit_res.block_index);
-    // 2.2.0 second block has the first block hash as parent hash.
-    assert_eq!(block1.phash, Some(block0.hash().unwrap()));
-    // 2.2.1 effective fee of mint blocks is 0.
-    assert_eq!(block1.effective_fee, Some(0));
-    // 2.2.2 timestamp is set by the ledger.
-    assert_eq!(block1.timestamp as u128, env.nanos_since_epoch());
-    // 2.2.3 transaction.created_at_time is not set.
-    assert_eq!(block1.transaction.created_at_time, None);
-    // 2.2.4 transaction.memo not set because the user set it.
-    assert_eq!(block1.transaction.memo, Some(memo));
-    // 2.2.5 transaction.operation is mint.
-    if let Operation::Mint { to, amount } = block1.transaction.operation {
-        // 2.2.6 transaction.operation.to is the user.
-        assert_eq!(to, account0);
-        // 2.2.7 transaction.operation.amount is the one deposited.
-        assert_eq!(amount, 500_000_000);
-    } else {
-        panic!("deposit shoult create a mint block, found {:?}", block1);
-    };
+    assert_display_eq(
+        &block1,
+        &Block {
+            // 2.2.0 second block has the first block hash as parent hash.
+            phash: Some(block0.hash().unwrap()),
+            // 2.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
+            // 2.2.2 timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // 2.2.3 transaction.created_at_time is not set.
+                created_at_time: None,
+                // 2.2.4 transaction.memo is the one set by the user.
+                memo: Some(memo),
+                // 2.2.5 transaction.operation is mint.
+                operation: Operation::Mint {
+                    // 2.2.6 transaction.operation.to is the user.
+                    to: account0,
+                    // 2.2.7 transaction.operation.amount is the deposited amount.
+                    amount: 500_000_000,
+                },
+            },
+        },
+    );
 }
 
 #[test]
@@ -506,6 +585,9 @@ fn test_deposit_amount_below_fee() {
 
     // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
     let _deposit_result = env.deposit(account1, config::FEE - 1, None);
+
+    // check that no new block was created
+    assert_eq!(Nat::from(0u8), env.number_of_blocks());
 }
 
 #[test]
@@ -534,17 +616,15 @@ fn test_withdraw_flow() {
     // withdraw cycles from main account
     let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
     let withdraw_amount = 500_000_000_u128;
-    let _withdraw_idx = env
-        .withdraw(
-            account1.owner,
-            WithdrawArgs {
-                from_subaccount: account1.subaccount,
-                to: withdraw_receiver,
-                created_at_time: None,
-                amount: Nat::from(withdraw_amount),
-            },
-        )
-        .unwrap();
+    let withdraw_idx = env.withdraw_or_trap(
+        account1.owner,
+        WithdrawArgs {
+            from_subaccount: account1.subaccount,
+            to: withdraw_receiver,
+            created_at_time: None,
+            amount: Nat::from(withdraw_amount),
+        },
+    );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
         env.state_machine.cycle_balance(withdraw_receiver)
@@ -556,10 +636,38 @@ fn test_withdraw_flow() {
     expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(withdraw_idx.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the Ledger. This is different from burn in
+            // other Ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was not set.
+                created_at_time: None,
+                // The transaction.memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(encode_withdraw_memo(&withdraw_receiver)),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1,
+                    // The transaction.operation.amount is the withdrawn amount.
+                    amount: withdraw_amount,
+                },
+            },
+        },
+    );
+
     // withdraw cycles from subaccount
     let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
     let withdraw_amount = 100_000_000_u128;
-    let _withdraw_idx = env
+    let withdraw_idx = env
         .withdraw(
             account1_1.owner,
             WithdrawArgs {
@@ -581,11 +689,39 @@ fn test_withdraw_flow() {
     expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(withdraw_idx.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the Ledger. This is different from burn in
+            // other Ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was not set.
+                created_at_time: None,
+                // The transaction.memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(encode_withdraw_memo(&withdraw_receiver)),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1_1,
+                    // The transaction.operation.amount is the withdrawn amount.
+                    amount: withdraw_amount,
+                },
+            },
+        },
+    );
+
     // withdraw cycles from subaccount with created_at_time set
     let now = env.nanos_since_epoch_u64();
     let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
     let withdraw_amount = 300_000_000_u128;
-    let _withdraw_idx = env
+    let withdraw_idx = env
         .withdraw(
             account1_3.owner,
             WithdrawArgs {
@@ -606,6 +742,34 @@ fn test_withdraw_flow() {
     );
     expected_total_supply -= withdraw_amount + FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(withdraw_idx.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the Ledger. This is different from burn in
+            // other Ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was set to now.
+                created_at_time: Some(now),
+                // The transaction.memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(encode_withdraw_memo(&withdraw_receiver)),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1_3,
+                    // The transaction.operation.amount is the withdrawn amount.
+                    amount: withdraw_amount,
+                },
+            },
+        },
+    );
 }
 
 // A test to check that `DuplicateError` is returned on a duplicate `withdraw` request
@@ -626,17 +790,15 @@ fn test_withdraw_duplicate() {
     // withdraw cycles from main account
     let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
     let withdraw_amount = 900_000_000_u128;
-    let withdraw_idx = env
-        .withdraw(
-            account1.owner,
-            WithdrawArgs {
-                from_subaccount: None,
-                to: withdraw_receiver,
-                created_at_time: Some(now),
-                amount: Nat::from(withdraw_amount),
-            },
-        )
-        .unwrap();
+    let withdraw_idx = env.withdraw_or_trap(
+        account1.owner,
+        WithdrawArgs {
+            from_subaccount: None,
+            to: withdraw_receiver,
+            created_at_time: Some(now),
+            amount: Nat::from(withdraw_amount),
+        },
+    );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
         env.state_machine.cycle_balance(withdraw_receiver)
@@ -645,10 +807,11 @@ fn test_withdraw_duplicate() {
         env.icrc1_balance_of(account1),
         1_000_000_000 - withdraw_amount - FEE
     );
+    let expected_blocks = env.get_all_blocks();
 
     assert_eq!(
         WithdrawError::Duplicate {
-            duplicate_of: withdraw_idx
+            duplicate_of: withdraw_idx.clone(),
         },
         env.withdraw(
             account1.owner,
@@ -661,6 +824,8 @@ fn test_withdraw_duplicate() {
         )
         .unwrap_err()
     );
+
+    assert_vec_display_eq(expected_blocks, env.get_all_blocks());
 }
 
 #[test]
@@ -672,6 +837,7 @@ fn test_withdraw_fails() {
     let deposit_res = env.deposit(account1, 1_000_000_000_000, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
 
     // withdraw more than available
     let balance_before_attempt = env.icrc1_balance_of(account1);
@@ -693,6 +859,8 @@ fn test_withdraw_fails() {
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     let mut expected_total_supply = 1_000_000_000_000;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // check that no new blocks was added.
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw from empty subaccount
     let withdraw_result = env
@@ -711,6 +879,8 @@ fn test_withdraw_fails() {
         WithdrawError::InsufficientFunds { balance } if balance == 0_u128
     ));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
+    // check that no new blocks was added.
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw cycles to user instead of canister
     let balance_before_attempt = env.icrc1_balance_of(account1);
@@ -734,6 +904,8 @@ fn test_withdraw_fails() {
     ));
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // check that no new blocks was added.
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw cycles to deleted canister
     let balance_before_attempt = env.icrc1_balance_of(account1);
@@ -765,6 +937,53 @@ fn test_withdraw_fails() {
     assert_eq!(balance_before_attempt - FEE, env.icrc1_balance_of(account1));
     expected_total_supply -= FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
+    // the destination invalid error happens after the burn block
+    // was created and balances were changed. In other to fix the
+    // issue, the ledger creates a mint block to refund the amount.
+    // Therefore we expect two new blocks, a burn of amount + fee
+    // and a mint of amount.
+    assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(env.icrc1_fee()),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(encode_withdraw_memo(&deleted_canister)),
+                operation: Operation::Burn {
+                    from: account1,
+                    amount: 500_000_000_u128,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let refund_block = BlockWithId {
+        id: Nat::from(blocks.len()) + 1u8,
+        block: Block {
+            phash: Some(burn_block.block.hash()),
+            effective_fee: Some(0),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
+                operation: Operation::Mint {
+                    to: account1,
+                    amount: 500_000_000_u128,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks
+        .into_iter()
+        .chain([burn_block, refund_block])
+        .collect::<Vec<_>>();
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // user keeps the cycles if they don't have enough balance to pay the fee
     let account2 = account(2, None);
@@ -793,6 +1012,8 @@ fn test_withdraw_fails() {
         )
         .unwrap_err();
     assert_eq!(FEE + 1, env.icrc1_balance_of(account2));
+    // check that no new blocks was added.
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // test withdraw deduplication
     let _deposit_res = env.deposit(account2, FEE * 3, None);
@@ -809,6 +1030,8 @@ fn test_withdraw_fails() {
         env.withdraw(account2.owner, args),
         Err(WithdrawError::Duplicate { duplicate_of })
     );
+    // check that no new blocks was added.
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]
