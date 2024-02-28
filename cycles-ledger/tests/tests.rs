@@ -563,7 +563,7 @@ fn test_deposit_flow() {
             transaction: Transaction {
                 // 2.2.3 transaction.created_at_time is not set.
                 created_at_time: None,
-                // 2.2.4 transaction.memo not set because the user set it.
+                // 2.2.4 transaction.memo is the one set by the user.
                 memo: Some(memo),
                 // 2.2.5 transaction.operation is mint.
                 operation: Operation::Mint {
@@ -825,7 +825,6 @@ fn test_withdraw_duplicate() {
         .unwrap_err()
     );
 
-    // check the last block in the ledger is still withdraw_idx
     assert_vec_display_eq(expected_blocks, env.get_all_blocks());
 }
 
