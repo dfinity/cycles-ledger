@@ -1020,7 +1020,7 @@ fn test_withdraw_fails() {
         .into_iter()
         .chain([burn_block, refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // user keeps the cycles if they don't have enough balance to pay the fee
     let account2 = account(2, None);
@@ -1051,7 +1051,7 @@ fn test_withdraw_fails() {
         .unwrap_err();
     assert_eq!(FEE + 1, env.icrc1_balance_of(account2));
     // check that no new blocks was added.
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // test withdraw deduplication
     let _deposit_res = env.deposit(account2, FEE * 3, None);
@@ -1070,7 +1070,7 @@ fn test_withdraw_fails() {
         Err(WithdrawError::Duplicate { duplicate_of })
     );
     // check that no new blocks was added.
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]
