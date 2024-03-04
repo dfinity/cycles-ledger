@@ -1025,6 +1025,7 @@ fn test_withdraw_fails() {
     // user keeps the cycles if they don't have enough balance to pay the fee
     let account2 = account(2, None);
     let _deposit_res = env.deposit(account2, FEE + 1, None);
+    let blocks = env.get_all_blocks_with_ids();
     let _withdraw_res = env
         .withdraw(
             account2.owner,
@@ -1062,6 +1063,7 @@ fn test_withdraw_fails() {
         amount: Nat::from(FEE),
     };
     let duplicate_of = env.withdraw_or_trap(account2.owner, args.clone());
+    let blocks = env.get_all_blocks_with_ids();
     // the same withdraw should fail because created_at_time is set and the args are the same
     assert_eq!(
         env.withdraw(account2.owner, args),
