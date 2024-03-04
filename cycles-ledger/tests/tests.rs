@@ -2238,6 +2238,7 @@ fn check_ledger_state(env: &TestEnv, expected_state: &CyclesLedgerInMemory) {
 #[test]
 fn test_create_canister() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    const CREATE_CANISTER_CYCLES_MINUS_FEE: u128 = 1_000_000_000_000 - FEE;
     let env = new_state_machine();
     install_fake_cmc(&env);
     let ledger_id = install_ledger(&env);
@@ -2418,7 +2419,7 @@ fn test_create_canister() {
     )
     .unwrap_err()
     {
-        expected_balance -= FEE;
+        expected_balance -= 2 * FEE;
         assert_matches!(
             get_block(&env, ledger_id, fee_block.unwrap())
                 .transaction
@@ -2433,7 +2434,7 @@ fn test_create_canister() {
                 .transaction
                 .operation,
             Operation::Mint {
-                amount: CREATE_CANISTER_CYCLES,
+                amount: CREATE_CANISTER_CYCLES_MINUS_FEE,
                 ..
             }
         );
@@ -2447,6 +2448,7 @@ fn test_create_canister() {
 
     // dividing by 3 so that the number of cyles to be refunded is different from the amount of cycles consumed
     const REFUND_AMOUNT: u128 = CREATE_CANISTER_CYCLES / 3;
+    const REFUND_AMOUNT_MINUS_FEE: u128 = REFUND_AMOUNT - FEE;
     fail_next_create_canister_with(
         &env,
         cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
@@ -2471,7 +2473,7 @@ fn test_create_canister() {
     )
     .unwrap_err()
     {
-        expected_balance -= FEE + (CREATE_CANISTER_CYCLES - REFUND_AMOUNT);
+        expected_balance -= 2 * FEE + (CREATE_CANISTER_CYCLES - REFUND_AMOUNT);
         assert_matches!(
             get_block(&env, ledger_id, fee_block.unwrap())
                 .transaction
@@ -2486,7 +2488,7 @@ fn test_create_canister() {
                 .transaction
                 .operation,
             Operation::Mint {
-                amount: REFUND_AMOUNT,
+                amount: REFUND_AMOUNT_MINUS_FEE,
                 ..
             }
         );
