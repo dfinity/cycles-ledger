@@ -2723,7 +2723,7 @@ fn test_create_canister_fail() {
         .unwrap(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, &env.get_all_blocks_with_ids());
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // if refund_amount is > env.icrc1_fee() then
     // 1. the error has the refund_block
