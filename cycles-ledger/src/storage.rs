@@ -33,7 +33,7 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -1564,7 +1564,16 @@ pub async fn withdraw(
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        match reimburse(from, amount, now) {
+        // subtract the fee to pay for the reimburse block
+        let amount_to_reimburse = amount.saturating_sub(config::FEE);
+        if amount_to_reimburse.is_zero() {
+            return Err(FailedToWithdraw {
+                fee_block: None,
+                rejection_code,
+                rejection_reason,
+            });
+        }
+        match reimburse(from, amount_to_reimburse, now) {
             Ok(fee_block) => {
                 prune(now);
                 return Err(FailedToWithdraw {
@@ -1667,7 +1676,19 @@ pub async fn create_canister(
 
     match create_canister_result {
         Err((rejection_code, rejection_reason)) => {
-            match reimburse(from, amount, now) {
+            // subtract the fee to pay for the reimburse block
+            let amount_to_reimburse = amount.saturating_sub(config::FEE);
+            if amount_to_reimburse.is_zero() {
+                return Err(FailedToCreate {
+                    fee_block: Some(Nat::from(block_index)),
+                    refund_block: None,
+                    error: format!(
+                        "CMC rejected canister creation with code {:?} and reason {}",
+                        rejection_code, rejection_reason
+                    ),
+                });
+            }
+            match reimburse(from, amount_to_reimburse, now) {
                 Ok(fee_block) => {
                     prune(now);
                     Err(FailedToCreate {

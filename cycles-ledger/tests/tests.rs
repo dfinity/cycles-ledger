@@ -934,8 +934,13 @@ fn test_withdraw_fails() {
             ..
         }
     ));
-    assert_eq!(balance_before_attempt - FEE, env.icrc1_balance_of(account1));
-    expected_total_supply -= FEE;
+    // the caller pays the fee twice: once for the burn block and
+    // once for the refund block
+    assert_eq!(
+        balance_before_attempt - 2 * FEE,
+        env.icrc1_balance_of(account1)
+    );
+    expected_total_supply -= 2 * FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
     // the destination invalid error happens after the burn block
     // was created and balances were changed. In other to fix the
@@ -972,7 +977,9 @@ fn test_withdraw_fails() {
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 operation: Operation::Mint {
                     to: account1,
-                    amount: 500_000_000_u128,
+                    // refund the amount minus the fee to make
+                    // the caller pay for the refund block too
+                    amount: 500_000_000_u128 - FEE,
                 },
             },
         }
