@@ -19,7 +19,7 @@ use cycles_ledger::{
     storage::{
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
-        Transaction, PENALIZE_MEMO,
+        Transaction, CREATE_CANISTER_MEMO, PENALIZE_MEMO, REFUND_MEMO,
     },
 };
 use cycles_ledger::{
@@ -85,6 +85,28 @@ where
     U: AsRef<[T]>,
     V: AsRef<[T]>,
 {
+    if lefts.as_ref().len() != rights.as_ref().len() {
+        let left = lefts
+            .as_ref()
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let right = rights
+            .as_ref()
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!(
+            "The two vectors of values have different length.
+            \nleft.len():  {}\n right.len(): {}\n\nThe full list of values was\
+            \nleft:\n{left}\nright:\n{right}",
+            lefts.as_ref().len(),
+            rights.as_ref().len(),
+        );
+    }
+
     let diff = lefts
         .as_ref()
         .iter()
@@ -250,6 +272,14 @@ impl TestEnv {
         let arg = Encode!(&Some(LedgerArgs::Upgrade(args))).unwrap();
         self.state_machine
             .upgrade_canister(self.ledger_id, get_wasm("cycles-ledger"), arg, None)
+    }
+
+    fn create_canister(
+        &self,
+        caller: Principal,
+        args: CreateCanisterArgs,
+    ) -> Result<CreateCanisterSuccess, CreateCanisterError> {
+        client::create_canister(&self.state_machine, self.ledger_id, caller, args)
     }
 
     fn deposit(&self, to: Account, amount: u128, memo: Option<Memo>) -> DepositResult {
@@ -2231,7 +2261,7 @@ fn test_create_canister() {
     let canister = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2264,7 +2294,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2323,7 +2353,7 @@ fn test_create_canister() {
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2348,7 +2378,7 @@ fn test_create_canister() {
     if let CreateCanisterError::InsufficientFunds { balance } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2378,7 +2408,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2431,7 +2461,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2483,7 +2513,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -2519,7 +2549,7 @@ fn test_create_canister() {
         amount: CREATE_CANISTER_CYCLES.into(),
         creation_args: None,
     };
-    let canister = create_canister(&env, ledger_id, account10_0, arg.clone())
+    let canister = create_canister(&env, ledger_id, account10_0.owner, arg.clone())
         .unwrap()
         .canister_id;
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
@@ -2530,7 +2560,7 @@ fn test_create_canister() {
     );
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
     assert_eq!(vec![account10_0.owner], status.settings.controllers);
-    let duplicate = create_canister(&env, ledger_id, account10_0, arg).unwrap_err();
+    let duplicate = create_canister(&env, ledger_id, account10_0.owner, arg).unwrap_err();
     assert_matches!(
         duplicate,
         CreateCanisterError::Duplicate { .. },
@@ -2583,7 +2613,7 @@ fn test_create_canister_duplicate() {
     let canister = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: Some(now),
@@ -2611,7 +2641,7 @@ fn test_create_canister_duplicate() {
         create_canister(
             &env,
             ledger_id,
-            account10_0,
+            account10_0.owner,
             CreateCanisterArgs {
                 from_subaccount: account10_0.subaccount,
                 created_at_time: Some(now),
@@ -2621,6 +2651,160 @@ fn test_create_canister_duplicate() {
         )
         .unwrap_err()
     );
+}
+
+#[test]
+fn test_create_canister_fail() {
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+    install_fake_cmc(&env.state_machine);
+
+    let _ = env.deposit(account1, 1_000_000_000_000_000_000, None);
+
+    let mut expected_total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks_with_ids();
+    let balance_before_attempt = env.icrc1_balance_of(account1);
+    let fee = env.icrc1_fee();
+
+    // if refund_amount is <= env.icrc1_fee() then
+    // 1. the error doesn't have the refund_block
+    // 2. the user has been charged the full amount
+    // 3. only one block was created
+    fail_next_create_canister_with(
+        &env.state_machine,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: 0,
+            create_error: "Error while creating".to_string(),
+        },
+    );
+    let amount = 1_000_000_000_000_000u128;
+    let create_canister_result = env
+        .create_canister(
+            account1.owner,
+            CreateCanisterArgs {
+                from_subaccount: account1.subaccount,
+                created_at_time: None,
+                amount: Nat::from(amount),
+                creation_args: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        create_canister_result,
+        CreateCanisterError::FailedToCreate {
+            fee_block: Some(Nat::from(blocks.len())),
+            refund_block: None,
+            error: "Error while creating".to_string(),
+        }
+    );
+    assert_eq!(
+        balance_before_attempt - amount - fee,
+        env.icrc1_balance_of(account1)
+    );
+    expected_total_supply -= amount + fee;
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(fee),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1,
+                    amount,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
+    assert_vec_display_eq(&blocks, &env.get_all_blocks_with_ids());
+
+    // if refund_amount is > env.icrc1_fee() then
+    // 1. the error has the refund_block
+    // 2. the user has been charged the fee twice
+    // 3. two blocks are created
+    let balance_before_attempt = env.icrc1_balance_of(account1);
+    let amount = 1_000_000_000_000_000u128;
+    fail_next_create_canister_with(
+        &env.state_machine,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: amount,
+            create_error: "Error while creating".to_string(),
+        },
+    );
+    let create_canister_result = env
+        .create_canister(
+            account1.owner,
+            CreateCanisterArgs {
+                from_subaccount: account1.subaccount,
+                created_at_time: None,
+                amount: Nat::from(amount),
+                creation_args: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        create_canister_result,
+        CreateCanisterError::FailedToCreate {
+            fee_block: Some(Nat::from(blocks.len())),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
+            error: "Error while creating".to_string(),
+        }
+    );
+    assert_eq!(
+        balance_before_attempt - 2 * fee,
+        env.icrc1_balance_of(account1)
+    );
+    expected_total_supply -= 2 * fee;
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(fee),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1,
+                    amount,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let refund_block = BlockWithId {
+        id: Nat::from(blocks.len() + 1),
+        block: Block {
+            phash: Some(burn_block.block.clone().hash()),
+            effective_fee: Some(0),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
+                operation: Operation::Mint {
+                    to: account1,
+                    amount: amount - fee,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks
+        .into_iter()
+        .chain([burn_block, refund_block])
+        .collect::<Vec<_>>();
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]

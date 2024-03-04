@@ -1731,10 +1731,18 @@ pub async fn create_canister(
                     refund_amount,
                     create_error,
                 } => {
+                    let refund_amount_to_reimburse = refund_amount.saturating_sub(config::FEE);
+                    if refund_amount_to_reimburse.is_zero() {
+                        return Err(CreateCanisterError::FailedToCreate {
+                            fee_block: Some(Nat::from(block_index)),
+                            refund_block: None,
+                            error: create_error,
+                        });
+                    }
                     let transaction = Transaction {
                         operation: Operation::Mint {
                             to: from,
-                            amount: refund_amount,
+                            amount: refund_amount_to_reimburse,
                         },
                         created_at_time: None,
                         memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
@@ -1742,7 +1750,9 @@ pub async fn create_canister(
 
                     let refund_index = process_transaction(transaction.clone(), now)?;
 
-                    if let Err(err) = mutate_state(|state| state.credit(&from, refund_amount)) {
+                    if let Err(err) =
+                        mutate_state(|state| state.credit(&from, refund_amount_to_reimburse))
+                    {
                         log_error_and_trap(&err.context(format!(
                             "Unable to refund create_canister: {:?}",
                             transaction
