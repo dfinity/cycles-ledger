@@ -1460,23 +1460,19 @@ fn test_basic_transfer() {
 }
 
 #[test]
-fn test_icrc2_transfer_fail_if_approve_smaller_than_amount_plus_fee() {
+fn test_icrc2_transfer_fails_if_approve_smaller_than_amount_plus_fee() {
     let env = TestEnv::setup();
     let account1 = account(1, None);
     let account2 = account(2, None);
     let fee = env.icrc1_fee();
 
-    let amount_to_transfer = 0;
-    // approve amount is not enough for a transfer_from because
-    // there isn't enough to pay the fee
-    let amount_to_approve = fee - 1 + amount_to_transfer;
-    let _deposit_res = env.deposit(account1, fee + 1 + amount_to_approve, None);
+    let _deposit_res = env.deposit(account1, 2 * fee, None);
     let _approve_block_index = env.icrc2_approve_or_trap(
         account1.owner,
         ApproveArgs {
             from_subaccount: account1.subaccount,
             spender: account2,
-            amount: Nat::from(amount_to_approve),
+            amount: Nat::from(fee - 1),
             expected_allowance: Some(Nat::from(0u64)),
             expires_at: Some(u64::MAX),
             fee: Some(Nat::from(fee)),
@@ -1490,7 +1486,7 @@ fn test_icrc2_transfer_fail_if_approve_smaller_than_amount_plus_fee() {
             spender_subaccount: account2.subaccount,
             from: account1,
             to: account2,
-            amount: Nat::from(amount_to_transfer),
+            amount: Nat::from(0u64),
             fee: Some(Nat::from(fee)),
             memo: None,
             created_at_time: None,
@@ -1500,7 +1496,7 @@ fn test_icrc2_transfer_fail_if_approve_smaller_than_amount_plus_fee() {
     assert_eq!(
         transfer_from_block_err,
         Err(TransferFromError::InsufficientAllowance {
-            allowance: Nat::from(amount_to_approve)
+            allowance: Nat::from(fee - 1)
         }),
     );
 }
