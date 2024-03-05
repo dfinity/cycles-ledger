@@ -852,7 +852,7 @@ pub fn transfer(
     // check allowance
     if let Some(spender) = spender {
         if spender != from {
-            read_state(|state| check_allowance(state, &from, &spender, amount, now))?;
+            read_state(|state| check_allowance(state, &from, &spender, amount_with_fee, now))?;
         }
     }
 
