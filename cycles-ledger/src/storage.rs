@@ -33,7 +33,7 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -1564,7 +1564,16 @@ pub async fn withdraw(
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        match reimburse(from, amount, now) {
+        // subtract the fee to pay for the reimburse block
+        let amount_to_reimburse = amount.saturating_sub(config::FEE);
+        if amount_to_reimburse.is_zero() {
+            return Err(FailedToWithdraw {
+                fee_block: None,
+                rejection_code,
+                rejection_reason,
+            });
+        }
+        match reimburse(from, amount_to_reimburse, now) {
             Ok(fee_block) => {
                 prune(now);
                 return Err(FailedToWithdraw {
@@ -1667,7 +1676,19 @@ pub async fn create_canister(
 
     match create_canister_result {
         Err((rejection_code, rejection_reason)) => {
-            match reimburse(from, amount, now) {
+            // subtract the fee to pay for the reimburse block
+            let amount_to_reimburse = amount.saturating_sub(config::FEE);
+            if amount_to_reimburse.is_zero() {
+                return Err(FailedToCreate {
+                    fee_block: Some(Nat::from(block_index)),
+                    refund_block: None,
+                    error: format!(
+                        "CMC rejected canister creation with code {:?} and reason {}",
+                        rejection_code, rejection_reason
+                    ),
+                });
+            }
+            match reimburse(from, amount_to_reimburse, now) {
                 Ok(fee_block) => {
                     prune(now);
                     Err(FailedToCreate {
@@ -1710,10 +1731,18 @@ pub async fn create_canister(
                     refund_amount,
                     create_error,
                 } => {
+                    let refund_amount_to_reimburse = refund_amount.saturating_sub(config::FEE);
+                    if refund_amount_to_reimburse.is_zero() {
+                        return Err(CreateCanisterError::FailedToCreate {
+                            fee_block: Some(Nat::from(block_index)),
+                            refund_block: None,
+                            error: create_error,
+                        });
+                    }
                     let transaction = Transaction {
                         operation: Operation::Mint {
                             to: from,
-                            amount: refund_amount,
+                            amount: refund_amount_to_reimburse,
                         },
                         created_at_time: None,
                         memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
@@ -1721,7 +1750,9 @@ pub async fn create_canister(
 
                     let refund_index = process_transaction(transaction.clone(), now)?;
 
-                    if let Err(err) = mutate_state(|state| state.credit(&from, refund_amount)) {
+                    if let Err(err) =
+                        mutate_state(|state| state.credit(&from, refund_amount_to_reimburse))
+                    {
                         log_error_and_trap(&err.context(format!(
                             "Unable to refund create_canister: {:?}",
                             transaction
