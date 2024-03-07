@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{bail, Context};
 use ciborium::Value as CiboriumValue;
+use endpoints::{WithdrawError, WithdrawFromError};
 use icrc_ledger_types::{
     icrc::generic_value::Value, icrc1::transfer::TransferError,
     icrc2::transfer_from::TransferFromError,
@@ -173,6 +174,44 @@ pub fn transfer_from_error_to_transfer_error(e: TransferFromError) -> TransferEr
         } => TransferError::GenericError {
             error_code,
             message,
+        },
+    }
+}
+
+// Traps if the error is InsufficientAllowance
+pub fn withdraw_from_error_to_withdraw_error(e: WithdrawFromError) -> WithdrawError {
+    match e {
+        WithdrawFromError::InsufficientFunds { balance } => {
+            WithdrawError::InsufficientFunds { balance }
+        }
+        WithdrawFromError::InsufficientAllowance { .. } => {
+            ic_cdk::trap("InsufficientAllowance error should not happen for withdraw")
+        }
+        WithdrawFromError::TooOld => WithdrawError::TooOld,
+        WithdrawFromError::CreatedInFuture { ledger_time } => {
+            WithdrawError::CreatedInFuture { ledger_time }
+        }
+        WithdrawFromError::TemporarilyUnavailable => WithdrawError::TemporarilyUnavailable,
+        WithdrawFromError::Duplicate { duplicate_of } => WithdrawError::Duplicate { duplicate_of },
+        WithdrawFromError::GenericError {
+            error_code,
+            message,
+        } => WithdrawError::GenericError {
+            error_code,
+            message,
+        },
+        WithdrawFromError::InvalidReceiver { receiver } => {
+            WithdrawError::InvalidReceiver { receiver }
+        }
+        WithdrawFromError::FailedToWithdrawFrom {
+            fee_block,
+            rejection_code,
+            rejection_reason,
+            ..
+        } => WithdrawError::FailedToWithdraw {
+            fee_block,
+            rejection_code,
+            rejection_reason,
         },
     }
 }

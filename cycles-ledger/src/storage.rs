@@ -1,7 +1,7 @@
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{
     CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterSuccess,
-    DataCertificate, DepositResult, WithdrawError,
+    DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
 };
 use crate::logs::{P0, P1};
 use crate::memo::{encode_withdraw_memo, validate_memo};
@@ -131,6 +131,7 @@ pub enum Operation {
     },
     Burn {
         from: Account,
+        spender: Option<Account>,
         amount: u128,
     },
     Approve {
@@ -165,9 +166,14 @@ impl Display for Operation {
                 display_opt(fee.as_ref(), f)?;
                 write!(f, " }}")
             }
-            Self::Burn { from, amount } => {
+            Self::Burn {
+                from,
+                spender,
+                amount,
+            } => {
                 write!(f, "Burn {{")?;
                 write!(f, " from: {from}")?;
+                write!(f, ", spender: {spender:?}")?;
                 write!(f, ", amount: {amount}")?;
                 write!(f, " }}")
             }
@@ -248,6 +254,7 @@ impl TryFrom<FlattenedTransaction> for Transaction {
                 from: value
                     .from
                     .ok_or("`from` field required for `burn` operation")?,
+                spender: value.spender,
                 amount: value.amount,
             },
             "mint" => Operation::Mint {
@@ -310,6 +317,7 @@ impl From<Transaction> for FlattenedTransaction {
             spender: match &t.operation {
                 Transfer { spender, .. } => spender.to_owned(),
                 Approve { spender, .. } => Some(*spender),
+                Burn { spender, .. } => spender.to_owned(),
                 _ => None,
             },
             amount: match &t.operation {
@@ -963,7 +971,7 @@ pub fn approve(
         });
     }
 
-    // check that the epiration is in the future
+    // check that the expiration is in the future
     if expires_at.unwrap_or(REMOTE_FUTURE) <= now {
         return Err(ApproveError::Expired { ledger_time: now });
     }
@@ -1054,7 +1062,7 @@ impl From<anyhow::Error> for ProcessTransactionError {
     }
 }
 
-mod transfer_from {
+pub mod transfer_from {
     use candid::Nat;
     use icrc_ledger_types::{icrc1::account::Account, icrc2::transfer_from::TransferFromError};
 
@@ -1134,14 +1142,36 @@ mod withdraw {
 
     use super::transfer_from::UNKNOWN_GENERIC_ERROR;
 
-    pub fn anyhow_error(error: anyhow::Error) -> WithdrawError {
-        unknown_generic_error(format!("{:#}", error))
-    }
-
     pub fn unknown_generic_error(message: String) -> WithdrawError {
         WithdrawError::GenericError {
             error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
             message,
+        }
+    }
+}
+
+mod withdraw_from {
+    use candid::Nat;
+
+    use crate::endpoints::WithdrawFromError;
+
+    use super::transfer_from::{CANNOT_TRANSFER_FROM_ZERO, UNKNOWN_GENERIC_ERROR};
+
+    pub fn anyhow_error(error: anyhow::Error) -> WithdrawFromError {
+        unknown_generic_error(error.to_string())
+    }
+
+    pub fn unknown_generic_error(message: String) -> WithdrawFromError {
+        WithdrawFromError::GenericError {
+            error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
+            message,
+        }
+    }
+
+    pub fn cannot_withdraw_from_zero() -> WithdrawFromError {
+        WithdrawFromError::GenericError {
+            error_code: Nat::from(CANNOT_TRANSFER_FROM_ZERO),
+            message: "The withdraw_from 0 cycles is not possible".into(),
         }
     }
 }
@@ -1178,6 +1208,30 @@ impl From<ProcessTransactionError> for TransferFromError {
             },
             InvalidCreatedAtTime(err) => err.into(),
             GenericError(err) => transfer_from::unknown_generic_error(format!("{:#}", err)),
+        }
+    }
+}
+
+impl From<ProcessTransactionError> for WithdrawFromError {
+    fn from(error: ProcessTransactionError) -> Self {
+        use crate::storage::transfer_from::UNKNOWN_GENERIC_ERROR;
+        use ProcessTransactionError::*;
+
+        match error {
+            BadFee { .. } => ic_cdk::trap("BadFee should not happen for withdraw"),
+            Duplicate { duplicate_of, .. } => Self::Duplicate {
+                duplicate_of: Nat::from(duplicate_of),
+            },
+            InvalidCreatedAtTime(err) => match err {
+                CreatedAtTimeValidationError::TooOld => Self::TooOld,
+                CreatedAtTimeValidationError::InTheFuture { ledger_time } => {
+                    Self::CreatedInFuture { ledger_time }
+                }
+            },
+            GenericError(err) => Self::GenericError {
+                error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
+                message: err.to_string(),
+            },
         }
     }
 }
@@ -1269,6 +1323,22 @@ impl From<UseAllowanceError> for TransferFromError {
         match value {
             CannotDeduceZero => transfer_from::cannot_transfer_from_zero(),
             ExpiredApproval { .. } => transfer_from::expired_approval(),
+            InsufficientAllowance { allowance } => Self::InsufficientAllowance {
+                allowance: allowance.into(),
+            },
+        }
+    }
+}
+
+impl From<UseAllowanceError> for WithdrawFromError {
+    fn from(value: UseAllowanceError) -> Self {
+        use UseAllowanceError::*;
+
+        match value {
+            CannotDeduceZero => ic_cdk::trap("CannotDeduceZero should not happen for withdraw"),
+            ExpiredApproval { .. } => Self::InsufficientAllowance {
+                allowance: Nat::from(0_u8),
+            },
             InsufficientAllowance { allowance } => Self::InsufficientAllowance {
                 allowance: allowance.into(),
             },
@@ -1475,6 +1545,7 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
             transaction: Transaction {
                 operation: Operation::Burn {
                     from: *from,
+                    spender: None,
                     amount: crate::config::FEE,
                 },
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
@@ -1502,16 +1573,32 @@ fn is_self_authenticating(principal: &Principal) -> bool {
 pub async fn withdraw(
     from: Account,
     to: Principal,
+    spender: Option<Account>,
     amount: u128,
     now: u64,
     created_at_time: Option<u64>,
-) -> Result<Nat, WithdrawError> {
-    use WithdrawError::*;
+) -> Result<Nat, WithdrawFromError> {
+    use WithdrawFromError::*;
 
     if is_self_authenticating(&to) {
         // if it is not an opaque principal ID, the user is trying to withdraw to a non-canister target
         return Err(InvalidReceiver { receiver: to });
     }
+
+    if amount == 0 {
+        return Err(withdraw_from::cannot_withdraw_from_zero());
+    }
+
+    let transaction = Transaction {
+        operation: Operation::Burn {
+            from,
+            spender,
+            amount,
+        },
+        created_at_time,
+        memo: Some(encode_withdraw_memo(&to)),
+    };
+    check_duplicate(&transaction)?;
 
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
@@ -1520,12 +1607,17 @@ pub async fn withdraw(
         });
     };
 
-    let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
-        created_at_time,
-        memo: Some(encode_withdraw_memo(&to)),
-    };
-    check_duplicate(&transaction)?;
+    // check allowance
+    let mut old_expires_at = None;
+    if let Some(spender) = spender {
+        if spender != from {
+            let (_, expiry) =
+                read_state(|state| check_allowance(state, &from, &spender, amount_with_fee, now))?;
+            if expiry > 0 {
+                old_expires_at = Some(expiry);
+            }
+        }
+    }
 
     // check that the `from` account has enough funds
     read_state(|state| state.check_debit_from_account(&from, amount_with_fee)).map_err(
@@ -1542,7 +1634,7 @@ pub async fn withdraw(
                 amount, from, to
             )
         })
-        .map_err(withdraw::anyhow_error)?;
+        .map_err(withdraw_from::anyhow_error)?;
 
     // The withdraw process involves 3 steps:
     // 1. burn cycles + fee
@@ -1552,6 +1644,19 @@ pub async fn withdraw(
     // 1. burn cycles + fee
 
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
+
+    if let Some(spender) = spender {
+        if spender != from {
+            if let Err(err) =
+                mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
+            {
+                let err = anyhow!(err.to_string());
+                log_error_and_trap(
+                    &err.context(format!("Unable to perform withdraw: {:?}", transaction)),
+                );
+            };
+        }
+    }
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
         log_error_and_trap(&err.context(format!("Unable to perform withdraw: {:?}", transaction)))
@@ -1564,20 +1669,58 @@ pub async fn withdraw(
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        match reimburse(from, amount, now) {
-            Ok(fee_block) => {
-                prune(now);
-                return Err(FailedToWithdraw {
-                    fee_block: Some(Nat::from(fee_block)),
-                    rejection_code,
-                    rejection_reason,
-                });
+        if amount > config::FEE {
+            match reimburse(from, amount.saturating_sub(config::FEE), now) {
+                Ok(fee_block) => {
+                    prune(now);
+                    if let Some(spender) = spender {
+                        if spender != from && amount > 3 * config::FEE {
+                            match reimburse_approval(
+                                from,
+                                spender,
+                                amount_with_fee.saturating_sub(3 * config::FEE), // charge FEE for every block: withdraw attempt, refund, refund approval
+                                old_expires_at,
+                                now,
+                            ) {
+                                Ok(approval_refund_block) => {
+                                    return Err(FailedToWithdrawFrom {
+                                        fee_block: Some(Nat::from(fee_block)),
+                                        approval_refund_block: Some(approval_refund_block),
+                                        rejection_code,
+                                        rejection_reason,
+                                    });
+                                }
+                                Err(err) => {
+                                    // this is a critical error that should not
+                                    // happen because approving should never fail.
+                                    log_error_and_trap(&anyhow!(
+                                        "Unable to reimburse approval: {:?}",
+                                        err
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    return Err(FailedToWithdrawFrom {
+                        fee_block: Some(Nat::from(fee_block)),
+                        approval_refund_block: None,
+                        rejection_code,
+                        rejection_reason,
+                    });
+                }
+                Err(err) => {
+                    // this is a critical error that should not
+                    // happen because minting should never fail.
+                    log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err));
+                }
             }
-            Err(err) => {
-                // this is a critical error that should not
-                // happen because minting should never fail.
-                log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err))
-            }
+        } else {
+            return Err(FailedToWithdrawFrom {
+                fee_block: None,
+                approval_refund_block: None,
+                rejection_code,
+                rejection_reason,
+            });
         }
     }
 
@@ -1586,6 +1729,7 @@ pub async fn withdraw(
 
 pub async fn create_canister(
     from: Account,
+    spender: Option<Account>,
     amount: u128,
     now: u64,
     created_at_time: Option<u64>,
@@ -1594,7 +1738,11 @@ pub async fn create_canister(
     use CreateCanisterError::*;
 
     let transaction = Transaction {
-        operation: Operation::Burn { from, amount },
+        operation: Operation::Burn {
+            from,
+            spender,
+            amount,
+        },
         created_at_time,
         memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
     };
@@ -1771,6 +1919,34 @@ fn reimburse(acc: Account, amount: u128, now: u64) -> Result<u64, ProcessTransac
     prune(now);
 
     Ok(block_index)
+}
+
+// Reimburse an approval with a given amount
+fn reimburse_approval(
+    from: Account,
+    spender: Account,
+    amount: u128,
+    old_expires_at: Option<u64>,
+    now: u64,
+) -> Result<Nat, ApproveError> {
+    let (current_allowance, current_expiry) = allowance(&from, &spender, now);
+    let expires_at = if current_expiry > 0 {
+        Some(current_expiry)
+    } else {
+        old_expires_at
+    };
+
+    approve(
+        from,
+        spender,
+        amount.saturating_add(current_allowance),
+        Some(Memo::from(ByteBuf::from(PENALIZE_MEMO))),
+        now,
+        None,
+        None,
+        None,
+        expires_at,
+    )
 }
 
 pub fn allowance(account: &Account, spender: &Account, now: u64) -> (u128, u64) {
@@ -2076,9 +2252,10 @@ mod tests {
     prop_compose! {
         fn burn_strategy()
                         (from in account_strategy(),
-                         amount in any::<u128>())
+                             spender in proptest::option::of(account_strategy()),
+                             amount in any::<u128>())
                         -> Operation {
-            Operation::Burn { from, amount }
+            Operation::Burn { from, spender, amount }
         }
     }
 
@@ -2141,10 +2318,10 @@ mod tests {
         }
     }
 
-    // Use proptest to genereate blocks and call
+    // Use proptest to generate blocks and call
     // cbor(block).to_bytes()/from_bytes(), to_value and
     // hash on them.
-    // The test succeeeds if hash never panics, which means
+    // The test succeeds if hash never panics, which means
     // that `Block::to_value` is always safe to call.
     #[test]
     fn test_block_ser_to_value_and_hash() {

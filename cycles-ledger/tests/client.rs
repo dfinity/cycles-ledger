@@ -6,6 +6,7 @@ use cycles_ledger::{
     endpoints::{
         self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterSuccess, DataCertificate,
         DepositResult, GetBlocksArg, GetBlocksArgs, GetBlocksResult, WithdrawArgs,
+        WithdrawFromArgs,
     },
     storage::{Block, CMC_PRINCIPAL},
 };
@@ -135,6 +136,15 @@ pub fn withdraw(
     args: WithdrawArgs,
 ) -> Result<Nat, endpoints::WithdrawError> {
     update_or_panic(env, ledger_id, caller, "withdraw", args)
+}
+
+pub fn withdraw_from(
+    env: &StateMachine,
+    ledger_id: Principal,
+    caller: Principal,
+    args: WithdrawFromArgs,
+) -> Result<Nat, endpoints::WithdrawFromError> {
+    update_or_panic(env, ledger_id, caller, "withdraw_from", args)
 }
 
 pub fn create_canister(
