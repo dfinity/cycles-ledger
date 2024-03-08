@@ -1502,7 +1502,7 @@ fn test_withdraw_from_fails() {
         WithdrawFromError::GenericError {
             error_code,
             ..
-        } if error_code == Nat::from(CANNOT_TRANSFER_FROM_ZERO)
+        } if error_code == CANNOT_TRANSFER_FROM_ZERO
     );
     assert_eq!(
         allowance_before_attempt,
@@ -1707,7 +1707,7 @@ fn test_withdraw_from_fails() {
         .into_iter()
         .chain([burn_block, refund_block, approve_refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // allowance does not get refunded because it's not worth it
     env.icrc2_approve_or_trap(
@@ -1804,7 +1804,7 @@ fn test_withdraw_from_fails() {
         .into_iter()
         .chain([burn_block, refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // allowance does not get refunded because of insufficient funds to refund
     env.icrc2_approve_or_trap(
@@ -1900,7 +1900,7 @@ fn test_withdraw_from_fails() {
         .into_iter()
         .chain([burn_block, refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // duplicate
     let withdraw_receiver_balance = env.state_machine.cycle_balance(env.depositor_id);
@@ -2055,7 +2055,7 @@ fn test_withdraw_from_fails() {
         .into_iter()
         .chain([burn_block, refund_block, approve_refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // no refund if refunded tokens are insufficient to pay for a block
     env.icrc2_approve_or_trap(
@@ -2096,10 +2096,10 @@ fn test_withdraw_from_fails() {
     );
     assert_eq!(Nat::from(0_u128), env.icrc1_balance_of(account1_7));
     assert_eq!(
-        Nat::from(u128::MAX - 1 * FEE - 10_000),
+        Nat::from(u128::MAX - FEE - 10_000),
         env.icrc2_allowance(account1_7, withdrawer1).allowance
     );
-    expected_total_supply -= 1 * FEE + 10_000;
+    expected_total_supply -= FEE + 10_000;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
     // the destination invalid error happens after the burn block
     // was created and balances were changed. In order to fix the
@@ -2127,7 +2127,7 @@ fn test_withdraw_from_fails() {
         .unwrap(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]
