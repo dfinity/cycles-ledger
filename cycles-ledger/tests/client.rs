@@ -150,10 +150,10 @@ pub fn withdraw_from(
 pub fn create_canister(
     env: &StateMachine,
     ledger_id: Principal,
-    from: Account,
+    caller: Principal,
     args: CreateCanisterArgs,
 ) -> Result<CreateCanisterSuccess, endpoints::CreateCanisterError> {
-    update_or_panic(env, ledger_id, from.owner, "create_canister", args)
+    update_or_panic(env, ledger_id, caller, "create_canister", args)
 }
 
 pub fn canister_status(

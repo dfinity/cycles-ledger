@@ -20,7 +20,7 @@ use cycles_ledger::{
         transfer_from::CANNOT_TRANSFER_FROM_ZERO,
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
-        Transaction, PENALIZE_MEMO,
+        Transaction, CREATE_CANISTER_MEMO, PENALIZE_MEMO, REFUND_MEMO,
     },
 };
 use cycles_ledger::{
@@ -86,6 +86,28 @@ where
     U: AsRef<[T]>,
     V: AsRef<[T]>,
 {
+    if lefts.as_ref().len() != rights.as_ref().len() {
+        let left = lefts
+            .as_ref()
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let right = rights
+            .as_ref()
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!(
+            "The two vectors of values have different length.
+            \nleft.len():  {}\n right.len(): {}\n\nThe full list of values was\
+            \nleft:\n{left}\nright:\n{right}",
+            lefts.as_ref().len(),
+            rights.as_ref().len(),
+        );
+    }
+
     let diff = lefts
         .as_ref()
         .iter()
@@ -253,6 +275,14 @@ impl TestEnv {
             .upgrade_canister(self.ledger_id, get_wasm("cycles-ledger"), arg, None)
     }
 
+    fn create_canister(
+        &self,
+        caller: Principal,
+        args: CreateCanisterArgs,
+    ) -> Result<CreateCanisterSuccess, CreateCanisterError> {
+        client::create_canister(&self.state_machine, self.ledger_id, caller, args)
+    }
+
     fn deposit(&self, to: Account, amount: u128, memo: Option<Memo>) -> DepositResult {
         client::deposit(&self.state_machine, self.depositor_id, to, amount, memo)
     }
@@ -270,6 +300,12 @@ impl TestEnv {
 
     fn get_block(&self, block_index: Nat) -> Block {
         client::get_block(&self.state_machine, self.ledger_id, block_index)
+    }
+
+    fn get_block_hash(&self, block_index: Nat) -> [u8; 32] {
+        self.get_block(block_index)
+            .hash()
+            .expect("Unable to calculate hash of block")
     }
 
     fn number_of_blocks(&self) -> Nat {
@@ -951,6 +987,8 @@ fn test_withdraw_fails() {
             ..
         }
     );
+    // the caller pays the fee twice: once for the burn block and
+    // once for the refund block
     assert_eq!(
         balance_before_attempt - 2 * FEE,
         env.icrc1_balance_of(account1)
@@ -993,7 +1031,9 @@ fn test_withdraw_fails() {
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
                 operation: Operation::Mint {
                     to: account1,
-                    amount: 400_000_000_u128,
+                    // refund the amount minus the fee to make
+                    // the caller pay for the refund block too
+                    amount: 500_000_000_u128 - FEE,
                 },
             },
         }
@@ -1004,11 +1044,12 @@ fn test_withdraw_fails() {
         .into_iter()
         .chain([burn_block, refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // user keeps the cycles if they don't have enough balance to pay the fee
     let account2 = account(2, None);
     let _deposit_res = env.deposit(account2, FEE + 1, None);
+    let blocks = env.get_all_blocks_with_ids();
     let _withdraw_res = env
         .withdraw(
             account2.owner,
@@ -1034,7 +1075,7 @@ fn test_withdraw_fails() {
         .unwrap_err();
     assert_eq!(FEE + 1, env.icrc1_balance_of(account2));
     // check that no new blocks was added.
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // test withdraw deduplication
     let _deposit_res = env.deposit(account2, FEE * 3, None);
@@ -1046,13 +1087,14 @@ fn test_withdraw_fails() {
         amount: Nat::from(FEE),
     };
     let duplicate_of = env.withdraw_or_trap(account2.owner, args.clone());
+    let blocks = env.get_all_blocks_with_ids();
     // the same withdraw should fail because created_at_time is set and the args are the same
     assert_eq!(
         env.withdraw(account2.owner, args),
         Err(WithdrawError::Duplicate { duplicate_of })
     );
     // check that no new blocks was added.
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]
@@ -2475,6 +2517,71 @@ fn test_basic_transfer() {
 }
 
 #[test]
+fn test_icrc2_transfer_fails_if_approve_smaller_than_amount_plus_fee() {
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+    let account2 = account(2, None);
+    let fee = env.icrc1_fee();
+
+    let deposit_res = env.deposit(account1, 2 * fee, None);
+    let approve_block_index = env.icrc2_approve_or_trap(
+        account1.owner,
+        ApproveArgs {
+            from_subaccount: account1.subaccount,
+            spender: account2,
+            amount: Nat::from(fee - 1),
+            expected_allowance: Some(Nat::from(0u64)),
+            expires_at: Some(u64::MAX),
+            fee: Some(Nat::from(fee)),
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    let block = env.get_block(approve_block_index);
+    assert_display_eq(
+        Block {
+            phash: Some(env.get_block_hash(deposit_res.block_index)),
+            effective_fee: None,
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                operation: Operation::Approve {
+                    from: account1,
+                    spender: account2,
+                    amount: fee - 1,
+                    expected_allowance: Some(0),
+                    expires_at: Some(u64::MAX),
+                    fee: Some(fee),
+                },
+                memo: None,
+                created_at_time: None,
+            },
+        },
+        block,
+    );
+    let expected_blocks = env.get_all_blocks();
+    let transfer_from_block_err = env.icrc2_transfer_from(
+        account2.owner,
+        TransferFromArgs {
+            spender_subaccount: account2.subaccount,
+            from: account1,
+            to: account2,
+            amount: Nat::from(0u64),
+            fee: Some(Nat::from(fee)),
+            memo: None,
+            created_at_time: None,
+        },
+    );
+
+    assert_eq!(
+        transfer_from_block_err,
+        Err(TransferFromError::InsufficientAllowance {
+            allowance: Nat::from(fee - 1)
+        }),
+    );
+    assert_eq!(expected_blocks, env.get_all_blocks());
+}
+
+#[test]
 fn test_deduplication() {
     let env = TestEnv::setup();
     let account1 = account(1, None);
@@ -3256,6 +3363,7 @@ fn check_ledger_state(env: &TestEnv, expected_state: &CyclesLedgerInMemory) {
 #[test]
 fn test_create_canister() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    const CREATE_CANISTER_CYCLES_MINUS_FEE: u128 = 1_000_000_000_000 - FEE;
     let env = new_state_machine();
     install_fake_cmc(&env);
     let ledger_id = install_ledger(&env);
@@ -3279,7 +3387,7 @@ fn test_create_canister() {
     let canister = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3312,7 +3420,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3371,7 +3479,7 @@ fn test_create_canister() {
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3396,7 +3504,7 @@ fn test_create_canister() {
     if let CreateCanisterError::InsufficientFunds { balance } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3426,7 +3534,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3436,7 +3544,7 @@ fn test_create_canister() {
     )
     .unwrap_err()
     {
-        expected_balance -= FEE;
+        expected_balance -= 2 * FEE;
         assert_matches!(
             get_block(&env, ledger_id, fee_block.unwrap())
                 .transaction
@@ -3451,7 +3559,7 @@ fn test_create_canister() {
                 .transaction
                 .operation,
             Operation::Mint {
-                amount: CREATE_CANISTER_CYCLES,
+                amount: CREATE_CANISTER_CYCLES_MINUS_FEE,
                 ..
             }
         );
@@ -3465,6 +3573,7 @@ fn test_create_canister() {
 
     // dividing by 3 so that the number of cyles to be refunded is different from the amount of cycles consumed
     const REFUND_AMOUNT: u128 = CREATE_CANISTER_CYCLES / 3;
+    const REFUND_AMOUNT_MINUS_FEE: u128 = REFUND_AMOUNT - FEE;
     fail_next_create_canister_with(
         &env,
         cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
@@ -3479,7 +3588,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3489,7 +3598,7 @@ fn test_create_canister() {
     )
     .unwrap_err()
     {
-        expected_balance -= FEE + (CREATE_CANISTER_CYCLES - REFUND_AMOUNT);
+        expected_balance -= 2 * FEE + (CREATE_CANISTER_CYCLES - REFUND_AMOUNT);
         assert_matches!(
             get_block(&env, ledger_id, fee_block.unwrap())
                 .transaction
@@ -3504,7 +3613,7 @@ fn test_create_canister() {
                 .transaction
                 .operation,
             Operation::Mint {
-                amount: REFUND_AMOUNT,
+                amount: REFUND_AMOUNT_MINUS_FEE,
                 ..
             }
         );
@@ -3531,7 +3640,7 @@ fn test_create_canister() {
     } = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: None,
@@ -3567,7 +3676,7 @@ fn test_create_canister() {
         amount: CREATE_CANISTER_CYCLES.into(),
         creation_args: None,
     };
-    let canister = create_canister(&env, ledger_id, account10_0, arg.clone())
+    let canister = create_canister(&env, ledger_id, account10_0.owner, arg.clone())
         .unwrap()
         .canister_id;
     expected_balance -= CREATE_CANISTER_CYCLES + FEE;
@@ -3578,7 +3687,7 @@ fn test_create_canister() {
     );
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
     assert_eq!(vec![account10_0.owner], status.settings.controllers);
-    let duplicate = create_canister(&env, ledger_id, account10_0, arg).unwrap_err();
+    let duplicate = create_canister(&env, ledger_id, account10_0.owner, arg).unwrap_err();
     assert_matches!(
         duplicate,
         CreateCanisterError::Duplicate { .. },
@@ -3631,7 +3740,7 @@ fn test_create_canister_duplicate() {
     let canister = create_canister(
         &env,
         ledger_id,
-        account10_0,
+        account10_0.owner,
         CreateCanisterArgs {
             from_subaccount: account10_0.subaccount,
             created_at_time: Some(now),
@@ -3659,7 +3768,7 @@ fn test_create_canister_duplicate() {
         create_canister(
             &env,
             ledger_id,
-            account10_0,
+            account10_0.owner,
             CreateCanisterArgs {
                 from_subaccount: account10_0.subaccount,
                 created_at_time: Some(now),
@@ -3669,6 +3778,162 @@ fn test_create_canister_duplicate() {
         )
         .unwrap_err()
     );
+}
+
+#[test]
+fn test_create_canister_fail() {
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+    install_fake_cmc(&env.state_machine);
+
+    let _ = env.deposit(account1, 1_000_000_000_000_000_000, None);
+
+    let mut expected_total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks_with_ids();
+    let balance_before_attempt = env.icrc1_balance_of(account1);
+    let fee = env.icrc1_fee();
+
+    // if refund_amount is <= env.icrc1_fee() then
+    // 1. the error doesn't have the refund_block
+    // 2. the user has been charged the full amount
+    // 3. only one block was created
+    fail_next_create_canister_with(
+        &env.state_machine,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: 0,
+            create_error: "Error while creating".to_string(),
+        },
+    );
+    let amount = 1_000_000_000_000_000u128;
+    let create_canister_result = env
+        .create_canister(
+            account1.owner,
+            CreateCanisterArgs {
+                from_subaccount: account1.subaccount,
+                created_at_time: None,
+                amount: Nat::from(amount),
+                creation_args: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        create_canister_result,
+        CreateCanisterError::FailedToCreate {
+            fee_block: Some(Nat::from(blocks.len())),
+            refund_block: None,
+            error: "Error while creating".to_string(),
+        }
+    );
+    assert_eq!(
+        balance_before_attempt - amount - fee,
+        env.icrc1_balance_of(account1)
+    );
+    expected_total_supply -= amount + fee;
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(fee),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1,
+                    spender: None,
+                    amount,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
+    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+
+    // if refund_amount is > env.icrc1_fee() then
+    // 1. the error has the refund_block
+    // 2. the user has been charged the fee twice
+    // 3. two blocks are created
+    let balance_before_attempt = env.icrc1_balance_of(account1);
+    let amount = 1_000_000_000_000_000u128;
+    fail_next_create_canister_with(
+        &env.state_machine,
+        cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
+            refund_amount: amount,
+            create_error: "Error while creating".to_string(),
+        },
+    );
+    let create_canister_result = env
+        .create_canister(
+            account1.owner,
+            CreateCanisterArgs {
+                from_subaccount: account1.subaccount,
+                created_at_time: None,
+                amount: Nat::from(amount),
+                creation_args: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        create_canister_result,
+        CreateCanisterError::FailedToCreate {
+            fee_block: Some(Nat::from(blocks.len())),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
+            error: "Error while creating".to_string(),
+        }
+    );
+    assert_eq!(
+        balance_before_attempt - 2 * fee,
+        env.icrc1_balance_of(account1)
+    );
+    expected_total_supply -= 2 * fee;
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(fee),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1,
+                    spender: None,
+                    amount,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let refund_block = BlockWithId {
+        id: Nat::from(blocks.len() + 1),
+        block: Block {
+            phash: Some(burn_block.block.clone().hash()),
+            effective_fee: Some(0),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
+                operation: Operation::Mint {
+                    to: account1,
+                    amount: amount - fee,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks
+        .into_iter()
+        .chain([burn_block, refund_block])
+        .collect::<Vec<_>>();
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]

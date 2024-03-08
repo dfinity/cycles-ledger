@@ -33,7 +33,7 @@ use icrc_ledger_types::{
         transfer::{BlockIndex, Memo},
     },
 };
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
@@ -860,7 +860,7 @@ pub fn transfer(
     // check allowance
     if let Some(spender) = spender {
         if spender != from {
-            read_state(|state| check_allowance(state, &from, &spender, amount, now))?;
+            read_state(|state| check_allowance(state, &from, &spender, amount_with_fee, now))?;
         }
     }
 
@@ -1669,58 +1669,59 @@ pub async fn withdraw(
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
-        if amount > config::FEE {
-            match reimburse(from, amount.saturating_sub(config::FEE), now) {
-                Ok(fee_block) => {
-                    prune(now);
-                    if let Some(spender) = spender {
-                        if spender != from && amount > 3 * config::FEE {
-                            match reimburse_approval(
-                                from,
-                                spender,
-                                amount_with_fee.saturating_sub(3 * config::FEE), // charge FEE for every block: withdraw attempt, refund, refund approval
-                                old_expires_at,
-                                now,
-                            ) {
-                                Ok(approval_refund_block) => {
-                                    return Err(FailedToWithdrawFrom {
-                                        fee_block: Some(Nat::from(fee_block)),
-                                        approval_refund_block: Some(approval_refund_block),
-                                        rejection_code,
-                                        rejection_reason,
-                                    });
-                                }
-                                Err(err) => {
-                                    // this is a critical error that should not
-                                    // happen because approving should never fail.
-                                    log_error_and_trap(&anyhow!(
-                                        "Unable to reimburse approval: {:?}",
-                                        err
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    return Err(FailedToWithdrawFrom {
-                        fee_block: Some(Nat::from(fee_block)),
-                        approval_refund_block: None,
-                        rejection_code,
-                        rejection_reason,
-                    });
-                }
-                Err(err) => {
-                    // this is a critical error that should not
-                    // happen because minting should never fail.
-                    log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err));
-                }
-            }
-        } else {
+        // subtract the fee to pay for the reimburse block
+        let amount_to_reimburse = amount.saturating_sub(config::FEE);
+        if amount_to_reimburse.is_zero() {
             return Err(FailedToWithdrawFrom {
                 fee_block: None,
                 approval_refund_block: None,
                 rejection_code,
                 rejection_reason,
             });
+        }
+        match reimburse(from, amount_to_reimburse, now) {
+            Ok(fee_block) => {
+                prune(now);
+                if let Some(spender) = spender {
+                    if spender != from && amount > 3 * config::FEE {
+                        match reimburse_approval(
+                            from,
+                            spender,
+                            amount_with_fee.saturating_sub(3 * config::FEE), // charge FEE for every block: withdraw attempt, refund, refund approval
+                            old_expires_at,
+                            now,
+                        ) {
+                            Ok(approval_refund_block) => {
+                                return Err(FailedToWithdrawFrom {
+                                    fee_block: Some(Nat::from(fee_block)),
+                                    approval_refund_block: Some(approval_refund_block),
+                                    rejection_code,
+                                    rejection_reason,
+                                });
+                            }
+                            Err(err) => {
+                                // this is a critical error that should not
+                                // happen because approving should never fail.
+                                log_error_and_trap(&anyhow!(
+                                    "Unable to reimburse approval: {:?}",
+                                    err
+                                ));
+                            }
+                        }
+                    }
+                }
+                return Err(FailedToWithdrawFrom {
+                    fee_block: Some(Nat::from(fee_block)),
+                    approval_refund_block: None,
+                    rejection_code,
+                    rejection_reason,
+                });
+            }
+            Err(err) => {
+                // this is a critical error that should not
+                // happen because minting should never fail.
+                log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err));
+            }
         }
     }
 
@@ -1815,7 +1816,19 @@ pub async fn create_canister(
 
     match create_canister_result {
         Err((rejection_code, rejection_reason)) => {
-            match reimburse(from, amount, now) {
+            // subtract the fee to pay for the reimburse block
+            let amount_to_reimburse = amount.saturating_sub(config::FEE);
+            if amount_to_reimburse.is_zero() {
+                return Err(FailedToCreate {
+                    fee_block: Some(Nat::from(block_index)),
+                    refund_block: None,
+                    error: format!(
+                        "CMC rejected canister creation with code {:?} and reason {}",
+                        rejection_code, rejection_reason
+                    ),
+                });
+            }
+            match reimburse(from, amount_to_reimburse, now) {
                 Ok(fee_block) => {
                     prune(now);
                     Err(FailedToCreate {
@@ -1858,10 +1871,18 @@ pub async fn create_canister(
                     refund_amount,
                     create_error,
                 } => {
+                    let refund_amount_to_reimburse = refund_amount.saturating_sub(config::FEE);
+                    if refund_amount_to_reimburse.is_zero() {
+                        return Err(CreateCanisterError::FailedToCreate {
+                            fee_block: Some(Nat::from(block_index)),
+                            refund_block: None,
+                            error: create_error,
+                        });
+                    }
                     let transaction = Transaction {
                         operation: Operation::Mint {
                             to: from,
-                            amount: refund_amount,
+                            amount: refund_amount_to_reimburse,
                         },
                         created_at_time: None,
                         memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
@@ -1869,7 +1890,9 @@ pub async fn create_canister(
 
                     let refund_index = process_transaction(transaction.clone(), now)?;
 
-                    if let Err(err) = mutate_state(|state| state.credit(&from, refund_amount)) {
+                    if let Err(err) =
+                        mutate_state(|state| state.credit(&from, refund_amount_to_reimburse))
+                    {
                         log_error_and_trap(&err.context(format!(
                             "Unable to refund create_canister: {:?}",
                             transaction
