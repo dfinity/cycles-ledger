@@ -1931,6 +1931,71 @@ fn test_icrc2_transfer_fails_if_approve_smaller_than_amount_plus_fee() {
 }
 
 #[test]
+fn test_deduplication() {
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+    let account2 = account(2, None);
+    let fee = env.icrc1_fee();
+
+    let deposit_res = env.deposit(account1, 2 * fee, None);
+    let approve_block_index = env.icrc2_approve_or_trap(
+        account1.owner,
+        ApproveArgs {
+            from_subaccount: account1.subaccount,
+            spender: account2,
+            amount: Nat::from(fee - 1),
+            expected_allowance: Some(Nat::from(0u64)),
+            expires_at: Some(u64::MAX),
+            fee: Some(Nat::from(fee)),
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    let block = env.get_block(approve_block_index);
+    assert_display_eq(
+        Block {
+            phash: Some(env.get_block_hash(deposit_res.block_index)),
+            effective_fee: None,
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                operation: Operation::Approve {
+                    from: account1,
+                    spender: account2,
+                    amount: fee - 1,
+                    expected_allowance: Some(0),
+                    expires_at: Some(u64::MAX),
+                    fee: Some(fee),
+                },
+                memo: None,
+                created_at_time: None,
+            },
+        },
+        block,
+    );
+    let expected_blocks = env.get_all_blocks();
+    let transfer_from_block_err = env.icrc2_transfer_from(
+        account2.owner,
+        TransferFromArgs {
+            spender_subaccount: account2.subaccount,
+            from: account1,
+            to: account2,
+            amount: Nat::from(0u64),
+            fee: Some(Nat::from(fee)),
+            memo: None,
+            created_at_time: None,
+        },
+    );
+
+    assert_eq!(
+        transfer_from_block_err,
+        Err(TransferFromError::InsufficientAllowance {
+            allowance: Nat::from(fee - 1)
+        }),
+    );
+    assert_eq!(expected_blocks, env.get_all_blocks());
+}
+
+#[test]
 fn test_pruning_transactions() {
     let env = TestEnv::setup();
     let account1 = account(1, None);
