@@ -1790,8 +1790,8 @@ fn test_icrc1_transfer_insufficient_funds(env: &TestEnv) {
 
 fn test_icrc1_transfer_duplicate_with_params(
     env: &TestEnv,
-    set_fee: bool,
-    set_memo: bool,
+    set_fee: ShouldSetTheFee,
+    set_memo: ShouldSetTheMemo,
     has_fee_for_second_transfer: bool,
 ) {
     let account_from = account(1, None);
@@ -1852,17 +1852,20 @@ fn test_icrc1_transfer_duplicate_with_params(
 }
 
 fn test_icrc1_transfer_duplicate(env: &TestEnv) {
-    test_icrc1_transfer_duplicate_with_params(env, false, false, false);
-    test_icrc1_transfer_duplicate_with_params(env, true, false, false);
-    test_icrc1_transfer_duplicate_with_params(env, false, true, false);
-    test_icrc1_transfer_duplicate_with_params(env, true, true, false);
+    use ShouldSetTheFee::*;
+    use ShouldSetTheMemo::*;
+
+    test_icrc1_transfer_duplicate_with_params(env, DontSetFee, DontSetMemo, false);
+    test_icrc1_transfer_duplicate_with_params(env, SetFee, DontSetMemo, false);
+    test_icrc1_transfer_duplicate_with_params(env, DontSetFee, SetMemo, false);
+    test_icrc1_transfer_duplicate_with_params(env, SetFee, SetMemo, false);
     // Change the ledger time to avoid duplicates between the first
     // four tests and the next four tests.
     env.state_machine.advance_time(Duration::from_nanos(1));
-    test_icrc1_transfer_duplicate_with_params(env, false, false, true);
-    test_icrc1_transfer_duplicate_with_params(env, true, false, true);
-    test_icrc1_transfer_duplicate_with_params(env, false, true, true);
-    test_icrc1_transfer_duplicate_with_params(env, true, true, true);
+    test_icrc1_transfer_duplicate_with_params(env, DontSetFee, DontSetMemo, true);
+    test_icrc1_transfer_duplicate_with_params(env, SetFee, DontSetMemo, true);
+    test_icrc1_transfer_duplicate_with_params(env, DontSetFee, SetMemo, true);
+    test_icrc1_transfer_duplicate_with_params(env, SetFee, SetMemo, true);
 }
 
 #[test]
