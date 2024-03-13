@@ -957,7 +957,7 @@ fn test_withdraw_fails() {
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw cycles to deleted canister
@@ -996,7 +996,7 @@ fn test_withdraw_fails() {
     expected_total_supply -= 2 * FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
     // the destination invalid error happens after the burn block
-    // was created and balances were changed. In other to fix the
+    // was created and balances were changed. In order to fix the
     // issue, the ledger creates a mint block to refund the amount.
     // Therefore we expect two new blocks, a burn of amount + fee
     // and a mint of amount.
@@ -1074,7 +1074,7 @@ fn test_withdraw_fails() {
         )
         .unwrap_err();
     assert_eq!(FEE + 1, env.icrc1_balance_of(account2));
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // test withdraw deduplication
@@ -1093,7 +1093,7 @@ fn test_withdraw_fails() {
         env.withdraw(account2.owner, args),
         Err(WithdrawError::Duplicate { duplicate_of })
     );
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
@@ -1171,22 +1171,22 @@ fn test_withdraw_from_flow() {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
             // The effective fee of a burn block created by a withdrawal
-            // is the fee of the Ledger. This is different from burn in
-            // other Ledgers because the operation transfers cycles.
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
-                // The transaction.memo is the canister ID receiving the cycles
+                // The memo is the canister ID receiving the cycles
                 // encoded in cbor as object with a 'receiver' field marked as 0.
                 memo: Some(encode_withdraw_memo(&withdraw_receiver)),
                 // Withdrawals are recorded as burns.
                 operation: Operation::Burn {
                     from: account1,
                     spender: Some(withdrawer1),
-                    // The transaction.operation.amount is the withdrawn amount.
+                    // The  operation amount is the withdrawn amount.
                     amount: withdraw_amount,
                 },
             },
@@ -1210,7 +1210,7 @@ fn test_withdraw_from_flow() {
         },
     );
     let withdraw_idx = env
-        .withdraw_from(
+        .withdraw_from_or_trap(
             withdrawer1.owner,
             WithdrawFromArgs {
                 from: account1_1,
@@ -1246,22 +1246,22 @@ fn test_withdraw_from_flow() {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
             // The effective fee of a burn block created by a withdrawal
-            // is the fee of the Ledger. This is different from burn in
-            // other Ledgers because the operation transfers cycles.
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
-                // The transaction.memo is the canister ID receiving the cycles
+                // The memo is the canister ID receiving the cycles
                 // encoded in cbor as object with a 'receiver' field marked as 0.
                 memo: Some(encode_withdraw_memo(&withdraw_receiver)),
                 // Withdrawals are recorded as burns.
                 operation: Operation::Burn {
                     from: account1_1,
                     spender: Some(withdrawer1),
-                    // The transaction.operation.amount is the withdrawn amount.
+                    // The operation amount is the withdrawn amount.
                     amount: withdraw_amount,
                 },
             },
@@ -1320,22 +1320,22 @@ fn test_withdraw_from_flow() {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
             // The effective fee of a burn block created by a withdrawal
-            // is the fee of the Ledger. This is different from burn in
-            // other Ledgers because the operation transfers cycles.
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 // The created_at_time was set to now.
                 created_at_time: Some(now),
-                // The transaction.memo is the canister ID receiving the cycles
+                // The memo is the canister ID receiving the cycles
                 // encoded in cbor as object with a 'receiver' field marked as 0.
                 memo: Some(encode_withdraw_memo(&withdraw_receiver)),
                 // Withdrawals are recorded as burns.
                 operation: Operation::Burn {
                     from: account1_3,
                     spender: Some(withdrawer1),
-                    // The transaction.operation.amount is the withdrawn amount.
+                    // The operation amount is the withdrawn amount.
                     amount: withdraw_amount,
                 },
             },
@@ -1393,22 +1393,22 @@ fn test_withdraw_from_flow() {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
             // The effective fee of a burn block created by a withdrawal
-            // is the fee of the Ledger. This is different from burn in
-            // other Ledgers because the operation transfers cycles.
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
-                // The transaction.memo is the canister ID receiving the cycles
+                // The memo is the canister ID receiving the cycles
                 // encoded in cbor as object with a 'receiver' field marked as 0.
                 memo: Some(encode_withdraw_memo(&withdraw_receiver)),
                 // Withdrawals are recorded as burns.
                 operation: Operation::Burn {
                     from: account1_4,
                     spender: Some(withdrawer1_1),
-                    // The transaction.operation.amount is the withdrawn amount.
+                    // The operation amount is the withdrawn amount.
                     amount: withdraw_amount,
                 },
             },
@@ -1481,7 +1481,7 @@ fn test_withdraw_from_fails() {
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw zero
@@ -1510,7 +1510,7 @@ fn test_withdraw_from_fails() {
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw more than approved
@@ -1554,7 +1554,7 @@ fn test_withdraw_from_fails() {
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1_1));
     expected_total_supply -= FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw to non-canister principal
@@ -1580,7 +1580,7 @@ fn test_withdraw_from_fails() {
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
-    // check that no new blocks was added.
+    // check that no new block was added.
     assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
 
     // withdraw cycles to deleted canister
@@ -1761,7 +1761,7 @@ fn test_withdraw_from_fails() {
     // was created and balances were changed. In order to fix the
     // issue, the ledger creates a mint block to refund the amount.
     // Refunding the approval is not worth it because it would cost more than the approval amount.
-    // Therefore we expect two new blocks, a burn of amount + fee, and a mint of amount.
+    // Therefore we expect two new blocks, a burn of amount + fee and a mint of amount.
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
@@ -1806,7 +1806,7 @@ fn test_withdraw_from_fails() {
         .collect::<Vec<_>>();
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
-    // allowance does not get refunded because of insufficient funds to refund
+    // allowance does not get refunded because of insufficient funds
     env.icrc2_approve_or_trap(
         account1_4.owner,
         ApproveArgs {
@@ -1857,7 +1857,7 @@ fn test_withdraw_from_fails() {
     // was created and balances were changed. In order to fix the
     // issue, the ledger creates a mint block to refund the amount and a new approval.
     // Refunding the approval is not possible because it would cost more than the account can pay for.
-    // Therefore we expect two new blocks, a burn of amount + fee, and a mint of amount.
+    // Therefore we expect two new blocks, a burn of amount + fee and a mint of amount.
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
@@ -1956,7 +1956,7 @@ fn test_withdraw_from_fails() {
     expected_total_supply -= withdraw_amount + FEE + FEE;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
-    // approval refund does not touch expires_at
+    // approval refund does not affect expires_at
     let expires_at = env.nanos_since_epoch_u64() + 100_000_000;
     env.icrc2_approve_or_trap(
         account1_6.owner,
@@ -2105,7 +2105,7 @@ fn test_withdraw_from_fails() {
     // was created and balances were changed. In order to fix the
     // issue, the ledger creates a mint block to refund the amount and a new approval.
     // Refunding the approval is not possible because it would cost more than the account can pay for.
-    // Therefore we expect two new blocks, a burn of amount + fee, and a mint of amount.
+    // Therefore we expect two new blocks, a burn of amount + fee and a mint of amount.
     assert_eq!(blocks.len() + 1, env.number_of_blocks());
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
