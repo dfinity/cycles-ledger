@@ -11,7 +11,7 @@ use crate::{
     endpoints::{BlockWithId, GetBlocksArg, GetBlocksArgs, GetBlocksResult},
     generic_to_ciborium_value,
 };
-use anyhow::{anyhow, bail, Context, Error};
+use anyhow::{bail, Context};
 use candid::{Nat, Principal};
 use ic_canister_log::log;
 use ic_cdk::api::call::{call_with_payment128, RejectionCode};
@@ -790,7 +790,8 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
         // and within `process_transaction`.
         // If this happens then log an error and panic so that
         // the state is reset to a valid one.
-        log_error_and_trap(&err.context(format!("Unable to credit {} to {}", to, amount)));
+        let err = err.context(format!("Unable to credit {to} to {amount}"));
+        ic_cdk::trap(&format!("{err:#}"));
     }
 
     Ok(block_index)
@@ -889,20 +890,19 @@ pub fn transfer(
             if let Err(err) =
                 mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
-                let err = anyhow!(err.to_string());
-                log_error_and_trap(
-                    &err.context(format!("Unable to perform transfer: {:?}", transaction)),
-                );
+                ic_cdk::trap(&format!("Unable to perform transfer {transaction}: {err}"));
             }
         }
     }
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
-        log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", transaction)))
+        let err = err.context(format!("Unable to perform transfer {transaction}"));
+        ic_cdk::trap(&format!("{err:#}"));
     };
 
     if let Err(err) = mutate_state(|state| state.credit(&to, amount)) {
-        log_error_and_trap(&err.context(format!("Unable to perform transfer: {:?}", transaction)))
+        let err = err.context(format!("Unable to perform transfer {transaction}"));
+        ic_cdk::trap(&format!("{err:#}"));
     };
 
     Ok(Nat::from(block_index))
@@ -988,7 +988,8 @@ pub fn approve(
     mutate_state(|state| record_approval(state, &from, &spender, amount, expires_at));
 
     if let Err(err) = mutate_state(|state| state.debit(&from, crate::config::FEE)) {
-        log_error_and_trap(&err.context(format!("Unable to approve: {:?}", transaction)));
+        let err = err.context(format!("Unable to approve {transaction}"));
+        ic_cdk::trap(&format!("{err:#}"));
     }
 
     Ok(Nat::from(block_index))
@@ -1431,14 +1432,6 @@ pub fn validate_created_at_time(
     Ok(())
 }
 
-/// Add a log entry with high priority for the error and trap.
-pub fn log_error_and_trap(err: &Error) -> ! {
-    // The alternate selector {:#} prints the causes too, see
-    // https://docs.rs/anyhow/latest/anyhow/struct.Error.html#display-representations.
-    log!(P0, "{:#}", err);
-    ic_cdk::trap(&format!("{}", err))
-}
-
 pub const PENALIZE_MEMO: [u8; MAX_MEMO_LENGTH as usize] = [u8::MAX; MAX_MEMO_LENGTH as usize];
 pub const CREATE_CANISTER_MEMO: [u8; MAX_MEMO_LENGTH as usize] =
     [u8::MAX - 1; MAX_MEMO_LENGTH as usize];
@@ -1468,7 +1461,8 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
         }
 
         if let Err(err) = s.debit(from, crate::config::FEE) {
-            log_error_and_trap(&err.context(format!("Unable to penalize account {:?}", from)))
+            let err = err.context(format!("Unable to penalize account {:?}", from));
+            ic_cdk::trap(&format!("{err:#}"))
         }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -1554,7 +1548,8 @@ pub async fn withdraw(
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
-        log_error_and_trap(&err.context(format!("Unable to perform withdraw: {:?}", transaction)))
+        let err = err.context(format!("Unable to perform withdraw: {:?}", transaction));
+        ic_cdk::trap(&format!("{err:#}"))
     };
 
     prune(now);
@@ -1585,7 +1580,7 @@ pub async fn withdraw(
             Err(err) => {
                 // this is a critical error that should not
                 // happen because minting should never fail.
-                log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err))
+                ic_cdk::trap(&format!("Unable to reimburse caller: {}", err))
             }
         }
     }
@@ -1638,10 +1633,8 @@ pub async fn create_canister(
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
-        log_error_and_trap(&err.context(format!(
-            "Unable to perform create_canister: {:?}",
-            transaction
-        )))
+        let err = err.context(format!("Unable to perform create_canister {transaction}"));
+        ic_cdk::trap(&format!("{err:#}"));
     };
 
     prune(now);
@@ -1703,7 +1696,7 @@ pub async fn create_canister(
                 Err(err) => {
                     // this is a critical error that should not
                     // happen because minting should never fail.
-                    log_error_and_trap(&anyhow!("Unable to reimburse caller: {}", err))
+                    ic_cdk::trap(&format!("Unable to reimburse caller: {err}"))
                 }
             }
         }
@@ -1719,7 +1712,7 @@ pub async fn create_canister(
                     });
                 } else {
                     // this should not happen because processing the transaction already checks if it can be hashed
-                    log_error_and_trap(&anyhow!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
+                    ic_cdk::trap(&format!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
                 }
                 Ok(CreateCanisterSuccess {
                     block_id: Nat::from(block_index),
@@ -1753,10 +1746,11 @@ pub async fn create_canister(
                     if let Err(err) =
                         mutate_state(|state| state.credit(&from, refund_amount_to_reimburse))
                     {
-                        log_error_and_trap(&err.context(format!(
-                            "Unable to refund create_canister: {:?}",
-                            transaction
-                        )))
+                        let err = err.context(format!(
+                            "Unable to refund create_canister: \
+                                     {transaction:?}"
+                        ));
+                        ic_cdk::trap(&format!("{err:#}"))
                     };
 
                     prune(now);
@@ -1796,7 +1790,8 @@ fn reimburse(acc: Account, amount: u128, now: u64) -> Result<u64, ProcessTransac
     let block_index = process_transaction(transaction.clone(), now)?;
 
     if let Err(err) = mutate_state(|state| state.credit(&acc, amount)) {
-        log_error_and_trap(&err.context(format!("Unable to reimburse withdraw: {:?}", transaction)))
+        let err = err.context(format!("Unable to reimburse withdraw: {transaction:?}"));
+        ic_cdk::trap(&format!("{err:#}"))
     };
 
     prune(now);
