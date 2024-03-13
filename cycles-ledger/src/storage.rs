@@ -1055,7 +1055,7 @@ impl From<anyhow::Error> for ProcessTransactionError {
     }
 }
 
-mod transfer_from {
+pub mod transfer_from {
     use candid::Nat;
     use icrc_ledger_types::{icrc1::account::Account, icrc2::transfer_from::TransferFromError};
 
