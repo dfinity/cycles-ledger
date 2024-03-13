@@ -1461,10 +1461,8 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
         }
 
         if let Err(err) = s.debit(from, crate::config::FEE) {
-            ic_cdk::trap(
-                &err.context(format!("Unable to penalize account {:?}", from))
-                    .to_string(),
-            )
+            let err = err.context(format!("Unable to penalize account {:?}", from));
+            ic_cdk::trap(&format!("{err:#}"))
         }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -1550,10 +1548,8 @@ pub async fn withdraw(
     let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
-        ic_cdk::trap(
-            &err.context(format!("Unable to perform withdraw: {:?}", transaction))
-                .to_string(),
-        )
+        let err = err.context(format!("Unable to perform withdraw: {:?}", transaction));
+        ic_cdk::trap(&format!("{err:#}"))
     };
 
     prune(now);
