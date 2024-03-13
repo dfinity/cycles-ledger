@@ -71,6 +71,17 @@ pub struct WithdrawArgs {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct WithdrawFromArgs {
+    #[serde(default)]
+    pub spender_subaccount: Option<Subaccount>,
+    pub from: Account,
+    pub to: Principal,
+    #[serde(default)]
+    pub created_at_time: Option<u64>,
+    pub amount: NumCycles,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum WithdrawError {
     BadFee {
         expected_fee: NumCycles,
@@ -88,6 +99,38 @@ pub enum WithdrawError {
     },
     FailedToWithdraw {
         fee_block: Option<Nat>,
+        rejection_code: RejectionCode,
+        rejection_reason: String,
+    },
+    GenericError {
+        error_code: Nat,
+        message: String,
+    },
+    InvalidReceiver {
+        receiver: Principal,
+    },
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum WithdrawFromError {
+    InsufficientFunds {
+        balance: NumCycles,
+    },
+    InsufficientAllowance {
+        allowance: NumCycles,
+    },
+    TooOld,
+    CreatedInFuture {
+        ledger_time: u64,
+    },
+    TemporarilyUnavailable,
+    Duplicate {
+        duplicate_of: BlockIndex,
+    },
+    FailedToWithdrawFrom {
+        withdraw_from_block: Option<BlockIndex>,
+        refund_block: Option<BlockIndex>,
+        approval_refund_block: Option<BlockIndex>,
         rejection_code: RejectionCode,
         rejection_reason: String,
     },

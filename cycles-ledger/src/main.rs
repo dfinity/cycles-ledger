@@ -1,14 +1,17 @@
-use candid::{candid_method, Nat};
+use candid::{candid_method, Nat, Principal};
 use cycles_ledger::endpoints::{
     DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs, GetBlocksResult,
-    LedgerArgs, SupportedBlockType, WithdrawError,
+    LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::storage::{
     balance_of, mutate_config, mutate_state, prune, read_config, read_state,
 };
-use cycles_ledger::{config, endpoints, storage, transfer_from_error_to_transfer_error};
+use cycles_ledger::{
+    config, endpoints, storage, transfer_from_error_to_transfer_error,
+    withdraw_from_error_to_withdraw_error,
+};
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
@@ -266,6 +269,23 @@ fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     storage::get_blocks(args)
 }
 
+async fn execute_withdraw(
+    from: Account,
+    to: Principal,
+    spender: Option<Account>,
+    amount: Nat,
+    created_at_time: Option<u64>,
+) -> Result<Nat, WithdrawFromError> {
+    let Some(amount) = amount.0.to_u128() else {
+        return Err(WithdrawFromError::InsufficientFunds {
+            balance: Nat::from(balance_of(&from)),
+        });
+    };
+
+    let now = ic_cdk::api::time();
+    storage::withdraw(from, to, spender, amount, now, created_at_time).await
+}
+
 #[update]
 #[candid_method]
 async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
@@ -273,18 +293,23 @@ async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
         owner: ic_cdk::caller(),
         subaccount: args.from_subaccount,
     };
+    execute_withdraw(from, args.to, None, args.amount, args.created_at_time)
+        .await
+        .map_err(withdraw_from_error_to_withdraw_error)
+}
 
-    let Some(amount) = args.amount.0.to_u128() else {
-        return Err(WithdrawError::InsufficientFunds {
-            balance: Nat::from(balance_of(&from)),
-        });
+#[update]
+#[candid_method]
+async fn withdraw_from(args: endpoints::WithdrawFromArgs) -> Result<Nat, WithdrawFromError> {
+    let spender = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.spender_subaccount,
     };
-
-    storage::withdraw(
-        from,
+    execute_withdraw(
+        args.from,
         args.to,
-        amount,
-        ic_cdk::api::time(),
+        Some(spender),
+        args.amount,
         args.created_at_time,
     )
     .await

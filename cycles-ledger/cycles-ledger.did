@@ -58,6 +58,30 @@ type WithdrawError = variant {
   TooOld;
   InsufficientFunds : record { balance : nat };
 };
+type WithdrawFromArgs = record {
+  spender_subaccount : opt vec nat8;
+  from : Account;
+  to : principal;
+  amount : nat;
+  created_at_time : opt nat64;
+};
+type WithdrawFromError = variant {
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  FailedToWithdrawFrom : record {
+    withdraw_from_block : opt nat;
+    refund_block : opt nat;
+    approval_refund_block : opt nat;
+    rejection_code : RejectionCode;
+    rejection_reason : text;
+  };
+  Duplicate : record { duplicate_of : BlockIndex };
+  InvalidReceiver : record { receiver : principal };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  InsufficientFunds : record { balance : nat };
+  InsufficientAllowance : record { allowance : nat };
+};
 type SupportedStandard = record { url : text; name : text };
 type SupportedBlockType = record { block_type : text; url : text };
 type TransferArgs = record {
@@ -272,5 +296,6 @@ service : (ledger_args : LedgerArgs) -> {
   icrc3_get_blocks : (GetBlocksArgs) -> (GetBlocksResult) query;
   icrc3_supported_block_types : () -> (vec SupportedBlockType) query;
   withdraw : (WithdrawArgs) -> (variant { Ok : BlockIndex; Err : WithdrawError });
+  withdraw_from : (WithdrawFromArgs) -> (variant { Ok : BlockIndex; Err : WithdrawFromError });
   create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
 };
