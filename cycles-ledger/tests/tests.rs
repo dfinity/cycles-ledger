@@ -905,9 +905,11 @@ fn test_withdraw_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
-        WithdrawError::InsufficientFunds { balance } if balance == 1_000_000_000_000_u128
+        WithdrawError::InsufficientFunds {
+            balance: Nat::from(1_000_000_000_000_u128)
+        }
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     let mut expected_total_supply = 1_000_000_000_000;
@@ -927,9 +929,11 @@ fn test_withdraw_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
-        WithdrawError::InsufficientFunds { balance } if balance == 0_u128
+        WithdrawError::InsufficientFunds {
+            balance: Nat::from(0_u128)
+        }
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply,);
     // check that no new blocks was added.
@@ -951,9 +955,11 @@ fn test_withdraw_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
-        WithdrawError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+        WithdrawError::InvalidReceiver {
+            receiver: self_authenticating_principal
+        }
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
@@ -980,11 +986,12 @@ fn test_withdraw_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
         WithdrawError::FailedToWithdraw {
             rejection_code: RejectionCode::DestinationInvalid,
-            ..
+            fee_block: Some(Nat::from(blocks.len() + 1)),
+            rejection_reason: format!("Canister {deleted_canister} not found.")
         }
     );
     // the caller pays the fee twice: once for the burn block and
@@ -1209,18 +1216,16 @@ fn test_withdraw_from_flow() {
             created_at_time: None,
         },
     );
-    let withdraw_idx = env
-        .withdraw_from_or_trap(
-            withdrawer1.owner,
-            WithdrawFromArgs {
-                from: account1_1,
-                to: withdraw_receiver,
-                created_at_time: None,
-                amount: Nat::from(withdraw_amount),
-                spender_subaccount: withdrawer1.subaccount,
-            },
-        )
-        .unwrap();
+    let withdraw_idx = env.withdraw_from_or_trap(
+        withdrawer1.owner,
+        WithdrawFromArgs {
+            from: account1_1,
+            to: withdraw_receiver,
+            created_at_time: None,
+            amount: Nat::from(withdraw_amount),
+            spender_subaccount: withdrawer1.subaccount,
+        },
+    );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
         env.state_machine.cycle_balance(withdraw_receiver)
@@ -1471,9 +1476,11 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
-        WithdrawFromError::InsufficientFunds { balance } if balance == balance_before_attempt
+        WithdrawFromError::InsufficientFunds {
+            balance: Nat::from(balance_before_attempt)
+        }
     );
     assert_eq!(
         allowance_before_attempt,
@@ -1497,12 +1504,12 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
         WithdrawFromError::GenericError {
-            error_code,
-            ..
-        } if error_code == CANNOT_TRANSFER_FROM_ZERO
+            error_code: CANNOT_TRANSFER_FROM_ZERO.into(),
+            message: "The withdraw_from 0 cycles is not possible".into()
+        }
     );
     assert_eq!(
         allowance_before_attempt,
@@ -1543,9 +1550,11 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
-        WithdrawFromError::InsufficientAllowance { allowance } if allowance == allowance_before_attempt.allowance
+        WithdrawFromError::InsufficientAllowance {
+            allowance: allowance_before_attempt.allowance.clone()
+        }
     );
     assert_eq!(
         allowance_before_attempt,
@@ -1574,9 +1583,11 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
-        WithdrawFromError::InvalidReceiver { receiver } if receiver == self_authenticating_principal
+        WithdrawFromError::InvalidReceiver {
+            receiver: self_authenticating_principal
+        }
     );
     assert_eq!(balance_before_attempt, env.icrc1_balance_of(account1));
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
@@ -1620,12 +1631,14 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
         WithdrawFromError::FailedToWithdrawFrom {
             rejection_code: RejectionCode::DestinationInvalid,
-            approval_refund_block: Some(_),
-            ..
+            withdraw_from_block: Some(Nat::from(blocks.len())),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
+            approval_refund_block: Some(Nat::from(blocks.len() + 2)),
+            rejection_reason: format!("Canister {deleted_canister} not found.")
         }
     );
     assert_eq!(
@@ -1715,7 +1728,7 @@ fn test_withdraw_from_fails() {
         ApproveArgs {
             from_subaccount: account1_3.subaccount,
             spender: withdrawer1,
-            amount: Nat::from(2 * FEE + 10_000),
+            amount: Nat::from(u128::MAX),
             expected_allowance: None,
             expires_at: None,
             fee: None,
@@ -1738,13 +1751,14 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
         WithdrawFromError::FailedToWithdrawFrom {
-            fee_block: Some(_),
             rejection_code: RejectionCode::DestinationInvalid,
+            withdraw_from_block: Some(Nat::from(blocks.len())),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
             approval_refund_block: None,
-            ..
+            rejection_reason: format!("Canister {deleted_canister} not found.")
         }
     );
     assert_eq!(
@@ -1752,7 +1766,7 @@ fn test_withdraw_from_fails() {
         env.icrc1_balance_of(account1_3)
     );
     assert_eq!(
-        Nat::from(0_u128),
+        Nat::from(u128::MAX - 2 * FEE - 10_000),
         env.icrc2_allowance(account1_3, withdrawer1).allowance
     );
     expected_total_supply -= 2 * FEE;
@@ -1835,12 +1849,14 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
         WithdrawFromError::FailedToWithdrawFrom {
             rejection_code: RejectionCode::DestinationInvalid,
+            withdraw_from_block: Some(Nat::from(blocks.len())),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
             approval_refund_block: None,
-            ..
+            rejection_reason: format!("Canister {deleted_canister} not found."),
         }
     );
     assert_eq!(
@@ -2085,13 +2101,14 @@ fn test_withdraw_from_fails() {
             },
         )
         .unwrap_err();
-    assert_matches!(
+    assert_eq!(
         withdraw_result,
         WithdrawFromError::FailedToWithdrawFrom {
-            fee_block: None,
             rejection_code: RejectionCode::DestinationInvalid,
+            withdraw_from_block: Some(Nat::from(blocks.len())),
+            refund_block: None,
             approval_refund_block: None,
-            ..
+            rejection_reason: format!("Canister {deleted_canister} not found.")
         }
     );
     assert_eq!(Nat::from(0_u128), env.icrc1_balance_of(account1_7));

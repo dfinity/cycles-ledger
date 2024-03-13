@@ -69,7 +69,8 @@ type WithdrawFromError = variant {
   GenericError : record { message : text; error_code : nat };
   TemporarilyUnavailable;
   FailedToWithdrawFrom : record {
-    fee_block : opt nat;
+    withdraw_from_block : opt nat;
+    refund_block : opt nat;
     approval_refund_block : opt nat;
     rejection_code : RejectionCode;
     rejection_reason : text;

@@ -1673,7 +1673,8 @@ pub async fn withdraw(
         let amount_to_reimburse = amount.saturating_sub(config::FEE);
         if amount_to_reimburse.is_zero() {
             return Err(FailedToWithdrawFrom {
-                fee_block: None,
+                withdraw_from_block: Some(block_index.into()),
+                refund_block: None,
                 approval_refund_block: None,
                 rejection_code,
                 rejection_reason,
@@ -1683,17 +1684,19 @@ pub async fn withdraw(
             Ok(fee_block) => {
                 prune(now);
                 if let Some(spender) = spender {
-                    if spender != from && amount > 3 * config::FEE {
+                    // charge FEE for every block: withdraw attempt, refund, refund approval
+                    if spender != from && amount > 2 * config::FEE {
                         match reimburse_approval(
                             from,
                             spender,
-                            amount_with_fee.saturating_sub(3 * config::FEE), // charge FEE for every block: withdraw attempt, refund, refund approval
+                            amount_to_reimburse.saturating_sub(config::FEE),
                             old_expires_at,
                             now,
                         ) {
                             Ok(approval_refund_block) => {
                                 return Err(FailedToWithdrawFrom {
-                                    fee_block: Some(Nat::from(fee_block)),
+                                    withdraw_from_block: Some(block_index.into()),
+                                    refund_block: Some(Nat::from(fee_block)),
                                     approval_refund_block: Some(approval_refund_block),
                                     rejection_code,
                                     rejection_reason,
@@ -1711,7 +1714,8 @@ pub async fn withdraw(
                     }
                 }
                 return Err(FailedToWithdrawFrom {
-                    fee_block: Some(Nat::from(fee_block)),
+                    withdraw_from_block: Some(block_index.into()),
+                    refund_block: Some(Nat::from(fee_block)),
                     approval_refund_block: None,
                     rejection_code,
                     rejection_reason,
@@ -1730,7 +1734,6 @@ pub async fn withdraw(
 
 pub async fn create_canister(
     from: Account,
-    spender: Option<Account>,
     amount: u128,
     now: u64,
     created_at_time: Option<u64>,
@@ -1741,7 +1744,7 @@ pub async fn create_canister(
     let transaction = Transaction {
         operation: Operation::Burn {
             from,
-            spender,
+            spender: None,
             amount,
         },
         created_at_time,

@@ -305,7 +305,6 @@ async fn create_canister(
 
     storage::create_canister(
         from,
-        None,
         amount,
         ic_cdk::api::time(),
         args.created_at_time,

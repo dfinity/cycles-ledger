@@ -204,7 +204,7 @@ pub fn withdraw_from_error_to_withdraw_error(e: WithdrawFromError) -> WithdrawEr
             WithdrawError::InvalidReceiver { receiver }
         }
         WithdrawFromError::FailedToWithdrawFrom {
-            fee_block,
+            refund_block: fee_block,
             rejection_code,
             rejection_reason,
             ..

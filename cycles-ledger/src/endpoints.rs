@@ -128,7 +128,8 @@ pub enum WithdrawFromError {
         duplicate_of: BlockIndex,
     },
     FailedToWithdrawFrom {
-        fee_block: Option<BlockIndex>,
+        withdraw_from_block: Option<BlockIndex>,
+        refund_block: Option<BlockIndex>,
         approval_refund_block: Option<BlockIndex>,
         rejection_code: RejectionCode,
         rejection_reason: String,
