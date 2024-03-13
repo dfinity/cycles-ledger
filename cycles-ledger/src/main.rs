@@ -1,6 +1,7 @@
 use candid::{candid_method, Nat};
 use cycles_ledger::endpoints::{
-    DataCertificate, GetBlocksArgs, GetBlocksResult, LedgerArgs, WithdrawError,
+    DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs, GetBlocksResult,
+    LedgerArgs, SupportedBlockType, WithdrawError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -104,6 +105,33 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
         endpoints::SupportedStandard {
             name: "ICRC-3".to_string(),
             url: "https://github.com/dfinity/ICRC-1/pull/128".to_string(),
+        },
+    ]
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
+    vec![
+        SupportedBlockType {
+            block_type: "1burn".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-1/README.md"
+                .to_string(),
+        },
+        SupportedBlockType {
+            block_type: "1mint".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-1/README.md"
+                .to_string(),
+        },
+        SupportedBlockType {
+            block_type: "2xfer".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md"
+                .to_string(),
+        },
+        SupportedBlockType {
+            block_type: "2approve".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md"
+                .to_string(),
         },
     ]
 }
@@ -433,6 +461,12 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
 #[candid_method(query)]
 fn icrc3_get_tip_certificate() -> Option<DataCertificate> {
     read_state(|state| state.get_tip_certificate())
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc3_get_archives(_args: GetArchivesArgs) -> Vec<GetArchivesResult> {
+    vec![]
 }
 
 fn main() {}

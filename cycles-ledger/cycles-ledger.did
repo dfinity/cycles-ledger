@@ -107,6 +107,25 @@ type Value = variant {
   Array : vec Value;
 };
 
+type GetArchivesArgs = record {
+    // The last archive seen by the client.
+    // The Ledger will return archives coming
+    // after this one if set, otherwise it
+    // will return the first archives.
+    from : opt principal;
+};
+
+type GetArchivesResult = vec record {
+    // The id of the archive
+    canister_id : principal;
+
+    // The first block in the archive
+    start : nat;
+
+    // The last block in the archive
+    end : nat;
+};
+
 type GetBlocksArgs = vec record { start : nat; length : nat };
 
 type GetBlocksResult = record {
@@ -247,8 +266,10 @@ service : (ledger_args : LedgerArgs) -> {
   icrc2_allowance : (AllowanceArgs) -> (Allowance) query;
   icrc2_approve : (ApproveArgs) -> (variant { Ok : nat; Err : ApproveError });
   icrc2_transfer_from : (TransferFromArgs) -> (variant { Ok : nat; Err : TransferFromError });
+  icrc3_get_archives : (GetArchivesArgs) -> (GetArchivesResult) query;
   icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
   icrc3_get_blocks : (GetBlocksArgs) -> (GetBlocksResult) query;
+  icrc3_supported_block_types : () -> (vec record { block_type : text; url : text }) query;
   withdraw : (WithdrawArgs) -> (variant { Ok : BlockIndex; Err : WithdrawError });
   create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
 };
