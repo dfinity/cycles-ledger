@@ -59,6 +59,7 @@ type WithdrawError = variant {
   InsufficientFunds : record { balance : nat };
 };
 type SupportedStandard = record { url : text; name : text };
+type SupportedBlockType = record { block_type : text; url : text };
 type TransferArgs = record {
   from_subaccount : opt vec nat8;
   to : Account;
@@ -269,7 +270,7 @@ service : (ledger_args : LedgerArgs) -> {
   icrc3_get_archives : (GetArchivesArgs) -> (GetArchivesResult) query;
   icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
   icrc3_get_blocks : (GetBlocksArgs) -> (GetBlocksResult) query;
-  icrc3_supported_block_types : () -> (vec record { block_type : text; url : text }) query;
+  icrc3_supported_block_types : () -> (vec SupportedBlockType) query;
   withdraw : (WithdrawArgs) -> (variant { Ok : BlockIndex; Err : WithdrawError });
   create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
 };
