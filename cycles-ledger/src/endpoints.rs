@@ -284,3 +284,21 @@ pub struct CreateCanisterSuccess {
     pub block_id: Nat,
     pub canister_id: Principal,
 }
+
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub struct SupportedBlockType {
+    pub block_type: String,
+    pub url: String,
+}
+
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub struct GetArchivesArgs {
+    pub from: Option<Principal>,
+}
+
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub struct GetArchivesResult {
+    pub canister_id: Principal,
+    pub start: Nat,
+    pub end: Nat,
+}
