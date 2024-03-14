@@ -2219,7 +2219,7 @@ fn test_icrc2_approve_self() {
 }
 
 #[test]
-fn test_icrc_2approve_cap() {
+fn test_icrc2_approve_cap() {
     let env = TestEnv::setup();
     let from = account(0, None);
     let spender = account(1, None);
