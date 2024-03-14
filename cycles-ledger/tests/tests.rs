@@ -3508,7 +3508,7 @@ fn test_icrc2_approve() {
 
     test_icrc2_approve_ok_without_created_at_time(&env);
     // The test should be able to run many times with no
-    // issues as it doesn't mark the transasctions for deduplication.
+    // issues as it doesn't mark the transactions for deduplication.
     test_icrc2_approve_ok_without_created_at_time(&env);
     // Test with created_at_time set.
     test_icrc2_approve_ok_with_created_at_time(&env);
