@@ -3821,13 +3821,24 @@ fn test_icrc2_transfer_from_insufficient_funds_with_params(
     set_fee: ShouldSetFee,
     set_memo: ShouldSetMemo,
 ) {
-    let account_from = account(1, None);
+    let account_from = account(100, None);
     let account_to = account(2, None);
     let account_spender = account(4, None);
     let fee = env.icrc1_fee();
 
-    // Deposit so that account_from has at least the fee in its account
-    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let _deposit_index = env.deposit(account_from, 3 * fee, None);
+    // remove the cycles from account_from minus the 2 fees needed
+    // for the test
+    let amount_to_remove = env.icrc1_balance_of(account_from).saturating_sub(3 * fee);
+    let args = TransferArgs {
+        from_subaccount: account_from.subaccount,
+        to: account_to,
+        fee: None,
+        created_at_time: None,
+        memo: None,
+        amount: Nat::from(amount_to_remove),
+    };
+    let _transfer_index = env.icrc1_transfer_or_trap(account_from.owner, args);
     let args = ApproveArgs {
         from_subaccount: account_from.subaccount,
         spender: account_spender,
@@ -3948,16 +3959,27 @@ fn test_icrc2_transfer_from_duplicate_with_params(
         // 1 nanosecond before being in the future
         ledger_time + config::PERMITTED_DRIFT,
     ] {
-        // Deposit so that account_from has enough fee to make one
-        // or two transfers. Note that in case account_from has
-        // only one fee then the second transfer should return
-        // a duplicate error and not an insufficient funds error
-        let deposit_amount = if has_fee_for_second_transfer {
-            2 * fee
+        let amount_to_deposit = if has_fee_for_second_transfer {
+            4 * fee
         } else {
-            fee
+            3 * fee
         };
-        let _deposit_index = env.deposit(account_from, deposit_amount, None);
+        let _deposit_index = env.deposit(account_from, amount_to_deposit, None);
+
+        // remove the cycles from account_from minus the fees needed
+        // for the test
+        let amount_to_remove = env
+            .icrc1_balance_of(account_from)
+            .saturating_sub(amount_to_deposit);
+        let args = TransferArgs {
+            from_subaccount: account_from.subaccount,
+            to: account_to,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(amount_to_remove),
+        };
+        let _transfer_index = env.icrc1_transfer_or_trap(account_from.owner, args);
         let args = ApproveArgs {
             from_subaccount: account_from.subaccount,
             spender: account_spender,
