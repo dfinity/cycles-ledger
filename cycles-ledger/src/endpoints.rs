@@ -279,6 +279,20 @@ pub struct CreateCanisterArgs {
     pub creation_args: Option<CmcCreateCanisterArgs>,
 }
 
+#[derive(Debug, Clone, CandidType, Deserialize, PartialEq, Eq)]
+pub struct CreateCanisterFromArgs {
+    pub from: Account,
+    #[serde(default)]
+    pub spender_subaccount: Option<Subaccount>,
+    #[serde(default)]
+    pub created_at_time: Option<u64>,
+    /// Amount of cycles used to create the canister.
+    /// The new canister will have `amount - canister creation fee` cycles when created.
+    pub amount: NumCycles,
+    #[serde(default)]
+    pub creation_args: Option<CmcCreateCanisterArgs>,
+}
+
 /// Error for create_canister endpoint
 #[derive(Serialize, Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
 pub enum CmcCreateCanisterError {
@@ -311,6 +325,37 @@ pub enum CreateCanisterError {
         fee_block: Option<Nat>,
         refund_block: Option<Nat>,
         error: String,
+    },
+    GenericError {
+        error_code: Nat,
+        message: String,
+    },
+}
+
+/// Error for create_canister endpoint
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum CreateCanisterFromError {
+    InsufficientFunds {
+        balance: NumCycles,
+    },
+    InsufficientAllowance {
+        allowance: NumCycles,
+    },
+    TooOld,
+    CreatedInFuture {
+        ledger_time: u64,
+    },
+    TemporarilyUnavailable,
+    Duplicate {
+        duplicate_of: BlockIndex,
+        canister_id: Option<Principal>,
+    },
+    FailedToCreateFrom {
+        create_from_block: Option<BlockIndex>,
+        refund_block: Option<BlockIndex>,
+        approval_refund_block: Option<BlockIndex>,
+        rejection_code: RejectionCode,
+        rejection_reason: String,
     },
     GenericError {
         error_code: Nat,

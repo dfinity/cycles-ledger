@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     endpoints::{
-        self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterSuccess, DataCertificate,
-        DepositResult, GetBlocksArg, GetBlocksArgs, GetBlocksResult, WithdrawArgs,
-        WithdrawFromArgs,
+        self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterFromArgs,
+        CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
+        GetBlocksResult, WithdrawArgs, WithdrawFromArgs,
     },
     storage::{Block, CMC_PRINCIPAL},
 };
@@ -154,6 +154,15 @@ pub fn create_canister(
     args: CreateCanisterArgs,
 ) -> Result<CreateCanisterSuccess, endpoints::CreateCanisterError> {
     update_or_panic(env, ledger_id, caller, "create_canister", args)
+}
+
+pub fn create_canister_from(
+    env: &StateMachine,
+    ledger_id: Principal,
+    caller: Principal,
+    args: CreateCanisterFromArgs,
+) -> Result<CreateCanisterSuccess, endpoints::CreateCanisterFromError> {
+    update_or_panic(env, ledger_id, caller, "create_canister_from", args)
 }
 
 pub fn canister_status(
