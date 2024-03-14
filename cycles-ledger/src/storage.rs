@@ -1962,7 +1962,7 @@ pub async fn create_canister(
                                     return Err(FailedToCreateFrom {
                                         create_from_block: Some(block_index.into()),
                                         refund_block: Some(refund_block.into()),
-                                        approval_refund_block: Some(approval_refund_block.into()),
+                                        approval_refund_block: Some(approval_refund_block),
                                         rejection_code,
                                         rejection_reason,
                                     });
@@ -1977,13 +1977,13 @@ pub async fn create_canister(
                             }
                         }
                     }
-                    return Err(FailedToCreateFrom {
+                    Err(FailedToCreateFrom {
                         create_from_block: Some(block_index.into()),
                         refund_block: Some(refund_block.into()),
                         approval_refund_block: None,
                         rejection_code,
                         rejection_reason,
-                    });
+                    })
                 }
                 Err(err) => {
                     // this is a critical error that should not

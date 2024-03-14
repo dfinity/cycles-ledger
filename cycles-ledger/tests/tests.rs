@@ -4869,7 +4869,7 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     // check that no new block was added.
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // if refund_amount is <= env.icrc1_fee() then
     // 1. the error doesn't have the refund_block
@@ -4948,7 +4948,7 @@ fn test_create_canister_from_fail() {
         .unwrap(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // if env.icrc1_fee() < refund_amount < 2 * env.irc1_fee() then
     // 1. the user receives a refund
@@ -5048,7 +5048,7 @@ fn test_create_canister_from_fail() {
         .into_iter()
         .chain([burn_block, refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // if refund_amount > 2 * env.irc1_fee() then
     // 1. the user receives a refund
@@ -5171,7 +5171,7 @@ fn test_create_canister_from_fail() {
         .into_iter()
         .chain([burn_block, refund_block, approval_refund_block])
         .collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // duplicate
     let created_at_time = Some(env.nanos_since_epoch_u64());
@@ -5405,7 +5405,7 @@ fn test_create_canister_from_fail() {
         .unwrap(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 
 #[test]
