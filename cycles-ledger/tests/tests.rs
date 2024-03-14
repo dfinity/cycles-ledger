@@ -2183,7 +2183,7 @@ fn test_approve_max_allowance_size() {
 }
 
 #[test]
-fn test_approve_self() {
+fn test_icrc2_approve_self() {
     let env = TestEnv::setup();
     let from = account(0, None);
 
@@ -2219,7 +2219,7 @@ fn test_approve_self() {
 }
 
 #[test]
-fn test_approve_cap() {
+fn test_icrc_2approve_cap() {
     let env = TestEnv::setup();
     let from = account(0, None);
     let spender = account(1, None);
@@ -2420,12 +2420,12 @@ fn test_approval_expiring() {
 }
 
 #[derive(Clone, Copy)]
-enum ShouldSetTheCreatedAtTime {
+enum ShouldSetCreatedAtTime {
     SetCreatedAtTime,
     DontSetCreatedAtTime,
 }
 
-impl ShouldSetTheCreatedAtTime {
+impl ShouldSetCreatedAtTime {
     fn then_some<T>(self, t: T) -> Option<T> {
         match self {
             Self::SetCreatedAtTime => Some(t),
@@ -2435,12 +2435,12 @@ impl ShouldSetTheCreatedAtTime {
 }
 
 #[derive(Clone, Copy)]
-enum ShouldSetTheFee {
+enum ShouldSetFee {
     SetFee,
     DontSetFee,
 }
 
-impl ShouldSetTheFee {
+impl ShouldSetFee {
     fn then_some<T>(self, t: T) -> Option<T> {
         match self {
             Self::SetFee => Some(t),
@@ -2450,12 +2450,12 @@ impl ShouldSetTheFee {
 }
 
 #[derive(Clone, Copy)]
-enum ShouldSetTheMemo {
+enum ShouldSetMemo {
     SetMemo,
     DontSetMemo,
 }
 
-impl ShouldSetTheMemo {
+impl ShouldSetMemo {
     fn then_some<T>(self, t: T) -> Option<T> {
         match self {
             Self::SetMemo => Some(t),
@@ -2464,11 +2464,41 @@ impl ShouldSetTheMemo {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ShouldSetExpectedAllowance {
+    SetExpectedAllowance,
+    DontSetExpectedAllowance,
+}
+
+impl ShouldSetExpectedAllowance {
+    fn then_some<T>(self, t: T) -> Option<T> {
+        match self {
+            Self::SetExpectedAllowance => Some(t),
+            Self::DontSetExpectedAllowance => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ShouldSetExpiresAt {
+    SetExpiresAt,
+    DontSetExpiresAt,
+}
+
+impl ShouldSetExpiresAt {
+    fn then_some<T>(self, t: T) -> Option<T> {
+        match self {
+            Self::SetExpiresAt => Some(t),
+            Self::DontSetExpiresAt => None,
+        }
+    }
+}
+
 fn test_icrc1_transfer_ok_with_params(
     env: &TestEnv,
-    set_created_at_time: ShouldSetTheCreatedAtTime,
-    set_fee: ShouldSetTheFee,
-    set_memo: ShouldSetTheMemo,
+    set_created_at_time: ShouldSetCreatedAtTime,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
 ) {
     // Make a transfer that must succeed and check the Ledger has changed
     // accordingly.
@@ -2532,9 +2562,9 @@ fn test_icrc1_transfer_ok_with_params(
 }
 
 fn test_icrc1_transfer_ok_without_created_at_time(env: &TestEnv) {
-    use ShouldSetTheCreatedAtTime::*;
-    use ShouldSetTheFee::*;
-    use ShouldSetTheMemo::*;
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
 
     // This function is safe to be called multiple times because
     // the transactions it creates are not marked for deduplication.
@@ -2545,9 +2575,9 @@ fn test_icrc1_transfer_ok_without_created_at_time(env: &TestEnv) {
 }
 
 fn test_icrc1_transfer_ok_with_created_at_time(env: &TestEnv) {
-    use ShouldSetTheCreatedAtTime::*;
-    use ShouldSetTheFee::*;
-    use ShouldSetTheMemo::*;
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
 
     // Like [test_icrc1_transfer_ok_without_created_at_time] but
     // created_at_time is set so this function can be called once
@@ -2768,9 +2798,9 @@ fn test_icrc1_transfer_invalid_arg(env: &TestEnv) {
 
 fn test_icrc1_transfer_insufficient_funds_with_params(
     env: &TestEnv,
-    set_created_at_time: ShouldSetTheCreatedAtTime,
-    set_fee: ShouldSetTheFee,
-    set_memo: ShouldSetTheMemo,
+    set_created_at_time: ShouldSetCreatedAtTime,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
 ) {
     let account_from = account(1, None);
     let account_to = account(2, None);
@@ -2818,9 +2848,9 @@ fn test_icrc1_transfer_insufficient_funds_with_params(
 }
 
 fn test_icrc1_transfer_insufficient_funds(env: &TestEnv) {
-    use ShouldSetTheCreatedAtTime::*;
-    use ShouldSetTheFee::*;
-    use ShouldSetTheMemo::*;
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
 
     // test_icrc1_transfer_insufficient_funds_with_params takes in input 3 booleans
     // set_created_at_time, set_fee and set_memo.
@@ -2857,8 +2887,8 @@ fn test_icrc1_transfer_insufficient_funds(env: &TestEnv) {
 
 fn test_icrc1_transfer_duplicate_with_params(
     env: &TestEnv,
-    set_fee: ShouldSetTheFee,
-    set_memo: ShouldSetTheMemo,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
     has_fee_for_second_transfer: bool,
 ) {
     let account_from = account(1, None);
@@ -2919,8 +2949,8 @@ fn test_icrc1_transfer_duplicate_with_params(
 }
 
 fn test_icrc1_transfer_duplicate(env: &TestEnv) {
-    use ShouldSetTheFee::*;
-    use ShouldSetTheMemo::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
 
     test_icrc1_transfer_duplicate_with_params(env, DontSetFee, DontSetMemo, false);
     test_icrc1_transfer_duplicate_with_params(env, SetFee, DontSetMemo, false);
@@ -2933,6 +2963,564 @@ fn test_icrc1_transfer_duplicate(env: &TestEnv) {
     test_icrc1_transfer_duplicate_with_params(env, SetFee, DontSetMemo, true);
     test_icrc1_transfer_duplicate_with_params(env, DontSetFee, SetMemo, true);
     test_icrc1_transfer_duplicate_with_params(env, SetFee, SetMemo, true);
+}
+
+fn test_icrc2_approve_ok_with_params(
+    env: &TestEnv,
+    set_created_at_time: ShouldSetCreatedAtTime,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
+    set_expected_allowance: ShouldSetExpectedAllowance,
+    set_expires_at: ShouldSetExpiresAt,
+) {
+    // Make a transfer that must succeed and check the Ledger has changed
+    // accordingly.
+
+    let account_from = account(1, None);
+    let account_spender = account(2, None);
+    let amount = 1;
+    let fee = env.icrc1_fee();
+    // if args_*_should_be_set is true then that field in the transfer argument
+    // must be set to a valid value
+    let args_created_at_time = set_created_at_time.then_some(env.nanos_since_epoch_u64());
+    let args_fee = set_fee.then_some(fee);
+    let args_memo = set_memo.then_some(Memo::from(vec![1u8; 32]));
+    let args_expected_allowance = set_expected_allowance.then_some(
+        env.icrc2_allowance(account_from, account_spender)
+            .allowance
+            .0
+            .to_u128()
+            .unwrap(),
+    );
+    let args_expires_at = set_expires_at.then_some(
+        env.nanos_since_epoch_u64() + Duration::from_secs(24 * 60 * 60).as_nanos() as u64,
+    );
+
+    let _deposit_res = env.deposit(account_from, amount + fee, None);
+
+    // state that should change after the transfer is executed
+    let account_from_balance_before = env.icrc1_balance_of(account_from);
+    let account_to_balance_before = env.icrc1_balance_of(account_spender);
+    let total_supply_before = env.icrc1_total_supply();
+    let mut expected_blocks = env.get_all_blocks();
+
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(amount),
+        expected_allowance: args_expected_allowance.map(Nat::from),
+        expires_at: args_expires_at,
+        fee: args_fee.map(Nat::from),
+        memo: args_memo.clone(),
+        created_at_time: args_created_at_time,
+    };
+    let block_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+    assert_eq!(
+        env.icrc1_balance_of(account_from),
+        account_from_balance_before - fee,
+    );
+    assert_eq!(
+        env.icrc1_balance_of(account_spender),
+        account_to_balance_before,
+    );
+    assert_eq!(env.icrc1_total_supply(), total_supply_before - fee,);
+    assert_eq!(
+        env.icrc2_allowance(account_from, account_spender),
+        Allowance {
+            allowance: Nat::from(1u8),
+            expires_at: args_expires_at,
+        }
+    );
+
+    let expected_new_block = Block {
+        transaction: Transaction {
+            operation: Operation::Approve {
+                from: account_from,
+                spender: account_spender,
+                amount,
+                expected_allowance: args_expected_allowance,
+                expires_at: args_expires_at,
+                fee: args_fee,
+            },
+            created_at_time: args_created_at_time,
+            memo: args_memo,
+        },
+        timestamp: env.nanos_since_epoch_u64(),
+        phash: Some(env.get_block(block_index - 1u8).hash().unwrap()),
+        effective_fee: args_fee.xor(Some(fee)),
+    };
+    expected_blocks.push(expected_new_block);
+    assert_vec_display_eq(expected_blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_approve_ok_without_created_at_time(env: &TestEnv) {
+    // This function is safe to be called multiple times because
+    // the transactions it creates are not marked for deduplication.
+
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetExpectedAllowance::*;
+    use ShouldSetExpiresAt::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    for should_set_expected_allowance in [DontSetExpectedAllowance, SetExpectedAllowance] {
+        for should_set_expires_at in [DontSetExpiresAt, SetExpiresAt] {
+            for should_set_fee in [DontSetFee, SetFee] {
+                for should_set_memo in [DontSetMemo, SetMemo] {
+                    test_icrc2_approve_ok_with_params(
+                        env,
+                        DontSetCreatedAtTime,
+                        should_set_fee,
+                        should_set_memo,
+                        should_set_expected_allowance,
+                        should_set_expires_at,
+                    )
+                }
+            }
+        }
+    }
+}
+
+fn test_icrc2_approve_ok_with_created_at_time(env: &TestEnv) {
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetExpectedAllowance::*;
+    use ShouldSetExpiresAt::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    for should_set_expected_allowance in [DontSetExpectedAllowance, SetExpectedAllowance] {
+        for should_set_expires_at in [DontSetExpiresAt, SetExpiresAt] {
+            for should_set_fee in [DontSetFee, SetFee] {
+                for should_set_memo in [DontSetMemo, SetMemo] {
+                    test_icrc2_approve_ok_with_params(
+                        env,
+                        SetCreatedAtTime,
+                        should_set_fee,
+                        should_set_memo,
+                        should_set_expected_allowance,
+                        should_set_expires_at,
+                    )
+                }
+            }
+        }
+    }
+}
+
+fn test_icrc2_approve_from_denied_owner(env: &TestEnv) {
+    let account_spender = account(3, None);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
+        for subaccount in [None, Some([0; 32])] {
+            let args = ApproveArgs {
+                from_subaccount: subaccount,
+                spender: account_spender,
+                amount: Nat::from(0u8),
+                fee: None,
+                created_at_time: None,
+                memo: None,
+                expected_allowance: None,
+                expires_at: None,
+            };
+            let expected_error = ApproveError::GenericError {
+                error_code: Nat::from(DENIED_OWNER),
+                message: format!(
+                    "Owner of the account {} cannot be part of approvals",
+                    Account { owner, subaccount },
+                ),
+            };
+            assert_eq!(Err(expected_error), env.icrc2_approve(owner, args),);
+        }
+    }
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_approve_spender_denied_owner(env: &TestEnv) {
+    let account_from = account(3, None);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
+        for subaccount in [None, Some([0; 32])] {
+            let spender = Account { owner, subaccount };
+            let args = ApproveArgs {
+                from_subaccount: account_from.subaccount,
+                spender,
+                amount: Nat::from(0u8),
+                fee: None,
+                created_at_time: None,
+                memo: None,
+                expected_allowance: None,
+                expires_at: None,
+            };
+            let expected_error = ApproveError::GenericError {
+                error_code: Nat::from(DENIED_OWNER),
+                message: format!(
+                    "Owner of the account {} cannot be part of approvals",
+                    Account { owner, subaccount },
+                ),
+            };
+            assert_eq!(
+                Err(expected_error),
+                env.icrc2_approve(account_from.owner, args),
+            );
+        }
+    }
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_approve_invalid_fee(env: &TestEnv) {
+    let fee = env.icrc1_fee();
+
+    for bad_fee in [0, fee - 1, fee + 1, u128::MAX] {
+        assert_icrc2_approve_failure(
+            env,
+            |_, _| ApproveError::BadFee {
+                expected_fee: Nat::from(fee),
+            },
+            |account_from, account_spender| ApproveArgs {
+                from_subaccount: account_from.subaccount,
+                spender: account_spender,
+                amount: Nat::from(0u8),
+                fee: Some(Nat::from(bad_fee)),
+                created_at_time: None,
+                memo: None,
+                expected_allowance: None,
+                expires_at: None,
+            },
+        );
+    }
+}
+
+fn test_icrc2_approve_too_old(env: &TestEnv) {
+    // A transaction is too old if its created_at_time is
+    // before ledger_time - TRANSACTION_WINDOW - PERMITTED_DRIFT
+    let ledger_time = env.nanos_since_epoch_u64();
+    let too_old_created_at_time = Duration::from_nanos(ledger_time)
+        - config::TRANSACTION_WINDOW
+        - config::PERMITTED_DRIFT
+        - Duration::from_nanos(1);
+
+    assert_icrc2_approve_failure(
+        env,
+        |_, _| ApproveError::TooOld,
+        |account_from, account_spender| ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: Some(too_old_created_at_time.as_nanos() as u64),
+            memo: None,
+            expected_allowance: None,
+            expires_at: None,
+        },
+    )
+}
+
+fn test_icrc2_approve_in_the_future(env: &TestEnv) {
+    // A transaction is in the future if its created_at_time is
+    // after ledger_time + PERMITTED_DRIFT
+    let ledger_time = env.nanos_since_epoch_u64();
+    let in_the_future_created_at_time =
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+
+    assert_icrc2_approve_failure(
+        env,
+        |_, _| ApproveError::CreatedInFuture { ledger_time },
+        |account_from, account_spender| ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
+            memo: None,
+            expected_allowance: None,
+            expires_at: None,
+        },
+    );
+}
+
+fn test_icrc2_approve_allowance_changed(env: &TestEnv) {
+    assert_icrc2_approve_failure(
+        env,
+        |account_from, account_spender| {
+            let current_allowance = env.icrc2_allowance(account_from, account_spender).allowance;
+            ApproveError::AllowanceChanged { current_allowance }
+        },
+        |account_from, account_spender| {
+            let current_allowance = env.icrc2_allowance(account_from, account_spender).allowance;
+            let expected_allowance = if current_allowance == u128::MAX {
+                Nat::from(0u8)
+            } else {
+                current_allowance + 1u8
+            };
+            ApproveArgs {
+                from_subaccount: account_from.subaccount,
+                spender: account_spender,
+                amount: Nat::from(1u8),
+                expected_allowance: Some(expected_allowance),
+                expires_at: None,
+                fee: None,
+                memo: None,
+                created_at_time: None,
+            }
+        },
+    )
+}
+
+fn test_icrc2_approve_expired(env: &TestEnv) {
+    let ledger_time = env.nanos_since_epoch_u64();
+    // anything before or equals to ledger_time should fail.
+    for expires_at in [0, ledger_time - 1, ledger_time] {
+        assert_icrc2_approve_failure(
+            env,
+            |_, _| ApproveError::Expired { ledger_time },
+            |account_from, account_spender| ApproveArgs {
+                from_subaccount: account_from.subaccount,
+                spender: account_spender,
+                amount: Nat::from(1u8),
+                expected_allowance: None,
+                expires_at: Some(expires_at),
+                fee: None,
+                memo: None,
+                created_at_time: None,
+            },
+        )
+    }
+}
+
+#[track_caller]
+fn assert_icrc2_approve_failure<F, G>(env: &TestEnv, expected_error: G, f: F)
+where
+    G: FnOnce(/* from: */ Account, /* spender: */ Account) -> ApproveError,
+    F: FnOnce(/* from: */ Account, /* spender: */ Account) -> ApproveArgs,
+{
+    let account_spender = account(2, None);
+    let account_from = account(3, None);
+
+    // deposit enough funds to account_to such that the transaction
+    // would be accepted if created_at_time was correct
+    let _deposit_index = env.deposit(account_from, env.icrc1_fee(), None);
+
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let expected_error = expected_error(account_from, account_spender);
+    let args = f(account_from, account_spender);
+    assert_eq!(
+        Err(expected_error),
+        env.icrc2_approve(account_from.owner, args)
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_approve_invalid_arg(env: &TestEnv) {
+    test_icrc2_approve_from_denied_owner(env);
+    test_icrc2_approve_spender_denied_owner(env);
+    // self approve is tested by [test_approve_self]
+    test_icrc2_approve_invalid_fee(env);
+    test_icrc2_approve_too_old(env);
+    test_icrc2_approve_in_the_future(env);
+    test_icrc2_approve_allowance_changed(env);
+    test_icrc2_approve_expired(env);
+}
+
+fn test_icrc2_approve_insufficient_funds_with_params(
+    env: &TestEnv,
+    set_created_at_time: ShouldSetCreatedAtTime,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
+    set_expected_allowance: ShouldSetExpectedAllowance,
+    set_expires_at: ShouldSetExpiresAt,
+) {
+    let account_from = account(1, None);
+    let account_spender = account(2, None);
+    let fee = env.icrc1_fee();
+
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    // remove cycles from account_from so that it can pay the approve fee
+    if account_from_balance >= fee {
+        let _block_index = env.icrc1_transfer_or_trap(
+            account_from.owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: account_spender,
+                amount: Nat::from(account_from_balance - fee + 1),
+                fee: None,
+                created_at_time: None,
+                memo: None,
+            },
+        );
+    }
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let current_allowance = env.icrc2_allowance(account_from, account_spender).allowance;
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(1u8),
+        fee: set_fee.then_some(Nat::from(fee)),
+        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+        memo: set_memo.then_some(Memo::from(vec![2; 32])),
+        expected_allowance: set_expected_allowance.then_some(current_allowance),
+        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1),
+    };
+    assert_eq!(
+        Err(ApproveError::InsufficientFunds {
+            balance: Nat::from(account_from_balance)
+        }),
+        env.icrc2_approve(account_from.owner, args)
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_approve_insufficient_funds(env: &TestEnv) {
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetExpectedAllowance::*;
+    use ShouldSetExpiresAt::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    for set_created_at_time in [DontSetCreatedAtTime, SetCreatedAtTime] {
+        for set_fee in [DontSetFee, SetFee] {
+            for set_memo in [DontSetMemo, SetMemo] {
+                for set_expected_allowance in [DontSetExpectedAllowance, SetExpectedAllowance] {
+                    for set_expires_at in [DontSetExpiresAt, SetExpiresAt] {
+                        test_icrc2_approve_insufficient_funds_with_params(
+                            env,
+                            set_created_at_time,
+                            set_fee,
+                            set_memo,
+                            set_expected_allowance,
+                            set_expires_at,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn test_icrc2_approve_duplicate_with_params(
+    env: &TestEnv,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
+    set_expected_allowance: ShouldSetExpectedAllowance,
+    set_expires_at: ShouldSetExpiresAt,
+) {
+    let account_from = account(1, None);
+    let account_spender = account(2, None);
+    let fee = env.icrc1_fee();
+
+    // deposit enough funds to account_from so that two approves
+    // could go through
+    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+
+    let current_allowance = env.icrc2_allowance(account_from, account_spender).allowance;
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(1u8),
+        fee: set_fee.then_some(Nat::from(fee)),
+        created_at_time: Some(env.nanos_since_epoch_u64()),
+        memo: set_memo.then_some(Memo::from(vec![2; 32])),
+        expected_allowance: set_expected_allowance.then_some(current_allowance),
+        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1),
+    };
+    let approve_res = env.icrc2_approve_or_trap(account_from.owner, args.clone());
+
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    assert_eq!(
+        Err(ApproveError::Duplicate {
+            duplicate_of: approve_res
+        }),
+        env.icrc2_approve(account_from.owner, args),
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_approve_duplicate(env: &TestEnv) {
+    use ShouldSetExpectedAllowance::*;
+    use ShouldSetExpiresAt::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    for set_fee in [DontSetFee, SetFee] {
+        for set_memo in [DontSetMemo, SetMemo] {
+            for set_expected_allowance in [DontSetExpectedAllowance, SetExpectedAllowance] {
+                for set_expires_at in [DontSetExpiresAt, SetExpiresAt] {
+                    test_icrc2_approve_duplicate_with_params(
+                        env,
+                        set_fee,
+                        set_memo,
+                        set_expected_allowance,
+                        set_expires_at,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_icrc2_approve() {
+    let env = TestEnv::setup();
+
+    test_icrc2_approve_ok_without_created_at_time(&env);
+    // The test should be able to run many times with no
+    // issues as it doesn't mark the transasctions for deduplication.
+    test_icrc2_approve_ok_without_created_at_time(&env);
+    // Test with created_at_time set.
+    test_icrc2_approve_ok_with_created_at_time(&env);
+    // Move time forward to change the transaction created_at_time
+    env.state_machine.advance_time(Duration::from_secs(1));
+    // Submit again transactions. created_at_time has changed which
+    // means no deduplication should happen
+    test_icrc2_approve_ok_with_created_at_time(&env);
+}
+
+#[test]
+fn test_icrc2_approve_failures() {
+    let env = TestEnv::setup();
+
+    test_icrc2_approve_invalid_arg(&env);
+    test_icrc2_approve_insufficient_funds(&env);
+    test_icrc2_approve_duplicate(&env);
 }
 
 #[test]
