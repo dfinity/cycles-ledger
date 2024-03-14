@@ -3083,6 +3083,11 @@ fn test_icrc2_approve_ok_without_created_at_time(env: &TestEnv) {
 }
 
 fn test_icrc2_approve_ok_with_created_at_time(env: &TestEnv) {
+    // This function works like [test_icrc2_approve_ok_without_created_at_time]
+    // except that it sets the created_at_time and therefore it is not safe
+    // to call multiple times unless the time on the Ledger, which is used as
+    // created_at_time, has changed.
+
     use ShouldSetCreatedAtTime::*;
     use ShouldSetExpectedAllowance::*;
     use ShouldSetExpiresAt::*;
