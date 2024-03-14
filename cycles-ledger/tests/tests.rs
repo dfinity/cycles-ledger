@@ -2614,7 +2614,7 @@ fn test_icrc1_transfer_failures() {
     test_icrc1_transfer_duplicate(&env);
 }
 
-fn test_icrc1_transfer_from_denied_owner(env: &TestEnv) {
+fn test_icrc1_transfer_denied_from(env: &TestEnv) {
     let account_to = account(3, None);
     let account_to_balance = env.icrc1_balance_of(account_to);
     let total_supply = env.icrc1_total_supply();
@@ -2644,7 +2644,7 @@ fn test_icrc1_transfer_from_denied_owner(env: &TestEnv) {
     assert_vec_display_eq(blocks, env.get_all_blocks());
 }
 
-fn test_icrc1_transfer_to_denied_owner(env: &TestEnv) {
+fn test_icrc1_transfer_denied_to(env: &TestEnv) {
     let account_from = account(3, None);
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
@@ -2788,8 +2788,8 @@ fn test_icrc1_transfer_in_the_future(env: &TestEnv) {
 }
 
 fn test_icrc1_transfer_invalid_arg(env: &TestEnv) {
-    test_icrc1_transfer_from_denied_owner(env);
-    test_icrc1_transfer_to_denied_owner(env);
+    test_icrc1_transfer_denied_from(env);
+    test_icrc1_transfer_denied_to(env);
     test_icrc1_transfer_invalid_fee(env);
     test_icrc1_transfer_too_old(env);
     test_icrc1_transfer_in_the_future(env);
@@ -3112,7 +3112,7 @@ fn test_icrc2_approve_ok_with_created_at_time(env: &TestEnv) {
     }
 }
 
-fn test_icrc2_approve_from_denied_owner(env: &TestEnv) {
+fn test_icrc2_approve_denied_from(env: &TestEnv) {
     let account_spender = account(3, None);
     let account_spender_balance = env.icrc1_balance_of(account_spender);
     let total_supply = env.icrc1_total_supply();
@@ -3147,7 +3147,7 @@ fn test_icrc2_approve_from_denied_owner(env: &TestEnv) {
     assert_vec_display_eq(blocks, env.get_all_blocks());
 }
 
-fn test_icrc2_approve_spender_denied_owner(env: &TestEnv) {
+fn test_icrc2_approve_denied_spender(env: &TestEnv) {
     let account_from = account(3, None);
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
@@ -3337,8 +3337,8 @@ where
 }
 
 fn test_icrc2_approve_invalid_arg(env: &TestEnv) {
-    test_icrc2_approve_from_denied_owner(env);
-    test_icrc2_approve_spender_denied_owner(env);
+    test_icrc2_approve_denied_from(env);
+    test_icrc2_approve_denied_spender(env);
     // self approve is tested by [test_approve_self]
     test_icrc2_approve_invalid_fee(env);
     test_icrc2_approve_too_old(env);
