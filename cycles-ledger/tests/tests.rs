@@ -3528,6 +3528,549 @@ fn test_icrc2_approve_failures() {
     test_icrc2_approve_duplicate(&env);
 }
 
+fn test_icrc2_transfer_from_ok_with_params(
+    env: &TestEnv,
+    set_created_at_time: ShouldSetCreatedAtTime,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
+) {
+    // Make a transfer that must succeed and check the Ledger has changed
+    // accordingly.
+
+    let account_from = account(1, None);
+    let account_to = account(2, None);
+    let account_spender = account(3, None);
+    let amount = 1_000_000_000;
+    let fee = env.icrc1_fee();
+    let args_created_at_time = set_created_at_time.then_some(env.nanos_since_epoch_u64());
+    let args_fee = set_fee.then_some(fee);
+    let args_memo = set_memo.then_some(Memo::from(vec![1u8; 32]));
+
+    // deposit the fee for approve plus the fee + amount for the transfer
+    let _deposit_res = env.deposit(account_from, amount + 2 * fee, None);
+
+    // approve so that transfer_from can succeed
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(amount + fee),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+    let _approve_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+    // state that should change after the transfer is executed
+    let account_from_balance_before = env.icrc1_balance_of(account_from);
+    let account_to_balance_before = env.icrc1_balance_of(account_to);
+    let account_spender_balance_before = env.icrc1_balance_of(account_spender);
+    let total_supply_before = env.icrc1_total_supply();
+    let mut expected_blocks = env.get_all_blocks();
+
+    let args = TransferFromArgs {
+        from: account_from,
+        to: account_to,
+        spender_subaccount: account_spender.subaccount,
+        amount: Nat::from(amount),
+        fee: args_fee.map(Nat::from),
+        created_at_time: args_created_at_time,
+        memo: args_memo.clone(),
+    };
+    let block_index = env.icrc2_transfer_from_or_trap(account_spender.owner, args);
+
+    assert_eq!(
+        env.icrc1_balance_of(account_from),
+        account_from_balance_before - amount - fee,
+    );
+    assert_eq!(
+        env.icrc1_balance_of(account_to),
+        account_to_balance_before + amount,
+    );
+    assert_eq!(
+        env.icrc1_balance_of(account_spender),
+        account_spender_balance_before,
+    );
+    assert_eq!(env.icrc1_total_supply(), total_supply_before - fee,);
+
+    let expected_new_block = Block {
+        transaction: Transaction {
+            operation: Operation::Transfer {
+                from: account_from,
+                to: account_to,
+                spender: Some(account_spender),
+                amount,
+                fee: args_fee,
+            },
+            created_at_time: args_created_at_time,
+            memo: args_memo,
+        },
+        timestamp: env.nanos_since_epoch_u64(),
+        phash: Some(env.get_block(block_index - 1u8).hash().unwrap()),
+        effective_fee: args_fee.xor(Some(fee)),
+    };
+    expected_blocks.push(expected_new_block);
+    assert_vec_display_eq(expected_blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_transfer_from_ok_without_created_at_time(env: &TestEnv) {
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    // This function is safe to be called multiple times because
+    // the transactions it creates are not marked for deduplication.
+    test_icrc2_transfer_from_ok_with_params(env, DontSetCreatedAtTime, DontSetFee, DontSetMemo);
+    test_icrc2_transfer_from_ok_with_params(env, DontSetCreatedAtTime, SetFee, DontSetMemo);
+    test_icrc2_transfer_from_ok_with_params(env, DontSetCreatedAtTime, DontSetFee, SetMemo);
+    test_icrc2_transfer_from_ok_with_params(env, DontSetCreatedAtTime, SetFee, SetMemo);
+}
+
+fn test_icrc2_transfer_from_ok_with_created_at_time(env: &TestEnv) {
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    // Like [test_icrc1_transfer_ok_without_created_at_time] but
+    // created_at_time is set so this function can be called once
+    // per deduplication window.
+    test_icrc2_transfer_from_ok_with_params(env, SetCreatedAtTime, DontSetFee, DontSetMemo);
+    test_icrc2_transfer_from_ok_with_params(env, SetCreatedAtTime, SetFee, DontSetMemo);
+    test_icrc2_transfer_from_ok_with_params(env, SetCreatedAtTime, DontSetFee, SetMemo);
+    test_icrc2_transfer_from_ok_with_params(env, SetCreatedAtTime, SetFee, SetMemo);
+}
+
+fn test_icrc2_transfer_from_invalid_fee(env: &TestEnv) {
+    let account_to = account(2, None);
+    let account_from = account(3, None);
+    let account_spender = account(4, None);
+    let fee = env.icrc1_fee();
+
+    // deposit enough funds to account_to such that the transaction
+    // should happen if correct
+    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(fee),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+    let _approve_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+    let account_to_balance = env.icrc1_balance_of(account_to);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    for bad_fee in [0, fee - 1, fee + 1, u128::MAX] {
+        let args = TransferFromArgs {
+            from: account_from,
+            to: account_to,
+            spender_subaccount: account_spender.subaccount,
+            amount: Nat::from(0u8),
+            fee: Some(Nat::from(bad_fee)),
+            created_at_time: None,
+            memo: None,
+        };
+        assert_eq!(
+            Err(TransferFromError::BadFee {
+                expected_fee: Nat::from(fee)
+            }),
+            env.icrc2_transfer_from(account_from.owner, args),
+        );
+    }
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_transfer_from_too_old(env: &TestEnv) {
+    // A transaction is too old if its created_at_time is
+    // before ledger_time - TRANSACTION_WINDOW - PERMITTED_DRIFT
+    let ledger_time = env.nanos_since_epoch_u64();
+    let too_old_created_at_time = Duration::from_nanos(ledger_time)
+        - config::TRANSACTION_WINDOW
+        - config::PERMITTED_DRIFT
+        - Duration::from_nanos(1);
+
+    let account_to = account(2, None);
+    let account_from = account(3, None);
+    let account_spender = account(4, None);
+    let fee = env.icrc1_fee();
+
+    // deposit enough funds to account_to such that the transaction
+    // would be accepted if created_at_time was correct
+    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(fee),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+    let _approve_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+    let account_to_balance = env.icrc1_balance_of(account_to);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let args = TransferFromArgs {
+        from: account_from,
+        to: account_to,
+        spender_subaccount: account_spender.subaccount,
+        amount: Nat::from(0u8),
+        fee: None,
+        created_at_time: Some(too_old_created_at_time.as_nanos() as u64),
+        memo: None,
+    };
+    assert_eq!(
+        Err(TransferFromError::TooOld),
+        env.icrc2_transfer_from(account_spender.owner, args),
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_transfer_from_in_the_future(env: &TestEnv) {
+    // A transaction is in the future if its created_at_time is
+    // after ledger_time + PERMITTED_DRIFT
+    let ledger_time = env.nanos_since_epoch_u64();
+    let in_the_future_created_at_time =
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+
+    let account_to = account(2, None);
+    let account_from = account(3, None);
+    let account_spender = account(4, None);
+    let fee = env.icrc1_fee();
+
+    // deposit enough funds to account_to such that the transaction
+    // would be accepted if created_at_time was correct
+    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(fee),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+    let _approve_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+    let account_to_balance = env.icrc1_balance_of(account_to);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let args = TransferFromArgs {
+        from: account_from,
+        to: account_to,
+        spender_subaccount: account_spender.subaccount,
+        amount: Nat::from(0u8),
+        fee: None,
+        created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
+        memo: None,
+    };
+    assert_eq!(
+        Err(TransferFromError::CreatedInFuture { ledger_time }),
+        env.icrc2_transfer_from(account_spender.owner, args),
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_transfer_from_invalid_arg(env: &TestEnv) {
+    test_icrc2_transfer_from_invalid_fee(env);
+    test_icrc2_transfer_from_too_old(env);
+    test_icrc2_transfer_from_in_the_future(env);
+}
+
+fn test_icrc2_transfer_from_insufficient_funds_with_params(
+    env: &TestEnv,
+    set_created_at_time: ShouldSetCreatedAtTime,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
+) {
+    let account_from = account(100, None);
+    let account_to = account(2, None);
+    let account_spender = account(4, None);
+    let fee = env.icrc1_fee();
+
+    let _deposit_index = env.deposit(account_from, 3 * fee, None);
+    // remove the cycles from account_from minus the 2 fees needed
+    // for the test
+    let amount_to_remove = env.icrc1_balance_of(account_from).saturating_sub(3 * fee);
+    let args = TransferArgs {
+        from_subaccount: account_from.subaccount,
+        to: account_to,
+        fee: None,
+        created_at_time: None,
+        memo: None,
+        amount: Nat::from(amount_to_remove),
+    };
+    let _transfer_index = env.icrc1_transfer_or_trap(account_from.owner, args);
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(fee + 1),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+    let _approve_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let account_to_balance = env.icrc1_balance_of(account_to);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let args = TransferFromArgs {
+        from: account_from,
+        to: account_to,
+        spender_subaccount: account_spender.subaccount,
+        // Amount is 1 cycle more than what account_from can transfer
+        amount: Nat::from(1u8),
+        fee: set_fee.then_some(Nat::from(fee)),
+        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+        memo: set_memo.then_some(Memo::from(vec![2; 32])),
+    };
+    assert_eq!(
+        Err(TransferFromError::InsufficientFunds {
+            balance: Nat::from(account_from_balance)
+        }),
+        env.icrc2_transfer_from(account_spender.owner, args)
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender),
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
+fn test_icrc2_transfer_from_insufficient_funds(env: &TestEnv) {
+    use ShouldSetCreatedAtTime::*;
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    // test_icrc1_transfer_insufficient_funds_with_params takes in input 3 booleans
+    // set_created_at_time, set_fee and set_memo.
+    // Try all the permutations.
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        DontSetCreatedAtTime,
+        DontSetFee,
+        DontSetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        DontSetCreatedAtTime,
+        SetFee,
+        DontSetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        DontSetCreatedAtTime,
+        DontSetFee,
+        SetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        DontSetCreatedAtTime,
+        SetFee,
+        SetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        SetCreatedAtTime,
+        DontSetFee,
+        DontSetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        SetCreatedAtTime,
+        SetFee,
+        DontSetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(
+        env,
+        SetCreatedAtTime,
+        SetFee,
+        DontSetMemo,
+    );
+    test_icrc2_transfer_from_insufficient_funds_with_params(env, SetCreatedAtTime, SetFee, SetMemo);
+}
+
+fn test_icrc2_transfer_from_duplicate_with_params(
+    env: &TestEnv,
+    set_fee: ShouldSetFee,
+    set_memo: ShouldSetMemo,
+    has_fee_for_second_transfer: bool,
+) {
+    let account_from = account(1, None);
+    let account_to = account(2, None);
+    let account_spender = account(3, None);
+    let fee = env.icrc1_fee();
+    let ledger_time = Duration::from_nanos(env.nanos_since_epoch_u64());
+
+    // Try different valid non-optional created_at_time
+    for created_at_time in [
+        // 1 nanosecond before being too old
+        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT,
+        // 1 nanosecond before ledger_time
+        ledger_time - Duration::from_nanos(1),
+        // 1 nanosecond after ledger_time
+        ledger_time + Duration::from_nanos(1),
+        // 1 nanosecond before being in the future
+        ledger_time + config::PERMITTED_DRIFT,
+    ] {
+        let amount_to_deposit = if has_fee_for_second_transfer {
+            4 * fee
+        } else {
+            3 * fee
+        };
+        let _deposit_index = env.deposit(account_from, amount_to_deposit, None);
+
+        // remove the cycles from account_from minus the fees needed
+        // for the test
+        let amount_to_remove = env
+            .icrc1_balance_of(account_from)
+            .saturating_sub(amount_to_deposit);
+        let args = TransferArgs {
+            from_subaccount: account_from.subaccount,
+            to: account_to,
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            amount: Nat::from(amount_to_remove),
+        };
+        let _transfer_index = env.icrc1_transfer_or_trap(account_from.owner, args);
+        let args = ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(fee),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        };
+        let _approve_index = env.icrc2_approve_or_trap(account_from.owner, args);
+
+        let args = TransferFromArgs {
+            from: account_from,
+            to: account_to,
+            spender_subaccount: account_spender.subaccount,
+            // Amount is 1 cycle more than what account_from can transfer
+            amount: Nat::from(0u8),
+            fee: set_fee.then_some(Nat::from(fee)),
+            created_at_time: Some(created_at_time.as_nanos() as u64),
+            memo: set_memo.then_some(Memo::from(vec![3; 32])),
+        };
+        let block_index = env.icrc2_transfer_from_or_trap(account_spender.owner, args.clone());
+
+        let account_from_balance = env.icrc1_balance_of(account_from);
+        let account_to_balance = env.icrc1_balance_of(account_to);
+        let account_spender_balance = env.icrc1_balance_of(account_spender);
+        let total_supply = env.icrc1_total_supply();
+        let blocks = env.get_all_blocks();
+
+        assert_eq!(
+            Err(TransferFromError::Duplicate {
+                duplicate_of: block_index
+            }),
+            env.icrc2_transfer_from(account_spender.owner, args),
+        );
+
+        assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+        assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
+        assert_eq!(
+            account_spender_balance,
+            env.icrc1_balance_of(account_spender)
+        );
+        assert_eq!(total_supply, env.icrc1_total_supply());
+        assert_vec_display_eq(&blocks, env.get_all_blocks());
+    }
+}
+
+fn test_icrc2_transfer_from_duplicate(env: &TestEnv) {
+    use ShouldSetFee::*;
+    use ShouldSetMemo::*;
+
+    test_icrc2_transfer_from_duplicate_with_params(env, DontSetFee, DontSetMemo, false);
+    test_icrc2_transfer_from_duplicate_with_params(env, SetFee, DontSetMemo, false);
+    test_icrc2_transfer_from_duplicate_with_params(env, DontSetFee, SetMemo, false);
+    test_icrc2_transfer_from_duplicate_with_params(env, SetFee, SetMemo, false);
+    // Change the ledger time to avoid duplicates between the first
+    // four tests and the next four tests.
+    env.state_machine.advance_time(Duration::from_nanos(1));
+    test_icrc2_transfer_from_duplicate_with_params(env, DontSetFee, DontSetMemo, true);
+    test_icrc2_transfer_from_duplicate_with_params(env, SetFee, DontSetMemo, true);
+    test_icrc2_transfer_from_duplicate_with_params(env, DontSetFee, SetMemo, true);
+    test_icrc2_transfer_from_duplicate_with_params(env, SetFee, SetMemo, true);
+}
+
+#[test]
+fn test_icrc2_transfer_from() {
+    let env = TestEnv::setup();
+
+    test_icrc2_transfer_from_ok_without_created_at_time(&env);
+    // The test should be able to run many times with no
+    // issues as it doesn't mark the transasctions for deduplication.
+    test_icrc2_transfer_from_ok_without_created_at_time(&env);
+    // Test icrc1_transfer with created_at_time set.
+    test_icrc2_transfer_from_ok_with_created_at_time(&env);
+    // Move time forward to change the transaction created_at_time
+    env.state_machine.advance_time(Duration::from_secs(1));
+    // Submit again transactions. created_at_time has changed which
+    // means no deduplication should happen
+    test_icrc2_transfer_from_ok_with_created_at_time(&env);
+}
+
+#[test]
+fn test_icrc2_transfer_from_failures() {
+    let env = TestEnv::setup();
+
+    test_icrc2_transfer_from_invalid_arg(&env);
+    test_icrc2_transfer_from_insufficient_funds(&env);
+    test_icrc2_transfer_from_duplicate(&env);
+}
+
 #[test]
 fn test_icrc2_transfer_fails_if_approve_smaller_than_amount_plus_fee() {
     let env = TestEnv::setup();
