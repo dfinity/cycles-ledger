@@ -412,14 +412,14 @@ impl Display for Block {
 
 pub struct State {
     pub blocks: BlockLog,
-    balances: Balances,
+    pub balances: Balances,
     pub approvals: Approvals,
     pub expiration_queue: ExpirationQueue,
     pub transaction_hashes: TransactionHashes,
     pub transaction_timestamps: TransactionTimeStamps,
     pub config: ConfigCell,
     // In-memory cache dropped on each upgrade.
-    cache: Cache,
+    pub cache: Cache,
 }
 
 impl State {
