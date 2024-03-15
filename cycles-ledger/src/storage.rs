@@ -1193,7 +1193,7 @@ mod create_canister {
 }
 
 mod create_canister_from {
-    use super::transfer_from::{CANNOT_TRANSFER_FROM_ZERO, UNKNOWN_GENERIC_ERROR};
+    use super::transfer_from::UNKNOWN_GENERIC_ERROR;
     use crate::endpoints::CreateCanisterFromError;
     use candid::Nat;
 
@@ -1205,13 +1205,6 @@ mod create_canister_from {
         CreateCanisterFromError::GenericError {
             error_code: Nat::from(UNKNOWN_GENERIC_ERROR),
             message,
-        }
-    }
-
-    pub fn cannot_create_with_zero() -> CreateCanisterFromError {
-        CreateCanisterFromError::GenericError {
-            error_code: Nat::from(CANNOT_TRANSFER_FROM_ZERO),
-            message: "create_canister_from with 0 cycles is not possible".into(),
         }
     }
 }
@@ -1806,10 +1799,6 @@ pub async fn create_canister(
     argument: Option<CmcCreateCanisterArgs>,
 ) -> Result<CreateCanisterSuccess, CreateCanisterFromError> {
     use CreateCanisterFromError::*;
-
-    if amount == 0 {
-        return Err(create_canister_from::cannot_create_with_zero());
-    }
 
     let transaction = Transaction {
         operation: Operation::Burn {
