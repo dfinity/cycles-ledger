@@ -4795,7 +4795,7 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     // check that no new block was added.
-    assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // if refund_amount is <= env.icrc1_fee() then
     // 1. the error doesn't have the refund_block
