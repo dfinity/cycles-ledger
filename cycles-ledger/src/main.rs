@@ -6,7 +6,7 @@ use cycles_ledger::endpoints::{
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::storage::{
-    balance_of, mutate_config, mutate_state, prune, read_config, read_state,
+    balance_of, mutate_config, mutate_state, prune, read_config, read_state, State,
 };
 use cycles_ledger::{
     config, create_canister_from_error_to_create_canister_error, endpoints, storage,
@@ -483,6 +483,60 @@ fn http_request(req: HttpRequest) -> HttpResponse {
     }
 }
 
+pub fn encode_state_metrics(
+    w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>,
+    // State is destructored so that if new fields
+    // are added then the dev must include them in
+    // the metrics or ignore them (like with config)
+    State {
+        blocks,
+        balances,
+        approvals,
+        expiration_queue,
+        transaction_hashes,
+        transaction_timestamps,
+        config: _,
+        cache,
+    }: &State,
+) -> std::io::Result<()> {
+    w.encode_gauge(
+        "cycles_ledger_number_of_blocks",
+        blocks.len() as f64,
+        "Total number of blocks stored in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_number_of_balances",
+        balances.len() as f64,
+        "Total number of balances stored in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_number_of_transaction_hashes",
+        transaction_hashes.len() as f64,
+        "Total number of transaction hashes stored in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_number_of_transaction_timestamps",
+        transaction_timestamps.len() as f64,
+        "Total number of transaction timestamps stored in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_number_of_approvals",
+        approvals.len() as f64,
+        "Total number of approvals stored in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_number_of_approval_expiration_entries",
+        expiration_queue.len() as f64,
+        "Total number of approval expiration entries in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "cycles_ledger_total_supply",
+        cache.total_supply as f64,
+        "Total cycles supply.",
+    )?;
+    Ok(())
+}
+
 pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
     w.encode_gauge(
         "cycles_ledger_stable_memory_pages",
@@ -504,11 +558,8 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
     w.gauge_vec("cycle_balance", "Cycle balance on this canister.")?
         .value(&[("canister", "cycles-ledger")], cycle_balance)?;
 
-    w.encode_gauge(
-        "cycles_ledger_number_of_blocks",
-        read_state(|state| state.blocks.len()) as f64,
-        "Total number of blocks stored in the stable memory.",
-    )?;
+    read_state(|state| encode_state_metrics(w, state))?;
+
     Ok(())
 }
 
