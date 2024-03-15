@@ -12,7 +12,8 @@ use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
-        BlockWithId, ChangeIndexId, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
+        BlockWithId, ChangeIndexId, CmcCreateCanisterError, CreateCanisterFromArgs,
+        CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
         UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs, WithdrawFromError,
     },
     memo::encode_withdraw_memo,
@@ -33,7 +34,10 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
-use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
+use ic_cdk::api::{
+    call::RejectionCode,
+    management_canister::{main::CanisterStatusResponse, provisional::CanisterSettings},
+};
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
@@ -194,7 +198,7 @@ fn install_depositor(env: &StateMachine, ledger_id: Principal) -> Principal {
     canister
 }
 
-fn install_fake_cmc(env: &StateMachine) {
+fn install_fake_cmc(env: &StateMachine) -> Principal {
     #[derive(CandidType, Default)]
     struct ProvisionalCreateArg {
         specified_id: Option<Principal>,
@@ -226,6 +230,7 @@ fn install_fake_cmc(env: &StateMachine) {
         Encode!(&Vec::<u8>::new()).unwrap(),
         None,
     );
+    CMC_PRINCIPAL
 }
 
 /** Create an ICRC-1 Account from two numbers by using their big-endian representation */
@@ -244,29 +249,38 @@ struct TestEnv {
     pub state_machine: StateMachine,
     pub ledger_id: Principal,
     pub depositor_id: Principal,
+    #[allow(dead_code)]
+    pub cmc_id: Principal,
 }
 
 impl TestEnv {
     fn setup() -> Self {
         let state_machine = new_state_machine();
+        let cmc_id = install_fake_cmc(&state_machine);
         let ledger_id = install_ledger(&state_machine);
         let depositor_id = install_depositor(&state_machine, ledger_id);
         Self {
             state_machine,
             ledger_id,
             depositor_id,
+            cmc_id,
         }
     }
 
     fn setup_with_ledger_conf(conf: LedgerConfig) -> Self {
         let state_machine = new_state_machine();
+        let cmc_id = install_fake_cmc(&state_machine);
         let ledger_id = install_ledger_with_conf(&state_machine, conf);
         let depositor_id = install_depositor(&state_machine, ledger_id);
         Self {
             state_machine,
             ledger_id,
             depositor_id,
+            cmc_id,
         }
+    }
+    fn fail_next_create_canister_with(&self, error: CmcCreateCanisterError) {
+        client::fail_next_create_canister_with(&self.state_machine, error)
     }
 
     fn upgrade_ledger(&self, args: Option<UpgradeArgs>) -> Result<(), CallError> {
@@ -281,6 +295,31 @@ impl TestEnv {
         args: CreateCanisterArgs,
     ) -> Result<CreateCanisterSuccess, CreateCanisterError> {
         client::create_canister(&self.state_machine, self.ledger_id, caller, args)
+    }
+
+    fn create_canister_from(
+        &self,
+        caller: Principal,
+        args: CreateCanisterFromArgs,
+    ) -> Result<CreateCanisterSuccess, CreateCanisterFromError> {
+        client::create_canister_from(&self.state_machine, self.ledger_id, caller, args)
+    }
+
+    fn create_canister_from_or_trap(
+        &self,
+        caller: Principal,
+        args: CreateCanisterFromArgs,
+    ) -> CreateCanisterSuccess {
+        client::create_canister_from(&self.state_machine, self.ledger_id, caller, args.clone())
+        .unwrap_or_else(|err| {
+            panic!(
+                "Call to create_canister_from({args:?}) from caller {caller} failed with error {err:?}"
+            )
+        })
+    }
+
+    fn canister_status(&self, caller: Principal, canister_id: Principal) -> CanisterStatusResponse {
+        client::canister_status(&self.state_machine, canister_id, caller)
     }
 
     fn deposit(&self, to: Account, amount: u128, memo: Option<Memo>) -> DepositResult {
@@ -5300,7 +5339,6 @@ fn test_create_canister_duplicate() {
 fn test_create_canister_fail() {
     let env = TestEnv::setup();
     let account1 = account(1, None);
-    install_fake_cmc(&env.state_machine);
 
     let _ = env.deposit(account1, 1_000_000_000_000_000_000, None);
 
@@ -5449,6 +5487,986 @@ fn test_create_canister_fail() {
         .into_iter()
         .chain([burn_block, refund_block])
         .collect::<Vec<_>>();
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
+}
+
+#[test]
+fn test_create_canister_from() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+    let account1_1 = account(1, Some(1));
+    let account1_2 = account(1, Some(2));
+    let account1_3 = account(1, Some(3));
+    let withdrawer1 = account(102, None);
+    let withdrawer1_1 = account(102, Some(1));
+
+    // make deposits to the user and check the result
+    let _deposit_res = env.deposit(account1, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_1, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_2, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_3, 100 * CREATE_CANISTER_CYCLES, None);
+    let mut expected_total_supply = 400 * CREATE_CANISTER_CYCLES;
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+
+    // successful create
+    env.icrc2_approve_or_trap(
+        account1.owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: withdrawer1,
+            amount: Nat::from(u128::MAX),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1);
+    let mut expected_allowance = u128::MAX;
+    let CreateCanisterSuccess {
+        canister_id,
+        block_id,
+    } = env.create_canister_from_or_trap(
+        withdrawer1.owner,
+        CreateCanisterFromArgs {
+            from: account1,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+            spender_subaccount: None,
+        },
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    let status = env.canister_status(withdrawer1.owner, canister_id);
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // no canister creation fee on system subnet (where the StateMachine is by default)
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
+    assert_eq!(vec![withdrawer1.owner], status.settings.controllers);
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(block_id.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was not set.
+                created_at_time: None,
+                // The memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1,
+                    spender: Some(withdrawer1),
+                    // The  operation amount is the withdrawn amount.
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        },
+    );
+
+    let canister_settings = CanisterSettings {
+        controllers: Some(vec![account1.owner, Principal::anonymous()]),
+        compute_allocation: Some(Nat::from(7_u128)),
+        memory_allocation: Some(Nat::from(8_u128)),
+        freezing_threshold: Some(Nat::from(9_u128)),
+        reserved_cycles_limit: Some(Nat::from(10_u128)),
+    };
+    let CreateCanisterSuccess {
+        canister_id,
+        block_id,
+    } = env.create_canister_from_or_trap(
+        withdrawer1.owner,
+        CreateCanisterFromArgs {
+            from: account1,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: Some(CmcCreateCanisterArgs {
+                subnet_selection: None,
+                settings: Some(canister_settings.clone()),
+            }),
+            spender_subaccount: None,
+        },
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    let status = env.canister_status(account1.owner, canister_id);
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    // order is not guaranteed
+    assert_eq!(
+        HashSet::<Principal>::from_iter(status.settings.controllers.iter().cloned()),
+        HashSet::from_iter(canister_settings.controllers.unwrap().iter().cloned())
+    );
+    assert_eq!(
+        status.settings.freezing_threshold,
+        canister_settings.freezing_threshold.unwrap()
+    );
+    assert_eq!(
+        status.settings.compute_allocation,
+        canister_settings.compute_allocation.unwrap()
+    );
+    assert_eq!(
+        status.settings.memory_allocation,
+        canister_settings.memory_allocation.unwrap()
+    );
+    assert_eq!(
+        status.settings.reserved_cycles_limit,
+        canister_settings.reserved_cycles_limit.unwrap()
+    );
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(block_id.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was not set.
+                created_at_time: None,
+                // The memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1,
+                    spender: Some(withdrawer1),
+                    // The  operation amount is the withdrawn amount.
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        },
+    );
+
+    // create from subaccount
+    env.icrc2_approve_or_trap(
+        account1_1.owner,
+        ApproveArgs {
+            from_subaccount: account1_1.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_1);
+    let mut expected_allowance = u128::MAX;
+    let CreateCanisterSuccess { block_id, .. } = env.create_canister_from_or_trap(
+        withdrawer1.owner,
+        CreateCanisterFromArgs {
+            from: account1_1,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+            spender_subaccount: None,
+        },
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_1));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_1, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(block_id.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was not set.
+                created_at_time: None,
+                // The memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1_1,
+                    spender: Some(withdrawer1),
+                    // The  operation amount is the withdrawn amount.
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        },
+    );
+
+    // create from subaccount with created_at_time set
+    let created_at_time = Some(env.nanos_since_epoch_u64());
+    env.icrc2_approve_or_trap(
+        account1_2.owner,
+        ApproveArgs {
+            from_subaccount: account1_2.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_2);
+    let mut expected_allowance = u128::MAX;
+    let CreateCanisterSuccess { block_id, .. } = env.create_canister_from_or_trap(
+        withdrawer1.owner,
+        CreateCanisterFromArgs {
+            from: account1_2,
+            created_at_time,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+            spender_subaccount: None,
+        },
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_2));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_2, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(block_id.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was set.
+                created_at_time,
+                // The memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1_2,
+                    spender: Some(withdrawer1),
+                    // The  operation amount is the withdrawn amount.
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        },
+    );
+
+    // create using spender subaccount
+    env.icrc2_approve_or_trap(
+        account1_3.owner,
+        ApproveArgs {
+            from_subaccount: account1_3.subaccount,
+            spender: withdrawer1_1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_3);
+    let mut expected_allowance = u128::MAX;
+    let CreateCanisterSuccess { block_id, .. } = env.create_canister_from_or_trap(
+        withdrawer1_1.owner,
+        CreateCanisterFromArgs {
+            from: account1_3,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
+            spender_subaccount: withdrawer1_1.subaccount,
+        },
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_3));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_3, withdrawer1_1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(block_id.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was not set.
+                created_at_time: None,
+                // The memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1_3,
+                    spender: Some(withdrawer1_1),
+                    // The  operation amount is the withdrawn amount.
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        },
+    );
+}
+
+#[test]
+fn test_create_canister_from_fail() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    let env = TestEnv::setup();
+    let withdrawer1 = account(101, None);
+    let account1 = account(1, None);
+    let account1_1 = account(1, Some(1));
+    let account1_2 = account(1, Some(2));
+    let account1_3 = account(1, Some(3));
+    let account1_4 = account(1, Some(4));
+    let account1_5 = account(1, Some(5));
+    let account1_6 = account(1, Some(6));
+    let account1_7 = account(1, Some(7));
+
+    // make the first deposit to the user and check the result
+    let _deposit_res = env.deposit(account1, CREATE_CANISTER_CYCLES / 2, None);
+    let _deposit_res = env.deposit(account1_1, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_2, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_3, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_4, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_5, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_6, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1_7, 100 * CREATE_CANISTER_CYCLES, None);
+    let mut expected_total_supply = env.icrc1_total_supply();
+
+    // create with more than available in account
+    env.icrc2_approve_or_trap(
+        account1.owner,
+        ApproveArgs {
+            from_subaccount: account1.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let expected_balance = env.icrc1_balance_of(account1);
+    let expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    let error = env
+        .create_canister_from(
+            withdrawer1.owner,
+            CreateCanisterFromArgs {
+                from: account1,
+                created_at_time: None,
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+                spender_subaccount: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::InsufficientFunds {
+            balance: expected_balance.into()
+        }
+    );
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    // check that no new block was added.
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
+
+    // if refund_amount is <= env.icrc1_fee() then
+    // 1. the error doesn't have the refund_block
+    // 2. the user has been charged the full amount
+    // 3. only one block was created
+    env.icrc2_approve_or_trap(
+        account1_2.owner,
+        ApproveArgs {
+            from_subaccount: account1_2.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_2);
+    let mut expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    env.fail_next_create_canister_with(CmcCreateCanisterError::Refunded {
+        refund_amount: FEE / 2,
+        create_error: "Error while creating".to_string(),
+    });
+    let error = env
+        .create_canister_from(
+            withdrawer1.owner,
+            CreateCanisterFromArgs {
+                from: account1_2,
+                created_at_time: None,
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+                spender_subaccount: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::FailedToCreateFrom {
+            create_from_block: Some(blocks.len().into()),
+            refund_block: None,
+            approval_refund_block: None,
+            rejection_code: RejectionCode::CanisterError,
+            rejection_reason: "Error while creating".to_string(),
+        }
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_2));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_2, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(FEE),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1_2,
+                    spender: Some(withdrawer1),
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
+
+    // if env.icrc1_fee() < refund_amount < 2 * env.irc1_fee() then
+    // 1. the user receives a refund
+    // 2. the error contains a refund block
+    // 3. the allowance does not get refunded
+    env.icrc2_approve_or_trap(
+        account1_3.owner,
+        ApproveArgs {
+            from_subaccount: account1_3.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_3);
+    let mut expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    env.fail_next_create_canister_with(CmcCreateCanisterError::Refunded {
+        refund_amount: FEE + FEE / 2,
+        create_error: "Error while creating".to_string(),
+    });
+    let error = env
+        .create_canister_from(
+            withdrawer1.owner,
+            CreateCanisterFromArgs {
+                from: account1_3,
+                created_at_time: None,
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+                spender_subaccount: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::FailedToCreateFrom {
+            create_from_block: Some(blocks.len().into()),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
+            approval_refund_block: None,
+            rejection_code: RejectionCode::CanisterError,
+            rejection_reason: "Error while creating".to_string(),
+        }
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_3));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_3, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(FEE),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1_3,
+                    spender: Some(withdrawer1),
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let refund_block = BlockWithId {
+        id: Nat::from(blocks.len() + 1),
+        block: Block {
+            phash: Some(burn_block.block.clone().hash()),
+            effective_fee: Some(0),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
+                operation: Operation::Mint {
+                    to: account1_3,
+                    amount: FEE / 2,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks
+        .into_iter()
+        .chain([burn_block, refund_block])
+        .collect::<Vec<_>>();
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
+
+    // if refund_amount > 2 * env.irc1_fee() then
+    // 1. the user receives a refund
+    // 2. the error contains a refund block
+    // 3. the allowance does get refunded
+    // 4. the error contains an allowance refund block
+    env.icrc2_approve_or_trap(
+        account1_4.owner,
+        ApproveArgs {
+            from_subaccount: account1_4.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_4);
+    let mut expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    env.fail_next_create_canister_with(CmcCreateCanisterError::Refunded {
+        refund_amount: 2 * FEE + FEE / 2,
+        create_error: "Error while creating".to_string(),
+    });
+    let error = env
+        .create_canister_from(
+            withdrawer1.owner,
+            CreateCanisterFromArgs {
+                from: account1_4,
+                created_at_time: None,
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+                spender_subaccount: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::FailedToCreateFrom {
+            create_from_block: Some(blocks.len().into()),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
+            approval_refund_block: Some(Nat::from(blocks.len() + 2)),
+            rejection_code: RejectionCode::CanisterError,
+            rejection_reason: "Error while creating".to_string(),
+        }
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_4));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_4, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 3, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(FEE),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1_4,
+                    spender: Some(withdrawer1),
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let refund_block = BlockWithId {
+        id: Nat::from(blocks.len() + 1),
+        block: Block {
+            phash: Some(burn_block.block.clone().hash()),
+            effective_fee: Some(0),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
+                operation: Operation::Mint {
+                    to: account1_4,
+                    amount: FEE + FEE / 2,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let approval_refund_block = BlockWithId {
+        id: Nat::from(blocks.len() + 2),
+        block: Block {
+            phash: Some(refund_block.block.hash()),
+            effective_fee: Some(env.icrc1_fee()),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                operation: Operation::Approve {
+                    from: account1_4,
+                    spender: withdrawer1,
+                    amount: expected_allowance,
+                    expected_allowance: None,
+                    expires_at: None,
+                    fee: None,
+                },
+                created_at_time: None,
+                memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks
+        .into_iter()
+        .chain([burn_block, refund_block, approval_refund_block])
+        .collect::<Vec<_>>();
+    assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
+
+    // duplicate
+    let created_at_time = Some(env.nanos_since_epoch_u64());
+    env.icrc2_approve_or_trap(
+        account1_5.owner,
+        ApproveArgs {
+            from_subaccount: account1_5.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_5);
+    let mut expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    let create_arg = CreateCanisterFromArgs {
+        from: account1_5,
+        created_at_time,
+        amount: CREATE_CANISTER_CYCLES.into(),
+        creation_args: None,
+        spender_subaccount: None,
+    };
+    let CreateCanisterSuccess {
+        block_id,
+        canister_id,
+    } = env.create_canister_from_or_trap(withdrawer1.owner, create_arg.clone());
+    let error = env
+        .create_canister_from(withdrawer1.owner, create_arg)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::Duplicate {
+            duplicate_of: block_id.clone(),
+            canister_id: Some(canister_id)
+        }
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_5));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_5, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    // check that the burn block created is correct
+    assert_display_eq(
+        &env.get_block(block_id.clone()),
+        &Block {
+            // The new block parent hash is the hash of the last deposit.
+            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            // The effective fee of a burn block created by a withdrawal
+            // is the fee of the ledger. This is different from burn in
+            // other ledgers because the operation transfers cycles.
+            effective_fee: Some(env.icrc1_fee()),
+            // The timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // The created_at_time was set.
+                created_at_time,
+                // The memo is the canister ID receiving the cycles
+                // encoded in cbor as object with a 'receiver' field marked as 0.
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                // Withdrawals are recorded as burns.
+                operation: Operation::Burn {
+                    from: account1_5,
+                    spender: Some(withdrawer1),
+                    // The  operation amount is the withdrawn amount.
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        },
+    );
+
+    // approval refund does not affect expires_at
+    let expires_at = Some(env.nanos_since_epoch_u64() + 100_000_000);
+    env.icrc2_approve_or_trap(
+        account1_6.owner,
+        ApproveArgs {
+            from_subaccount: account1_6.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_6);
+    let mut expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    env.fail_next_create_canister_with(CmcCreateCanisterError::Refunded {
+        refund_amount: 2 * FEE + FEE / 2,
+        create_error: "Error while creating".to_string(),
+    });
+    let error = env
+        .create_canister_from(
+            withdrawer1.owner,
+            CreateCanisterFromArgs {
+                from: account1_6,
+                created_at_time: None,
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+                spender_subaccount: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::FailedToCreateFrom {
+            create_from_block: Some(blocks.len().into()),
+            refund_block: Some(Nat::from(blocks.len() + 1)),
+            approval_refund_block: Some(Nat::from(blocks.len() + 2)),
+            rejection_code: RejectionCode::CanisterError,
+            rejection_reason: "Error while creating".to_string(),
+        }
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE - (FEE / 2);
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_6));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_6, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 3, env.number_of_blocks());
+    let approval_refund_block = Block {
+        phash: Some(env.get_block(Nat::from(blocks.len() + 1)).hash().unwrap()),
+        effective_fee: Some(env.icrc1_fee()),
+        timestamp: env.nanos_since_epoch_u64(),
+        transaction: Transaction {
+            operation: Operation::Approve {
+                from: account1_6,
+                spender: withdrawer1,
+                amount: expected_allowance,
+                expected_allowance: None,
+                expires_at,
+                fee: None,
+            },
+            created_at_time: None,
+            memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
+        },
+    };
+    assert_eq!(
+        approval_refund_block,
+        env.get_block(Nat::from(blocks.len() + 2))
+    );
+
+    // refund fails
+    env.icrc2_approve_or_trap(
+        account1_7.owner,
+        ApproveArgs {
+            from_subaccount: account1_7.subaccount,
+            spender: withdrawer1,
+            amount: u128::MAX.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    expected_total_supply -= FEE;
+    let mut expected_balance = env.icrc1_balance_of(account1_7);
+    let mut expected_allowance = u128::MAX;
+    let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
+    env.fail_next_create_canister_with(CmcCreateCanisterError::RefundFailed {
+        create_error: "Error while creating".to_string(),
+        refund_error: "Error while refunding".to_string(),
+    });
+    let error = env
+        .create_canister_from(
+            withdrawer1.owner,
+            CreateCanisterFromArgs {
+                from: account1_7,
+                created_at_time: None,
+                amount: CREATE_CANISTER_CYCLES.into(),
+                creation_args: None,
+                spender_subaccount: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CreateCanisterFromError::FailedToCreateFrom {
+            create_from_block: Some(blocks.len().into()),
+            refund_block: None,
+            approval_refund_block: None,
+            rejection_code: RejectionCode::CanisterError,
+            rejection_reason:
+                "create_error: Error while creating, refund error: Error while refunding"
+                    .to_string(),
+        }
+    );
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_allowance -= CREATE_CANISTER_CYCLES + FEE;
+    expected_total_supply -= CREATE_CANISTER_CYCLES + FEE;
+    assert_eq!(expected_balance, env.icrc1_balance_of(account1_7));
+    assert_eq!(
+        expected_allowance,
+        env.icrc2_allowance(account1_7, withdrawer1).allowance
+    );
+    assert_eq!(env.icrc1_total_supply(), expected_total_supply);
+    assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let burn_block = BlockWithId {
+        id: Nat::from(blocks.len()),
+        block: Block {
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            effective_fee: Some(FEE),
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                created_at_time: None,
+                memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
+                operation: Operation::Burn {
+                    from: account1_7,
+                    spender: Some(withdrawer1),
+                    amount: CREATE_CANISTER_CYCLES,
+                },
+            },
+        }
+        .to_value()
+        .unwrap(),
+    };
+    let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 }
 

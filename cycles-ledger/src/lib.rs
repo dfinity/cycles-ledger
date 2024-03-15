@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{bail, Context};
 use ciborium::Value as CiboriumValue;
-use endpoints::{WithdrawError, WithdrawFromError};
+use endpoints::{CreateCanisterError, CreateCanisterFromError, WithdrawError, WithdrawFromError};
 use icrc_ledger_types::{
     icrc::generic_value::Value, icrc1::transfer::TransferError,
     icrc2::transfer_from::TransferFromError,
@@ -212,6 +212,51 @@ pub fn withdraw_from_error_to_withdraw_error(e: WithdrawFromError) -> WithdrawEr
             fee_block,
             rejection_code,
             rejection_reason,
+        },
+    }
+}
+
+// Traps if the error is InsufficientAllowance
+pub fn create_canister_from_error_to_create_canister_error(
+    e: CreateCanisterFromError,
+) -> CreateCanisterError {
+    match e {
+        CreateCanisterFromError::InsufficientFunds { balance } => {
+            CreateCanisterError::InsufficientFunds { balance }
+        }
+        CreateCanisterFromError::InsufficientAllowance { .. } => {
+            ic_cdk::trap("InsufficientAllowance error should not happen for create_canister")
+        }
+        CreateCanisterFromError::TooOld => CreateCanisterError::TooOld,
+        CreateCanisterFromError::CreatedInFuture { ledger_time } => {
+            CreateCanisterError::CreatedInFuture { ledger_time }
+        }
+        CreateCanisterFromError::TemporarilyUnavailable => {
+            CreateCanisterError::TemporarilyUnavailable
+        }
+        CreateCanisterFromError::Duplicate {
+            duplicate_of,
+            canister_id,
+        } => CreateCanisterError::Duplicate {
+            duplicate_of,
+            canister_id,
+        },
+        CreateCanisterFromError::FailedToCreateFrom {
+            create_from_block,
+            refund_block,
+            rejection_reason,
+            ..
+        } => CreateCanisterError::FailedToCreate {
+            fee_block: create_from_block,
+            refund_block,
+            error: rejection_reason,
+        },
+        CreateCanisterFromError::GenericError {
+            error_code,
+            message,
+        } => CreateCanisterError::GenericError {
+            error_code,
+            message,
         },
     }
 }

@@ -1,7 +1,7 @@
 use candid::{candid_method, Nat, Principal};
 use cycles_ledger::endpoints::{
-    DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs, GetBlocksResult,
-    LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
+    CmcCreateCanisterArgs, DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs,
+    GetBlocksResult, LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
 };
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
@@ -9,8 +9,8 @@ use cycles_ledger::storage::{
     balance_of, mutate_config, mutate_state, prune, read_config, read_state,
 };
 use cycles_ledger::{
-    config, endpoints, storage, transfer_from_error_to_transfer_error,
-    withdraw_from_error_to_withdraw_error,
+    config, create_canister_from_error_to_create_canister_error, endpoints, storage,
+    transfer_from_error_to_transfer_error, withdraw_from_error_to_withdraw_error,
 };
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
@@ -315,6 +315,22 @@ async fn withdraw_from(args: endpoints::WithdrawFromArgs) -> Result<Nat, Withdra
     .await
 }
 
+async fn execute_create_canister(
+    from: Account,
+    spender: Option<Account>,
+    amount: Nat,
+    created_at_time: Option<u64>,
+    creation_args: Option<CmcCreateCanisterArgs>,
+) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterFromError> {
+    let Some(amount) = amount.0.to_u128() else {
+        return Err(endpoints::CreateCanisterFromError::InsufficientFunds {
+            balance: Nat::from(balance_of(&from)),
+        });
+    };
+    let now = ic_cdk::api::time();
+    storage::create_canister(from, spender, amount, now, created_at_time, creation_args).await
+}
+
 #[update]
 #[candid_method]
 async fn create_canister(
@@ -325,16 +341,30 @@ async fn create_canister(
         subaccount: args.from_subaccount,
     };
 
-    let Some(amount) = args.amount.0.to_u128() else {
-        return Err(endpoints::CreateCanisterError::InsufficientFunds {
-            balance: Nat::from(balance_of(&from)),
-        });
-    };
-
-    storage::create_canister(
+    execute_create_canister(
         from,
-        amount,
-        ic_cdk::api::time(),
+        None,
+        args.amount,
+        args.created_at_time,
+        args.creation_args,
+    )
+    .await
+    .map_err(create_canister_from_error_to_create_canister_error)
+}
+
+#[update]
+#[candid_method]
+async fn create_canister_from(
+    args: endpoints::CreateCanisterFromArgs,
+) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterFromError> {
+    let spender = Account {
+        owner: ic_cdk::caller(),
+        subaccount: args.spender_subaccount,
+    };
+    execute_create_canister(
+        args.from,
+        Some(spender),
+        args.amount,
         args.created_at_time,
         args.creation_args,
     )
