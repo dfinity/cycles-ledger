@@ -134,7 +134,7 @@ type Value = variant {
 
 type GetArchivesArgs = record {
   // The last archive seen by the client.
-  // The Ledger will return archives coming
+  // The ledger will return archives coming
   // after this one if set, otherwise it
   // will return the first archives.
   from : opt principal;
