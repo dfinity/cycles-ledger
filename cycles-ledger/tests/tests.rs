@@ -334,7 +334,22 @@ impl TestEnv {
     }
 
     fn get_all_blocks_with_ids(&self) -> Vec<BlockWithId> {
-        self.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks
+        let mut blocks: Vec<BlockWithId> = vec![];
+        loop {
+            let start = blocks
+                .last()
+                .map_or(Nat::from(0u64), |block| block.id.clone() + 1u64);
+            let res = self.icrc3_get_blocks(vec![(start, Nat::from(u64::MAX))]);
+            if res.blocks.is_empty() {
+                break;
+            }
+            blocks.extend(res.blocks);
+            if blocks.len() >= res.log_length {
+                break;
+            }
+        }
+
+        blocks
     }
 
     fn get_block(&self, block_index: Nat) -> Block {
