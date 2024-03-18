@@ -31,7 +31,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_blocks_per_request: 1000,
+            max_blocks_per_request: 100,
             index_id: None,
         }
     }
