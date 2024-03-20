@@ -350,7 +350,7 @@ pub struct Block {
     pub transaction: Transaction,
     #[serde(rename = "ts")]
     pub timestamp: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "phash", skip_serializing_if = "Option::is_none")]
     pub phash: Option<[u8; 32]>,
     #[serde(rename = "fee")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2420,9 +2420,10 @@ mod tests {
         fn block_strategy()
                          (transaction in transaction_strategy(),
                           timestamp in any::<u64>(),
+                          phash in proptest::option::of(any::<[u8;32]>()),
                           effective_fee in proptest::option::of(any::<u128>()))
                          -> Block {
-            Block { transaction, timestamp, phash: None, effective_fee}
+            Block { transaction, timestamp, phash, effective_fee}
         }
     }
 
@@ -2611,4 +2612,58 @@ mod tests {
             },
         }
     }
+}
+
+mod phash {
+    use serde::de::Error;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_bytes::ByteBuf;
+
+    pub fn serialize<S>(phash: &Option<[u8; 32]>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match phash {
+            None => serializer.serialize_none(),
+            Some(phash) => serializer.serialize_some(&ByteBuf::from(phash.as_slice())),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<[u8; 32]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Option::<ByteBuf>::deserialize(deserializer)? {
+            None => Ok(None),
+            Some(bb) => match <[u8; 32]>::try_from(bb.as_slice()) {
+                Ok(phash) => Ok(Some(phash)),
+                Err(err) => Err(D::Error::custom(err)),
+            },
+        }
+    }
+}
+
+#[test]
+fn test_phash_serialization_roundtrip() {
+    use proptest::prelude::any;
+    use proptest::proptest;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(transparent)]
+    struct Wrap(#[serde(with = "phash")] Option<[u8; 32]>);
+
+    fn test_phash(phash: Option<[u8; 32]>) {
+        let wrap = Wrap(phash);
+        let value = ciborium::Value::serialized(&wrap).expect("Unable to serialize phash");
+        if phash.is_none() {
+            assert!(value.is_null());
+        } else {
+            assert!(value.is_bytes());
+        }
+    }
+
+    proptest!(|(phash in proptest::option::of(any::<[u8; 32]>()))| {
+        test_phash(phash)
+    })
 }
