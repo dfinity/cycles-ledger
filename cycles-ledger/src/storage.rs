@@ -122,7 +122,7 @@ pub enum Operation {
         to: Account,
         amount: u128,
         // Custom non-standard fee to record the amount
-        // of cycles "burn" when cycles are deposited, i.e.
+        // of cycles "burned" when cycles are deposited, i.e.,
         // the diffence between the cycles deposited and
         // the cycles minted. Note that this field has
         // no effect on the balance of the `to` account.
