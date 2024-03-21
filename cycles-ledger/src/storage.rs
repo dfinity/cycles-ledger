@@ -762,7 +762,7 @@ pub fn deposit(
         )
     }
 
-    let block_index = mint(to, amount, memo, now)?;
+    let block_index = mint(to, amount - crate::config::FEE, memo, now)?;
 
     prune(now);
 
@@ -1409,7 +1409,7 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
     use Operation as Op;
 
     match op {
-        Op::Burn { .. } | Op::Mint { .. } => Ok(Some(0)),
+        Op::Burn { .. } | Op::Mint { .. } => Ok(Some(config::FEE)),
         Op::Transfer { fee, .. } | Op::Approve { fee, .. } => {
             if fee.is_some() && fee != &Some(config::FEE) {
                 return Err(config::FEE);
@@ -1445,14 +1445,6 @@ fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionEr
 }
 
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
-    process_block(transaction, now, None)
-}
-
-fn process_block(
-    transaction: Transaction,
-    now: u64,
-    effective_fee: Option<u128>,
-) -> Result<u64, ProcessTransactionError> {
     use ProcessTransactionError as PTErr;
 
     // The ICRC-1 and ICP Ledgers trap when the memo validation fails
@@ -1464,7 +1456,6 @@ fn process_block(
     validate_created_at_time(&transaction.created_at_time, now)?;
 
     let effective_fee = validate_suggested_fee(&transaction.operation)
-        .map(|fee| effective_fee.or(fee))
         .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
 
     let block = Block {
@@ -1704,7 +1695,7 @@ pub async fn withdraw(
 
     // 1. burn cycles + fee
 
-    let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
+    let block_index = process_transaction(transaction.clone(), now)?;
 
     if let Some(spender) = spender {
         if spender != from {
@@ -1849,7 +1840,7 @@ pub async fn create_canister(
 
     // 1. burn cycles + fee
 
-    let block_index = process_block(transaction.clone(), now, Some(config::FEE))?;
+    let block_index = process_transaction(transaction.clone(), now)?;
 
     if let Some(spender) = spender {
         if spender != from {

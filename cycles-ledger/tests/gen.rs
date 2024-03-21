@@ -211,7 +211,7 @@ impl IsCyclesLedger for CyclesLedgerInMemory {
                 amount,
                 arg: DepositArg { to, .. },
             } => {
-                let amount = amount.0.to_u128().ok_or("amount is not a u128")?;
+                let amount = amount.0.to_u128().ok_or("amount is not a u128")? - FEE;
                 // The precise cost of calling the deposit endpoint is unknown.
                 // depositor_cycles is decreased by an arbitrary number plus
                 // the amount.
