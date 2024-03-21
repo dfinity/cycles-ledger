@@ -121,6 +121,12 @@ pub enum Operation {
     Mint {
         to: Account,
         amount: u128,
+        // Custom non-standard fee to record the amount
+        // of cycles "burn" when cycles are deposited, i.e.
+        // the diffence between the cycles deposited and
+        // the cycles minted. Note that this field has
+        // no effect on the balance of the `to` account.
+        fee: u128,
     },
     Transfer {
         from: Account,
@@ -177,10 +183,11 @@ impl Display for Operation {
                 write!(f, ", amount: {amount}")?;
                 write!(f, " }}")
             }
-            Self::Mint { to, amount } => {
+            Self::Mint { to, amount, fee } => {
                 write!(f, "Mint {{")?;
                 write!(f, " to: {to}")?;
                 write!(f, ", amount: {amount}")?;
+                write!(f, ", fee: {fee}")?;
                 write!(f, " }}")
             }
             Self::Transfer {
@@ -260,6 +267,9 @@ impl TryFrom<FlattenedTransaction> for Transaction {
             "mint" => Operation::Mint {
                 to: value.to.ok_or("`to` field required for `mint` operation")?,
                 amount: value.amount,
+                fee: value
+                    .fee
+                    .ok_or("`fee` field required for `mint` operation")?,
             },
             "xfer" => Operation::Transfer {
                 from: value
@@ -328,6 +338,7 @@ impl From<Transaction> for FlattenedTransaction {
             },
             fee: match &t.operation {
                 Transfer { fee, .. } | Approve { fee, .. } => fee.to_owned(),
+                Mint { fee, .. } => Some(fee.to_owned()),
                 _ => None,
             },
             expected_allowance: match &t.operation {
@@ -720,32 +731,6 @@ pub fn balance_of(account: &Account) -> u128 {
     read_state(|s| s.balances.get(&to_account_key(account)).unwrap_or_default())
 }
 
-pub fn record_deposit(
-    account: &Account,
-    amount: u128,
-    memo: Option<Memo>,
-    now: u64,
-) -> anyhow::Result<(u64, u128, Hash)> {
-    mutate_state(|s| {
-        let new_balance = s.credit(account, amount)?;
-        let phash = s.last_block_hash();
-        let block_hash = s.emit_block(Block {
-            transaction: Transaction {
-                operation: Operation::Mint {
-                    to: *account,
-                    amount,
-                },
-                memo,
-                created_at_time: None,
-            },
-            timestamp: now,
-            phash,
-            effective_fee: Some(0),
-        });
-        Ok((s.blocks.len() - 1, new_balance, block_hash))
-    })
-}
-
 pub fn deposit(
     to: Account,
     amount: u128,
@@ -786,7 +771,11 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
     // we are not checking for duplicates, since mint is executed with created_at_time: None
     let block_index = process_transaction(
         Transaction {
-            operation: Operation::Mint { to, amount },
+            operation: Operation::Mint {
+                to,
+                amount,
+                fee: crate::config::FEE,
+            },
             created_at_time: None,
             memo,
         },
@@ -1409,7 +1398,8 @@ fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
     use Operation as Op;
 
     match op {
-        Op::Burn { .. } | Op::Mint { .. } => Ok(Some(config::FEE)),
+        Op::Mint { .. } => Ok(Some(0)),
+        Op::Burn { .. } => Ok(Some(config::FEE)),
         Op::Transfer { fee, .. } | Op::Approve { fee, .. } => {
             if fee.is_some() && fee != &Some(config::FEE) {
                 return Err(config::FEE);
@@ -2003,7 +1993,11 @@ fn reimburse(
     memo: [u8; MAX_MEMO_LENGTH as usize],
 ) -> Result<u64, ProcessTransactionError> {
     let transaction = Transaction {
-        operation: Operation::Mint { to: acc, amount },
+        operation: Operation::Mint {
+            to: acc,
+            amount,
+            fee: 0,
+        },
         created_at_time: None,
         memo: Some(Memo::from(ByteBuf::from(memo))),
     };
@@ -2304,8 +2298,9 @@ mod tests {
         icrc3,
     };
     use proptest::{
-        prelude::any, prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
-        strategy::Strategy,
+        prelude::any,
+        prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
+        strategy::{Just, Strategy},
     };
 
     use crate::{
@@ -2361,9 +2356,10 @@ mod tests {
     prop_compose! {
         fn mint_strategy()
                         (to in account_strategy(),
-                         amount in any::<u128>())
+                         amount in any::<u128>(),
+                         fee in prop_oneof![Just(0), Just(config::FEE)])
                         -> Operation {
-            Operation::Mint { to, amount }
+            Operation::Mint { to, amount, fee }
         }
     }
 

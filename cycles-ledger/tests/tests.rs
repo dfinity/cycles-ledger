@@ -623,8 +623,8 @@ fn test_deposit_flow() {
         &Block {
             // 1.2.0 first block has no parent hash.
             phash: None,
-            // 1.2.1 effective fee of mint blocks is the configured fee.
-            effective_fee: Some(fee),
+            // 1.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
             // 1.2.2 timestamp is set by the ledger.
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -639,6 +639,8 @@ fn test_deposit_flow() {
                     to: account0,
                     // 1.2.7 transaction.operation.amount is the deposited amount.
                     amount: 1_000_000_000,
+                    // 1.2.8 transaction.operation.fee is the ledger fee.
+                    fee,
                 },
             },
         },
@@ -663,8 +665,8 @@ fn test_deposit_flow() {
         &Block {
             // 2.2.0 second block has the first block hash as parent hash.
             phash: Some(block0.hash().unwrap()),
-            // 2.2.1 effective fee of mint blocks is the configured fee.
-            effective_fee: Some(fee),
+            // 2.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
             // 2.2.2 timestamp is set by the ledger.
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -678,6 +680,8 @@ fn test_deposit_flow() {
                     to: account0,
                     // 2.2.7 transaction.operation.amount is the deposited amount.
                     amount: 500_000_000,
+                    // 2.2.8 transaction.operation.fee is the ledger fee.
+                    fee,
                 },
             },
         },
@@ -1089,7 +1093,7 @@ fn test_withdraw_fails() {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -1099,6 +1103,7 @@ fn test_withdraw_fails() {
                     // refund the amount minus the fee to make
                     // the caller pay for the refund block too
                     amount: 500_000_000_u128 - FEE,
+                    fee: 0,
                 },
             },
         }
@@ -1740,7 +1745,7 @@ fn test_withdraw_from_fails() {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -1748,6 +1753,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_2,
                     amount: 400_000_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -1860,7 +1866,7 @@ fn test_withdraw_from_fails() {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -1868,6 +1874,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_3,
                     amount: 10_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -1958,7 +1965,7 @@ fn test_withdraw_from_fails() {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -1966,6 +1973,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_4,
                     amount: 10_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -2091,7 +2099,7 @@ fn test_withdraw_from_fails() {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -2099,6 +2107,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_6,
                     amount: 400_000_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -4482,6 +4491,7 @@ fn test_icrc3_get_blocks() {
         Mint {
             to: account1,
             amount: 5_000_000_000,
+            fee,
         },
         None,
         None,
@@ -4506,6 +4516,7 @@ fn test_icrc3_get_blocks() {
         Mint {
             to: account2,
             amount: 3_000_000_000,
+            fee,
         },
         None,
         None,
@@ -4709,7 +4720,8 @@ fn block(
     phash: Option<[u8; 32]>,
 ) -> Block {
     let effective_fee = match operation {
-        Burn { .. } | Mint { .. } => Some(FEE),
+        Mint { .. } => Some(0),
+        Burn { .. } => Some(FEE),
         Transfer { fee, .. } | Approve { fee, .. } => {
             if fee.is_none() {
                 Some(FEE)
@@ -5506,7 +5518,7 @@ fn test_create_canister_fail() {
         id: Nat::from(blocks.len() + 1),
         block: Block {
             phash: Some(burn_block.block.clone().hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -5514,6 +5526,7 @@ fn test_create_canister_fail() {
                 operation: Operation::Mint {
                     to: account1,
                     amount: amount - fee,
+                    fee: 0,
                 },
             },
         }
@@ -6131,7 +6144,7 @@ fn test_create_canister_from_fail() {
         id: Nat::from(blocks.len() + 1),
         block: Block {
             phash: Some(burn_block.block.clone().hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -6139,6 +6152,7 @@ fn test_create_canister_from_fail() {
                 operation: Operation::Mint {
                     to: account1_3,
                     amount: FEE / 2,
+                    fee: 0,
                 },
             },
         }
@@ -6232,7 +6246,7 @@ fn test_create_canister_from_fail() {
         id: Nat::from(blocks.len() + 1),
         block: Block {
             phash: Some(burn_block.block.clone().hash()),
-            effective_fee: Some(config::FEE),
+            effective_fee: Some(0),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
                 created_at_time: None,
@@ -6240,6 +6254,7 @@ fn test_create_canister_from_fail() {
                 operation: Operation::Mint {
                     to: account1_4,
                     amount: FEE + FEE / 2,
+                    fee: 0,
                 },
             },
         }
