@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt::Display;
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -89,7 +90,94 @@ pub struct Transaction {
     pub memo: Option<Memo>,
 }
 
+fn account_to_value(account: Account) -> Value {
+    let mut components = vec![Value::blob(account.owner.as_slice())];
+    if let Some(sub) = account.subaccount {
+        components.push(Value::blob(sub))
+    }
+    Value::Array(components)
+}
+
 impl Transaction {
+    pub fn to_value(self) -> Value {
+        let mut map = BTreeMap::new();
+        if let Some(created_at_time) = self.created_at_time {
+            map.insert(
+                "ts".to_string(),
+                Value::Nat(candid::Nat::from(created_at_time)),
+            );
+        }
+        if let Some(memo) = self.memo {
+            map.insert("memo".to_string(), Value::Blob(memo.0));
+        }
+        match self.operation {
+            Operation::Mint { to, amount } => {
+                map.insert("op".to_string(), Value::text("mint"));
+                map.insert("to".to_string(), account_to_value(to));
+                map.insert("amt".to_string(), Value::Nat(candid::Nat::from(amount)));
+            }
+            Operation::Transfer {
+                from,
+                to,
+                spender,
+                amount,
+                fee,
+            } => {
+                map.insert("op".to_string(), Value::text("xfer"));
+                map.insert("from".to_string(), account_to_value(from));
+                map.insert("to".to_string(), account_to_value(to));
+                if let Some(spender) = spender {
+                    map.insert("spender".to_string(), account_to_value(spender));
+                }
+                map.insert("amt".to_string(), Value::Nat(candid::Nat::from(amount)));
+                if let Some(fee) = fee {
+                    map.insert("fee".to_string(), Value::Nat(candid::Nat::from(fee)));
+                }
+            }
+            Operation::Burn {
+                from,
+                spender,
+                amount,
+            } => {
+                map.insert("op".to_string(), Value::text("burn"));
+                map.insert("from".to_string(), account_to_value(from));
+                if let Some(spender) = spender {
+                    map.insert("spender".to_string(), account_to_value(spender));
+                }
+                map.insert("amt".to_string(), Value::Nat(candid::Nat::from(amount)));
+            }
+            Operation::Approve {
+                from,
+                spender,
+                amount,
+                expected_allowance,
+                expires_at,
+                fee,
+            } => {
+                map.insert("op".to_string(), Value::text("approve"));
+                map.insert("from".to_string(), account_to_value(from));
+                map.insert("spender".to_string(), account_to_value(spender));
+                map.insert("amt".to_string(), Value::Nat(candid::Nat::from(amount)));
+                if let Some(expected_allowance) = expected_allowance {
+                    map.insert(
+                        "expected_allowance".to_string(),
+                        Value::Nat(candid::Nat::from(expected_allowance)),
+                    );
+                }
+                if let Some(expires_at) = expires_at {
+                    map.insert(
+                        "expires_at".to_string(),
+                        Value::Nat(candid::Nat::from(expires_at)),
+                    );
+                }
+                if let Some(fee) = fee {
+                    map.insert("fee".to_string(), Value::Nat(candid::Nat::from(fee)));
+                }
+            }
+        }
+        Value::Map(map)
+    }
+
     pub fn hash(&self) -> anyhow::Result<Hash> {
         let value = ciborium::Value::serialized(self).context(format!(
             "Bug: unable to convert Transaction to Ciborium Value. Transaction: {:?}",
@@ -369,21 +457,27 @@ impl Block {
         ))
     }
 
-    pub fn to_value(&self) -> anyhow::Result<Value> {
-        let value = ciborium::Value::serialized(self).context(format!(
-            "Bug: unable to convert Block to Ciborium Value.\nBlock: {:?}",
-            self
-        ))?;
-        ciborium_to_generic_value(&value, 0).context(format!(
-            "Bug: unable to convert Ciborium Value to Value.\nBlock: {:?}\nValue: {:?}",
-            self, value
-        ))
+    pub fn to_value(self) -> Value {
+        let mut map = BTreeMap::new();
+        map.insert("tx".to_string(), self.transaction.to_value());
+        map.insert(
+            "ts".to_string(),
+            Value::Nat(candid::Nat::from(self.timestamp)),
+        );
+        if let Some(phash) = self.phash {
+            map.insert("phash".to_string(), Value::blob(phash));
+        }
+        if let Some(effective_fee) = self.effective_fee {
+            map.insert(
+                "fee".to_string(),
+                Value::Nat(candid::Nat::from(effective_fee)),
+            );
+        }
+        Value::Map(map)
     }
 
-    pub fn hash(&self) -> anyhow::Result<Hash> {
-        self.to_value()
-            .map(|v| v.hash())
-            .context("Bug: Unable to calculate block hash")
+    pub fn hash(self) -> Hash {
+        self.to_value().hash()
     }
 }
 
@@ -551,13 +645,13 @@ impl State {
         if n == 0 {
             return (None, hash_tree);
         }
-        let last_block_hash = blocks.get(n - 1).unwrap().hash().unwrap();
+        let last_block_hash = blocks.get(n - 1).unwrap().to_owned().hash();
         populate_last_block_hash_and_hash_tree(&mut hash_tree, n - 1, last_block_hash);
         (Some(last_block_hash), hash_tree)
     }
 
     pub fn emit_block(&mut self, b: Block) -> Hash {
-        let hash = b.hash().unwrap();
+        let hash = b.clone().hash();
         self.cache.phash = Some(hash);
         let tx_hash = b.transaction.hash().unwrap();
         let created_at_time = b.transaction.created_at_time;
@@ -1474,13 +1568,6 @@ fn process_block(
         effective_fee,
     };
 
-    // sanity check that block can be hashed
-    if let Err(err) = block.hash() {
-        let err = err.context(format!("Unable to process block {:?}", block));
-        log!(P0, "{:#}", err);
-        return Err(PTErr::from(err));
-    }
-
     let _ = mutate_state(|state| state.emit_block(block));
     let block_index = read_state(|state| state.blocks.len() - 1);
 
@@ -2283,8 +2370,7 @@ pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
                     .get(id)
                     .unwrap_or_else(|| panic!("Bug: unable to find block at index {}!", id))
                     .0
-                    .to_value()
-                    .unwrap_or_else(|e| panic!("Error on block at index {}: {}", id, e));
+                    .to_value();
                 let block_with_id = BlockWithId {
                     id: Nat::from(id),
                     block,
@@ -2313,8 +2399,7 @@ mod tests {
         icrc3,
     };
     use proptest::{
-        prelude::any, prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
-        strategy::Strategy,
+        prelude::any, prop_assert_eq, prop_compose, prop_oneof, proptest, strategy::Strategy,
     };
 
     use crate::{
@@ -2449,12 +2534,11 @@ mod tests {
             let actual_block = Cbor::<Block>::from_bytes(cblock.to_bytes());
             prop_assert_eq!(&block, &actual_block.0, "{:?}", block);
 
-            let value = block.to_value()
-                .expect("Unable to convert value to block");
+            let value = block.clone().to_value();
             let actual_block = Block::from_value(value)
                 .expect("Unable to convert value to block");
             prop_assert_eq!(&block, &actual_block, "{:?}", block);
-            prop_assert!(block.hash().is_ok(), "{:?}", block)
+            prop_assert_eq!(block.clone().hash(), actual_block.hash(), "{:?}", block)
         });
     }
 
@@ -2471,8 +2555,7 @@ mod tests {
             ..Default::default()
         };
         proptest!(test_conf, |(block in block_strategy())| {
-            let value = block.to_value()
-                .expect("Unable to convert value to block");
+            let value = block.to_value();
             if let Err(err) = icrc3::schema::validate(&value) {
                 panic!("block {} is not a valid icrc3 block. Errors:\n{}", value, err)
             }
@@ -2547,7 +2630,7 @@ mod tests {
 
             // set the phash to create a real chain
             for i in 1..blocks.len() {
-                blocks[i].phash = Some(blocks[i-1].hash().unwrap())
+                blocks[i].phash = Some(blocks[i-1].clone().hash())
             }
 
             for (i, block) in blocks.iter_mut().enumerate() {
