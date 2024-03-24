@@ -2403,6 +2403,7 @@ mod tests {
     };
 
     use crate::{
+        ciborium_to_generic_value,
         config::{self, MAX_MEMO_LENGTH},
         storage::{prune_approvals, to_account_key, Cbor, Operation, Transaction},
     };
@@ -2538,7 +2539,17 @@ mod tests {
             let actual_block = Block::from_value(value)
                 .expect("Unable to convert value to block");
             prop_assert_eq!(&block, &actual_block, "{:?}", block);
-            prop_assert_eq!(block.clone().hash(), actual_block.hash(), "{:?}", block)
+            prop_assert_eq!(block.clone().hash(), actual_block.hash(), "{:?}", block);
+            // check the "old" hash without the FI-1247 fix
+            let old_value = ciborium::Value::serialized(&block).unwrap_or_else(|e| panic!(
+                "Bug: unable to convert Block to Ciborium Value.\nBlock: {:?}: {e:?}",
+                block
+            ));
+            let old_value = ciborium_to_generic_value(&old_value, 0).unwrap_or_else(|e| panic!(
+                "Bug: unable to convert Ciborium Value to Value.\nBlock: {:?}\nValue: {:?}: {e:?}",
+                block, old_value
+            ));
+            prop_assert_eq!(block.hash(), old_value.hash());
         });
     }
 
