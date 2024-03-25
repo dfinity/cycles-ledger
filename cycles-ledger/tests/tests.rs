@@ -595,6 +595,7 @@ impl IsCyclesLedger for TestEnv {
 fn test_deposit_flow() {
     let env = TestEnv::setup();
     let account0 = account(0, None);
+    let fee = env.icrc1_fee();
 
     // 0.0 Check that the total supply is 0.
     assert_eq!(env.icrc1_total_supply(), 0u128);
@@ -603,7 +604,7 @@ fn test_deposit_flow() {
     assert_eq!(env.icrc1_balance_of(account0), 0u128);
 
     // 1 Make the first deposit to the user and check the result.
-    let deposit_res = env.deposit(account0, 1_000_000_000, None);
+    let deposit_res = env.deposit(account0, 1_000_000_000 + fee, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
 
@@ -636,6 +637,8 @@ fn test_deposit_flow() {
                     to: account0,
                     // 1.2.7 transaction.operation.amount is the deposited amount.
                     amount: 1_000_000_000,
+                    // 1.2.8 transaction.operation.fee is the ledger fee.
+                    fee,
                 },
             },
         },
@@ -643,7 +646,7 @@ fn test_deposit_flow() {
 
     // 2 Make another deposit to the user and check the result.
     let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
-    let deposit_res = env.deposit(account0, 500_000_000, Some(memo.clone()));
+    let deposit_res = env.deposit(account0, 500_000_000 + fee, Some(memo.clone()));
     assert_eq!(deposit_res.block_index, Nat::from(1_u128));
     assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
 
@@ -675,6 +678,8 @@ fn test_deposit_flow() {
                     to: account0,
                     // 2.2.7 transaction.operation.amount is the deposited amount.
                     amount: 500_000_000,
+                    // 2.2.8 transaction.operation.fee is the ledger fee.
+                    fee,
                 },
             },
         },
@@ -689,14 +694,25 @@ fn test_deposit_amount_below_fee() {
 
     // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
     let _deposit_result = env.deposit(account1, config::FEE - 1, None);
+}
 
-    // check that no new block was created
-    assert_eq!(Nat::from(0u8), env.number_of_blocks());
+#[test]
+#[should_panic]
+fn test_deposit_amount_same_as_fee() {
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+
+    // The amount of cycles minted is the cycles attached - fee.
+    // If the amount of cycles attached is equal to the fee then
+    // the endpoint should panic because minting 0 cycles is
+    // forbidden.
+    let _deposit_result = env.deposit(account1, config::FEE, None);
 }
 
 #[test]
 fn test_withdraw_flow() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let account1_1 = account(1, Some(1));
     let account1_2 = account(1, Some(2));
@@ -705,13 +721,13 @@ fn test_withdraw_flow() {
     let withdraw_receiver = env.state_machine.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = env.deposit(account1, 1_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
-    let _deposit_res = env.deposit(account1_1, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account1_2, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account1_3, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account1_4, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1_1, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_2, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_3, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_4, 1_000_000_000 + fee, None);
     let mut expected_total_supply = 5_000_000_000;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
@@ -883,11 +899,12 @@ fn test_withdraw_flow() {
 #[test]
 fn test_withdraw_duplicate() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let withdraw_receiver = env.state_machine.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = env.deposit(account1, 1_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
 
@@ -936,10 +953,11 @@ fn test_withdraw_duplicate() {
 #[test]
 fn test_withdraw_fails() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
 
     // make the first deposit to the user and check the result
-    let deposit_res = env.deposit(account1, 1_000_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000_000 + fee, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_u128);
     let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
@@ -1092,6 +1110,7 @@ fn test_withdraw_fails() {
                     // refund the amount minus the fee to make
                     // the caller pay for the refund block too
                     amount: 500_000_000_u128 - FEE,
+                    fee: 0,
                 },
             },
         }
@@ -1105,7 +1124,7 @@ fn test_withdraw_fails() {
 
     // user keeps the cycles if they don't have enough balance to pay the fee
     let account2 = account(2, None);
-    let _deposit_res = env.deposit(account2, FEE + 1, None);
+    let _deposit_res = env.deposit(account2, 2 * FEE + 1, None);
     let blocks = env.get_all_blocks_with_ids();
     let _withdraw_res = env
         .withdraw(
@@ -1135,7 +1154,7 @@ fn test_withdraw_fails() {
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // test withdraw deduplication
-    let _deposit_res = env.deposit(account2, FEE * 3, None);
+    let _deposit_res = env.deposit(account2, FEE * 4, None);
     let created_at_time = env.nanos_since_epoch_u64();
     let args = WithdrawArgs {
         from_subaccount: None,
@@ -1157,6 +1176,7 @@ fn test_withdraw_fails() {
 #[test]
 fn test_withdraw_from_flow() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let account1_1 = account(1, Some(1));
     let account1_2 = account(1, Some(2));
@@ -1167,13 +1187,13 @@ fn test_withdraw_from_flow() {
     let withdraw_receiver = env.state_machine.create_canister(None);
 
     // make deposits to the user and check the result
-    let deposit_res = env.deposit(account1, 1_000_000_000, None);
+    let deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
     assert_eq!(deposit_res.block_index, 0_u128);
     assert_eq!(deposit_res.balance, 1_000_000_000_u128);
-    let _deposit_res = env.deposit(account1_1, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account1_2, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account1_3, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account1_4, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1_1, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_2, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_3, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_4, 1_000_000_000 + fee, None);
     let mut expected_total_supply = 5_000_000_000;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
@@ -1474,6 +1494,7 @@ fn test_withdraw_from_flow() {
 #[test]
 fn test_withdraw_from_fails() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let withdrawer1 = account(101, None);
     let account1 = account(1, None);
     let account1_1 = account(1, Some(1));
@@ -1485,14 +1506,14 @@ fn test_withdraw_from_fails() {
     let account1_7 = account(1, Some(7));
 
     // make the first deposit to the user and check the result
-    let _deposit_res = env.deposit(account1, 1_000_000_000_000, None);
-    let _deposit_res = env.deposit(account1_1, 1_000_000_000_000, None);
-    let _deposit_res = env.deposit(account1_2, 1_000_000_000_000, None);
-    let _deposit_res = env.deposit(account1_3, 1_000_000_000_000, None);
-    let _deposit_res = env.deposit(account1_4, 3 * FEE + 10_000, None);
-    let _deposit_res = env.deposit(account1_5, 1_000_000_000_000, None);
-    let _deposit_res = env.deposit(account1_6, 1_000_000_000_000, None);
-    let _deposit_res = env.deposit(account1_7, 2 * FEE + 10_000, None);
+    let _deposit_res = env.deposit(account1, 1_000_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_1, 1_000_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_2, 1_000_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_3, 1_000_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_4, 4 * FEE + 10_000, None);
+    let _deposit_res = env.deposit(account1_5, 1_000_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_6, 1_000_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account1_7, 3 * FEE + 10_000, None);
     let mut expected_total_supply = 6_000_500_020_000_u128;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
@@ -1737,6 +1758,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_2,
                     amount: 400_000_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -1854,6 +1876,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_3,
                     amount: 10_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -1950,6 +1973,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_4,
                     amount: 10_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -2081,6 +2105,7 @@ fn test_withdraw_from_fails() {
                 operation: Operation::Mint {
                     to: account1_6,
                     amount: 400_000_000_u128,
+                    fee: 0,
                 },
             },
         }
@@ -2189,12 +2214,13 @@ fn test_withdraw_from_fails() {
 #[test]
 fn test_approve_max_allowance_size() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let from = account(0, None);
     let spender = account(1, None);
 
     // Deposit funds
     assert_eq!(
-        env.deposit(from, 1_000_000_000, None).balance,
+        env.deposit(from, 1_000_000_000 + fee, None).balance,
         1_000_000_000_u128
     );
 
@@ -2224,11 +2250,12 @@ fn test_approve_max_allowance_size() {
 #[test]
 fn test_icrc2_approve_self() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let from = account(0, None);
 
     // Deposit funds
     assert_eq!(
-        env.deposit(from, 1_000_000_000, None).balance,
+        env.deposit(from, 1_000_000_000 + fee, None).balance,
         1_000_000_000_u128
     );
 
@@ -2260,12 +2287,13 @@ fn test_icrc2_approve_self() {
 #[test]
 fn test_icrc2_approve_cap() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let from = account(0, None);
     let spender = account(1, None);
 
     // Deposit funds
     assert_eq!(
-        env.deposit(from, 1_000_000_000, None).balance,
+        env.deposit(from, 1_000_000_000 + fee, None).balance,
         1_000_000_000_u128
     );
 
@@ -2296,12 +2324,13 @@ fn test_icrc2_approve_cap() {
 #[test]
 fn test_approve_duplicate() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let from = account(0, None);
     let spender = account(1, None);
 
     // Deposit funds
     assert_eq!(
-        env.deposit(from, 1_000_000_000, None).balance,
+        env.deposit(from, 1_000_000_000 + fee, None).balance,
         1_000_000_000u128
     );
 
@@ -2336,6 +2365,7 @@ fn test_approve_duplicate() {
 #[test]
 fn test_approval_expiring() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let from = account(0, None);
     let spender1 = account(1, None);
     let spender2 = account(2, None);
@@ -2343,7 +2373,7 @@ fn test_approval_expiring() {
 
     // Deposit funds
     assert_eq!(
-        env.deposit(from, 1_000_000_000, None).balance,
+        env.deposit(from, 1_000_000_000 + fee, None).balance,
         1_000_000_000_u128
     );
 
@@ -2552,7 +2582,7 @@ fn test_icrc1_transfer_ok_with_params(
     let args_fee = set_fee.then_some(fee);
     let args_memo = set_memo.then_some(Memo::from(vec![1u8; 32]));
 
-    let _deposit_res = env.deposit(account_from, amount + fee, None);
+    let _deposit_res = env.deposit(account_from, amount + 2 * fee, None);
 
     // state that should change after the transfer is executed
     let account_from_balance_before = env.icrc1_balance_of(account_from);
@@ -2721,7 +2751,7 @@ fn test_icrc1_transfer_invalid_fee(env: &TestEnv) {
 
     // deposit enough funds to account_to such that the transaction
     // should happen if correct
-    let _deposit_index = env.deposit(account_from, fee, None);
+    let _deposit_index = env.deposit(account_from, 2 * fee, None);
 
     let account_to_balance = env.icrc1_balance_of(account_to);
     let account_from_balance = env.icrc1_balance_of(account_from);
@@ -2764,7 +2794,7 @@ fn test_icrc1_transfer_too_old(env: &TestEnv) {
 
     // deposit enough funds to account_to such that the transaction
     // would be accepted if created_at_time was correct
-    let _deposit_index = env.deposit(account_from, env.icrc1_fee(), None);
+    let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
 
     let account_to_balance = env.icrc1_balance_of(account_to);
     let account_from_balance = env.icrc1_balance_of(account_from);
@@ -2801,7 +2831,7 @@ fn test_icrc1_transfer_in_the_future(env: &TestEnv) {
 
     // deposit enough funds to account_to such that the transaction
     // would be accepted if created_at_time was correct
-    let _deposit_index = env.deposit(account_from, env.icrc1_fee(), None);
+    let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
 
     let account_to_balance = env.icrc1_balance_of(account_to);
     let account_from_balance = env.icrc1_balance_of(account_from);
@@ -2846,7 +2876,7 @@ fn test_icrc1_transfer_insufficient_funds_with_params(
     let fee = env.icrc1_fee();
 
     // Deposit so that account_from has at least the fee in its account
-    let _deposit_index = env.deposit(account_from, fee, None);
+    let _deposit_index = env.deposit(account_from, 2 * fee, None);
     let account_from_balance = env.icrc1_balance_of(account_from);
     let account_to_balance = env.icrc1_balance_of(account_to);
     let total_supply = env.icrc1_total_supply();
@@ -2955,7 +2985,7 @@ fn test_icrc1_transfer_duplicate_with_params(
         } else {
             fee
         };
-        let _deposit_index = env.deposit(account_from, deposit_amount, None);
+        let _deposit_index = env.deposit(account_from, deposit_amount + fee, None);
 
         let args = TransferArgs {
             from_subaccount: account_from.subaccount,
@@ -3035,7 +3065,7 @@ fn test_icrc2_approve_ok_with_params(
         env.nanos_since_epoch_u64() + Duration::from_secs(24 * 60 * 60).as_nanos() as u64,
     );
 
-    let _deposit_res = env.deposit(account_from, amount + fee, None);
+    let _deposit_res = env.deposit(account_from, amount + 2 * fee, None);
 
     // state that should change after the transfer is executed
     let account_from_balance_before = env.icrc1_balance_of(account_from);
@@ -3353,7 +3383,7 @@ where
 
     // deposit enough funds to account_to such that the transaction
     // would be accepted if created_at_time was correct
-    let _deposit_index = env.deposit(account_from, env.icrc1_fee(), None);
+    let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
 
     let account_spender_balance = env.icrc1_balance_of(account_spender);
     let account_from_balance = env.icrc1_balance_of(account_from);
@@ -3483,7 +3513,7 @@ fn test_icrc2_approve_duplicate_with_params(
 
     // deposit enough funds to account_from so that two approves
     // could go through
-    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let _deposit_index = env.deposit(account_from, 3 * fee, None);
 
     let current_allowance = env.icrc2_allowance(account_from, account_spender).allowance;
     let args = ApproveArgs {
@@ -3586,7 +3616,7 @@ fn test_icrc2_transfer_from_ok_with_params(
     let args_memo = set_memo.then_some(Memo::from(vec![1u8; 32]));
 
     // deposit the fee for approve plus the fee + amount for the transfer
-    let _deposit_res = env.deposit(account_from, amount + 2 * fee, None);
+    let _deposit_res = env.deposit(account_from, amount + 3 * fee, None);
 
     // approve so that transfer_from can succeed
     let args = ApproveArgs {
@@ -3688,7 +3718,7 @@ fn test_icrc2_transfer_from_invalid_fee(env: &TestEnv) {
 
     // deposit enough funds to account_to such that the transaction
     // should happen if correct
-    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let _deposit_index = env.deposit(account_from, 3 * fee, None);
     let args = ApproveArgs {
         from_subaccount: account_from.subaccount,
         spender: account_spender,
@@ -3750,7 +3780,7 @@ fn test_icrc2_transfer_from_too_old(env: &TestEnv) {
 
     // deposit enough funds to account_to such that the transaction
     // would be accepted if created_at_time was correct
-    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let _deposit_index = env.deposit(account_from, 3 * fee, None);
     let args = ApproveArgs {
         from_subaccount: account_from.subaccount,
         spender: account_spender,
@@ -3806,7 +3836,7 @@ fn test_icrc2_transfer_from_in_the_future(env: &TestEnv) {
 
     // deposit enough funds to account_to such that the transaction
     // would be accepted if created_at_time was correct
-    let _deposit_index = env.deposit(account_from, 2 * fee, None);
+    let _deposit_index = env.deposit(account_from, 3 * fee, None);
     let args = ApproveArgs {
         from_subaccount: account_from.subaccount,
         spender: account_spender,
@@ -3865,7 +3895,7 @@ fn test_icrc2_transfer_from_insufficient_funds_with_params(
     let account_spender = account(4, None);
     let fee = env.icrc1_fee();
 
-    let _deposit_index = env.deposit(account_from, 3 * fee, None);
+    let _deposit_index = env.deposit(account_from, 4 * fee, None);
     // remove the cycles from account_from minus the 2 fees needed
     // for the test
     let amount_to_remove = env.icrc1_balance_of(account_from).saturating_sub(3 * fee);
@@ -4003,7 +4033,7 @@ fn test_icrc2_transfer_from_duplicate_with_params(
         } else {
             3 * fee
         };
-        let _deposit_index = env.deposit(account_from, amount_to_deposit, None);
+        let _deposit_index = env.deposit(account_from, amount_to_deposit + fee, None);
 
         // remove the cycles from account_from minus the fees needed
         // for the test
@@ -4117,7 +4147,7 @@ fn test_icrc2_transfer_fails_if_approve_smaller_than_amount_plus_fee() {
     let account2 = account(2, None);
     let fee = env.icrc1_fee();
 
-    let deposit_res = env.deposit(account1, 2 * fee, None);
+    let deposit_res = env.deposit(account1, 3 * fee, None);
     let approve_block_index = env.icrc2_approve_or_trap(
         account1.owner,
         ApproveArgs {
@@ -4182,7 +4212,7 @@ fn test_deduplication() {
     let account2 = account(2, None);
     let fee = env.icrc1_fee();
 
-    let deposit_res = env.deposit(account1, 2 * fee, None);
+    let deposit_res = env.deposit(account1, 3 * fee, None);
     let approve_block_index = env.icrc2_approve_or_trap(
         account1.owner,
         ApproveArgs {
@@ -4243,6 +4273,7 @@ fn test_deduplication() {
 #[test]
 fn test_pruning_transactions() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let account2 = account(2, None);
     let transfer_amount = Nat::from(100_000_u128);
@@ -4274,7 +4305,7 @@ fn test_pruning_transactions() {
     assert!(tx_hashes.is_empty());
 
     let deposit_amount = 100_000_000_000;
-    env.deposit(account1, deposit_amount, None);
+    env.deposit(account1, deposit_amount + fee, None);
 
     // A deposit does not have a `created_at_time` argument and is therefore not recorded
     let tx_hashes = env.transaction_hashes();
@@ -4375,11 +4406,12 @@ fn test_pruning_transactions() {
 #[test]
 fn test_total_supply_after_upgrade() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let account2 = account(2, None);
 
-    env.deposit(account1, 2_000_000_000, None);
-    env.deposit(account2, 3_000_000_000, None);
+    env.deposit(account1, 2_000_000_000 + fee, None);
+    env.deposit(account2, 3_000_000_000 + fee, None);
     let fee = env.icrc1_fee();
     let _block_index = env
         .icrc1_transfer(
@@ -4433,6 +4465,7 @@ fn test_icrc3_get_blocks() {
     }
 
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
 
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
     assert_eq!(get_blocks_res.log_length, 0_u128);
@@ -4444,7 +4477,7 @@ fn test_icrc3_get_blocks() {
     let account3 = account(3, None);
 
     // add the first mint block
-    env.deposit(account1, 5_000_000_000, None);
+    env.deposit(account1, 5_000_000_000 + fee, None);
 
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
     assert_eq!(get_blocks_res.log_length, 1_u128);
@@ -4453,6 +4486,7 @@ fn test_icrc3_get_blocks() {
         Mint {
             to: account1,
             amount: 5_000_000_000,
+            fee,
         },
         None,
         None,
@@ -4468,7 +4502,7 @@ fn test_icrc3_get_blocks() {
     env.validate_certificate(0, block0.clone().hash());
 
     // add a second mint block
-    env.deposit(account2, 3_000_000_000, None);
+    env.deposit(account2, 3_000_000_000 + fee, None);
 
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
     assert_eq!(get_blocks_res.log_length, 2_u128);
@@ -4477,6 +4511,7 @@ fn test_icrc3_get_blocks() {
         Mint {
             to: account2,
             amount: 3_000_000_000,
+            fee,
         },
         None,
         None,
@@ -4680,16 +4715,9 @@ fn block(
     phash: Option<[u8; 32]>,
 ) -> Block {
     let effective_fee = match operation {
-        Burn { .. } => Some(FEE),
         Mint { .. } => Some(0),
-        Transfer { fee, .. } => {
-            if fee.is_none() {
-                Some(FEE)
-            } else {
-                None
-            }
-        }
-        Approve { fee, .. } => {
+        Burn { .. } => Some(FEE),
+        Transfer { fee, .. } | Approve { fee, .. } => {
             if fee.is_none() {
                 Some(FEE)
             } else {
@@ -4721,13 +4749,14 @@ fn test_get_blocks_max_length() {
         max_blocks_per_request: MAX_BLOCKS_PER_REQUEST,
         index_id: None,
     });
+    let fee = env.icrc1_fee();
 
     let account10 = account(10, None);
-    let _deposit_res = env.deposit(account10, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 2_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 3_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 4_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 5_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 2_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 3_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 4_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 5_000_000_000 + fee, None);
 
     let res = env.icrc3_get_blocks(vec![(0, u64::MAX)]);
     assert_eq!(MAX_BLOCKS_PER_REQUEST, res.blocks.len() as u64);
@@ -4742,13 +4771,14 @@ fn test_get_blocks_max_length() {
 #[test]
 fn test_set_max_blocks_per_request_in_upgrade() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
 
     let account10 = account(10, None);
-    let _deposit_res = env.deposit(account10, 1_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 2_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 3_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 4_000_000_000, None);
-    let _deposit_res = env.deposit(account10, 5_000_000_000, None);
+    let _deposit_res = env.deposit(account10, 1_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 2_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 3_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 4_000_000_000 + fee, None);
+    let _deposit_res = env.deposit(account10, 5_000_000_000 + fee, None);
 
     let res = env.icrc3_get_blocks(vec![(0, u64::MAX)]);
     assert_eq!(5, res.blocks.len() as u64);
@@ -4824,10 +4854,11 @@ fn test_change_index_id() {
 #[tokio::test]
 async fn test_icrc1_test_suite() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account10 = account(10, None);
 
     // make the first deposit to the user and check the result
-    let deposit_res = env.deposit(account10, 1_000_000_000_000_000, None);
+    let deposit_res = env.deposit(account10, 1_000_000_000_000_000 + fee, None);
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
     assert_eq!(1_000_000_000_000_000, env.icrc1_balance_of(account10));
@@ -4930,7 +4961,13 @@ fn test_create_canister() {
     let mut expected_balance = 1_000_000_000_000_000_u128;
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, account10_0, expected_balance, None);
+    let deposit_res = deposit(
+        &env,
+        depositor_id,
+        account10_0,
+        expected_balance + config::FEE,
+        None,
+    );
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(
@@ -5278,7 +5315,13 @@ fn test_create_canister_duplicate() {
     let mut expected_balance = 1_500_000_000_000_u128;
 
     // make the first deposit to the user and check the result
-    let deposit_res = deposit(&env, depositor_id, account10_0, expected_balance, None);
+    let deposit_res = deposit(
+        &env,
+        depositor_id,
+        account10_0,
+        expected_balance + config::FEE,
+        None,
+    );
     assert_eq!(deposit_res.block_index, Nat::from(0u128));
     assert_eq!(deposit_res.balance, expected_balance);
     assert_eq!(
@@ -5338,9 +5381,10 @@ fn test_create_canister_duplicate() {
 #[test]
 fn test_create_canister_fail() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
 
-    let _ = env.deposit(account1, 1_000_000_000_000_000_000, None);
+    let _ = env.deposit(account1, 1_000_000_000_000_000_000 + fee, None);
 
     let mut expected_total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks_with_ids();
@@ -5475,6 +5519,7 @@ fn test_create_canister_fail() {
                 operation: Operation::Mint {
                     to: account1,
                     amount: amount - fee,
+                    fee: 0,
                 },
             },
         }
@@ -5491,6 +5536,7 @@ fn test_create_canister_fail() {
 fn test_create_canister_from() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let account1_1 = account(1, Some(1));
     let account1_2 = account(1, Some(2));
@@ -5499,10 +5545,10 @@ fn test_create_canister_from() {
     let withdrawer1_1 = account(102, Some(1));
 
     // make deposits to the user and check the result
-    let _deposit_res = env.deposit(account1, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_1, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_2, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_3, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_1, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_2, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_3, 100 * CREATE_CANISTER_CYCLES + fee, None);
     let mut expected_total_supply = 400 * CREATE_CANISTER_CYCLES;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
@@ -5864,6 +5910,7 @@ fn test_create_canister_from() {
 fn test_create_canister_from_fail() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let withdrawer1 = account(101, None);
     let account1 = account(1, None);
     let account1_1 = account(1, Some(1));
@@ -5875,14 +5922,14 @@ fn test_create_canister_from_fail() {
     let account1_7 = account(1, Some(7));
 
     // make the first deposit to the user and check the result
-    let _deposit_res = env.deposit(account1, CREATE_CANISTER_CYCLES / 2, None);
-    let _deposit_res = env.deposit(account1_1, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_2, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_3, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_4, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_5, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_6, 100 * CREATE_CANISTER_CYCLES, None);
-    let _deposit_res = env.deposit(account1_7, 100 * CREATE_CANISTER_CYCLES, None);
+    let _deposit_res = env.deposit(account1, CREATE_CANISTER_CYCLES / 2 + fee, None);
+    let _deposit_res = env.deposit(account1_1, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_2, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_3, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_4, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_5, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_6, 100 * CREATE_CANISTER_CYCLES + fee, None);
+    let _deposit_res = env.deposit(account1_7, 100 * CREATE_CANISTER_CYCLES + fee, None);
     let mut expected_total_supply = env.icrc1_total_supply();
 
     // create with more than available in account
@@ -6095,6 +6142,7 @@ fn test_create_canister_from_fail() {
                 operation: Operation::Mint {
                     to: account1_3,
                     amount: FEE / 2,
+                    fee: 0,
                 },
             },
         }
@@ -6194,6 +6242,7 @@ fn test_create_canister_from_fail() {
                 operation: Operation::Mint {
                     to: account1_4,
                     amount: FEE + FEE / 2,
+                    fee: 0,
                 },
             },
         }
@@ -6477,8 +6526,9 @@ fn test_deposit_invalid_memo() {
 #[should_panic(expected = "memo length exceeds the maximum")]
 fn test_icrc1_transfer_invalid_memo() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
-    let _deposit_res = env.deposit(account1, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
 
     // Attempt icrc1_transfer with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let _res = env.icrc1_transfer(
@@ -6498,8 +6548,9 @@ fn test_icrc1_transfer_invalid_memo() {
 #[should_panic(expected = "memo length exceeds the maximum")]
 fn test_approve_invalid_memo() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
-    let _deposit_res = env.deposit(account1, 1_000_000_000, None);
+    let _deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
 
     // Attempt approve with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
     let _approve_res = env.icrc2_approve(
@@ -6521,10 +6572,11 @@ fn test_approve_invalid_memo() {
 #[should_panic(expected = "memo length exceeds the maximum")]
 fn test_icrc2_transfer_from_invalid_memo() {
     let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
     let account1 = account(1, None);
     let account2 = account(2, None);
     let deposit_amount = 10_000_000_000;
-    let _deposit_res = env.deposit(account1, deposit_amount, None);
+    let _deposit_res = env.deposit(account1, deposit_amount + fee, None);
 
     let _block_index = env
         .icrc2_approve(
