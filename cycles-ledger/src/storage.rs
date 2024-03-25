@@ -737,17 +737,27 @@ pub fn deposit(
     memo: Option<Memo>,
     now: u64,
 ) -> anyhow::Result<DepositResult> {
-    // check that the amount is at least the fee
-    if amount < crate::config::FEE {
-        bail!(
-            "The requested amount {} to be deposited is \
-               less than the cycles ledger fee: {}",
-            amount,
-            crate::config::FEE
-        )
-    }
+    // check that the amount is at least the fee plus one
+    let amount_to_mint = match amount.checked_sub(crate::config::FEE) {
+        None => {
+            bail!(
+                "The requested amount {} to be deposited is \
+                less than the cycles ledger fee: {}",
+                amount,
+                crate::config::FEE
+            )
+        }
+        Some(0) => {
+            bail!(
+                "Cannot deposit 0 cycles (amount: {}, cycles ledger fee: {})",
+                amount,
+                crate::config::FEE
+            )
+        }
+        Some(amount_to_mint) => amount_to_mint,
+    };
 
-    let block_index = mint(to, amount - crate::config::FEE, memo, now)?;
+    let block_index = mint(to, amount_to_mint, memo, now)?;
 
     prune(now);
 

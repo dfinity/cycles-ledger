@@ -696,9 +696,19 @@ fn test_deposit_amount_below_fee() {
 
     // Attempt to deposit fewer than [config::FEE] cycles. This call should panic.
     let _deposit_result = env.deposit(account1, config::FEE - 1, None);
+}
 
-    // check that no new block was created
-    assert_eq!(Nat::from(0u8), env.number_of_blocks());
+#[test]
+#[should_panic]
+fn test_deposit_amount_same_as_fee() {
+    let env = TestEnv::setup();
+    let account1 = account(1, None);
+
+    // The amount of cycles minted is the cycles attached - fee.
+    // If the amount of cycles attached is equal to the fee then
+    // the endpoint should panic because minting 0 cycles is
+    // forbidden.
+    let _deposit_result = env.deposit(account1, config::FEE, None);
 }
 
 #[test]
