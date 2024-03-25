@@ -357,9 +357,7 @@ impl TestEnv {
     }
 
     fn get_block_hash(&self, block_index: Nat) -> [u8; 32] {
-        self.get_block(block_index)
-            .hash()
-            .expect("Unable to calculate hash of block")
+        self.get_block(block_index).hash()
     }
 
     fn number_of_blocks(&self) -> Nat {
@@ -664,7 +662,7 @@ fn test_deposit_flow() {
         &block1,
         &Block {
             // 2.2.0 second block has the first block hash as parent hash.
-            phash: Some(block0.hash().unwrap()),
+            phash: Some(block0.hash()),
             // 2.2.1 effective fee of mint blocks is 0.
             effective_fee: Some(0),
             // 2.2.2 timestamp is set by the ledger.
@@ -761,7 +759,7 @@ fn test_withdraw_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the Ledger. This is different from burn in
             // other Ledgers because the operation transfers cycles.
@@ -815,7 +813,7 @@ fn test_withdraw_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the Ledger. This is different from burn in
             // other Ledgers because the operation transfers cycles.
@@ -870,7 +868,7 @@ fn test_withdraw_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the Ledger. This is different from burn in
             // other Ledgers because the operation transfers cycles.
@@ -1083,7 +1081,7 @@ fn test_withdraw_fails() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -1096,8 +1094,7 @@ fn test_withdraw_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
@@ -1117,8 +1114,7 @@ fn test_withdraw_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -1250,7 +1246,7 @@ fn test_withdraw_from_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -1323,7 +1319,7 @@ fn test_withdraw_from_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -1397,7 +1393,7 @@ fn test_withdraw_from_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -1470,7 +1466,7 @@ fn test_withdraw_from_flow() {
         &env.get_block(withdraw_idx.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(withdraw_idx - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -1735,7 +1731,7 @@ fn test_withdraw_from_fails() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -1748,8 +1744,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
@@ -1767,8 +1762,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let approve_refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 2u8,
@@ -1789,8 +1783,7 @@ fn test_withdraw_from_fails() {
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -1856,7 +1849,7 @@ fn test_withdraw_from_fails() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -1869,8 +1862,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
@@ -1888,8 +1880,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -1955,7 +1946,7 @@ fn test_withdraw_from_fails() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -1968,8 +1959,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
@@ -1987,8 +1977,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -2089,7 +2078,7 @@ fn test_withdraw_from_fails() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -2102,8 +2091,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
@@ -2121,8 +2109,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let approve_refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 2u8,
@@ -2143,8 +2130,7 @@ fn test_withdraw_from_fails() {
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -2206,7 +2192,7 @@ fn test_withdraw_from_fails() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -2219,8 +2205,7 @@ fn test_withdraw_from_fails() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
@@ -2638,7 +2623,7 @@ fn test_icrc1_transfer_ok_with_params(
             memo: args_memo,
         },
         timestamp: env.nanos_since_epoch_u64(),
-        phash: Some(env.get_block(block_index - 1u8).hash().unwrap()),
+        phash: Some(env.get_block(block_index - 1u8).hash()),
         effective_fee: args_fee.xor(Some(fee)),
     };
     expected_blocks.push(expected_new_block);
@@ -3131,7 +3116,7 @@ fn test_icrc2_approve_ok_with_params(
             memo: args_memo,
         },
         timestamp: env.nanos_since_epoch_u64(),
-        phash: Some(env.get_block(block_index - 1u8).hash().unwrap()),
+        phash: Some(env.get_block(block_index - 1u8).hash()),
         effective_fee: args_fee.xor(Some(fee)),
     };
     expected_blocks.push(expected_new_block);
@@ -3691,7 +3676,7 @@ fn test_icrc2_transfer_from_ok_with_params(
             memo: args_memo,
         },
         timestamp: env.nanos_since_epoch_u64(),
-        phash: Some(env.get_block(block_index - 1u8).hash().unwrap()),
+        phash: Some(env.get_block(block_index - 1u8).hash()),
         effective_fee: args_fee.xor(Some(fee)),
     };
     expected_blocks.push(expected_new_block);
@@ -4514,7 +4499,7 @@ fn test_icrc3_get_blocks() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block0.timestamp = actual_blocks[0].1.timestamp;
-    env.validate_certificate(0, block0.hash().unwrap());
+    env.validate_certificate(0, block0.clone().hash());
 
     // add a second mint block
     env.deposit(account2, 3_000_000_000 + fee, None);
@@ -4530,7 +4515,7 @@ fn test_icrc3_get_blocks() {
         },
         None,
         None,
-        Some(block0.hash().unwrap()),
+        Some(block0.clone().hash()),
     );
     let actual_blocks = decode_blocks_with_ids(get_blocks_res.blocks);
     let expected_blocks = vec![(0, block0.clone()), (1, block1.clone())];
@@ -4539,7 +4524,7 @@ fn test_icrc3_get_blocks() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block1.timestamp = actual_blocks[1].1.timestamp;
-    env.validate_certificate(1, block1.hash().unwrap());
+    env.validate_certificate(1, block1.clone().hash());
 
     // check retrieving a subset of the transactions
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 1u64)]);
@@ -4574,7 +4559,7 @@ fn test_icrc3_get_blocks() {
         },
         None,
         Some(withdraw_memo),
-        Some(block1.hash().unwrap()),
+        Some(block1.clone().hash()),
     );
     let actual_blocks = decode_blocks_with_ids(get_blocks_res.blocks);
     let expected_blocks = vec![
@@ -4587,7 +4572,7 @@ fn test_icrc3_get_blocks() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block2.timestamp = actual_blocks[2].1.timestamp;
-    env.validate_certificate(2, block2.hash().unwrap());
+    env.validate_certificate(2, block2.clone().hash());
 
     // add a couple of blocks
     let _block_index = env
@@ -4645,7 +4630,7 @@ fn test_icrc3_get_blocks() {
         },
         None,
         None,
-        Some(block2.hash().unwrap()),
+        Some(block2.clone().hash()),
     );
     let block4 = block(
         Approve {
@@ -4658,7 +4643,7 @@ fn test_icrc3_get_blocks() {
         },
         None,
         None,
-        Some(actual_blocks[3].1.hash().unwrap()),
+        Some(actual_blocks[3].1.clone().hash()),
     );
     let mut block5 = block(
         Transfer {
@@ -4670,7 +4655,7 @@ fn test_icrc3_get_blocks() {
         },
         None,
         None,
-        Some(actual_blocks[4].1.hash().unwrap()),
+        Some(actual_blocks[4].1.clone().hash()),
     );
     let expected_blocks = vec![
         (0, block0.clone()),
@@ -4685,7 +4670,7 @@ fn test_icrc3_get_blocks() {
     // i.e., the timestamp the ledger wrote in the real block. This is required
     // so that we can use the hash of the block as the parent hash.
     block5.timestamp = actual_blocks[5].1.timestamp;
-    env.validate_certificate(5, block5.hash().unwrap());
+    env.validate_certificate(5, block5.hash());
 }
 
 // Checks two lists of blocks are the same.
@@ -5447,7 +5432,7 @@ fn test_create_canister_fail() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(fee),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -5460,8 +5445,7 @@ fn test_create_canister_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
     assert_vec_display_eq(&blocks, env.get_all_blocks_with_ids());
@@ -5508,7 +5492,7 @@ fn test_create_canister_fail() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(fee),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -5521,8 +5505,7 @@ fn test_create_canister_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 1),
@@ -5540,8 +5523,7 @@ fn test_create_canister_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -5619,7 +5601,7 @@ fn test_create_canister_from() {
         &env.get_block(block_id.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(block_id - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -5703,7 +5685,7 @@ fn test_create_canister_from() {
         &env.get_block(block_id.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(block_id - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -5768,7 +5750,7 @@ fn test_create_canister_from() {
         &env.get_block(block_id.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(block_id - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -5834,7 +5816,7 @@ fn test_create_canister_from() {
         &env.get_block(block_id.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(block_id - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -5899,7 +5881,7 @@ fn test_create_canister_from() {
         &env.get_block(block_id.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(block_id - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -6055,7 +6037,7 @@ fn test_create_canister_from_fail() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -6068,8 +6050,7 @@ fn test_create_canister_from_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
@@ -6134,7 +6115,7 @@ fn test_create_canister_from_fail() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -6147,8 +6128,7 @@ fn test_create_canister_from_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 1),
@@ -6166,8 +6146,7 @@ fn test_create_canister_from_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -6236,7 +6215,7 @@ fn test_create_canister_from_fail() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -6249,8 +6228,7 @@ fn test_create_canister_from_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 1),
@@ -6268,8 +6246,7 @@ fn test_create_canister_from_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let approval_refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 2),
@@ -6290,8 +6267,7 @@ fn test_create_canister_from_fail() {
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks
         .into_iter()
@@ -6354,7 +6330,7 @@ fn test_create_canister_from_fail() {
         &env.get_block(block_id.clone()),
         &Block {
             // The new block parent hash is the hash of the last deposit.
-            phash: Some(env.get_block(block_id - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(block_id - 1u8).hash()),
             // The effective fee of a burn block created by a withdrawal
             // is the fee of the ledger. This is different from burn in
             // other ledgers because the operation transfers cycles.
@@ -6434,7 +6410,7 @@ fn test_create_canister_from_fail() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 3, env.number_of_blocks());
     let approval_refund_block = Block {
-        phash: Some(env.get_block(Nat::from(blocks.len() + 1)).hash().unwrap()),
+        phash: Some(env.get_block(Nat::from(blocks.len() + 1)).hash()),
         effective_fee: Some(env.icrc1_fee()),
         timestamp: env.nanos_since_epoch_u64(),
         transaction: Transaction {
@@ -6514,7 +6490,7 @@ fn test_create_canister_from_fail() {
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
-            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash().unwrap()),
+            phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
             timestamp: env.nanos_since_epoch_u64(),
             transaction: Transaction {
@@ -6527,8 +6503,7 @@ fn test_create_canister_from_fail() {
                 },
             },
         }
-        .to_value()
-        .unwrap(),
+        .to_value(),
     };
     let blocks = blocks.into_iter().chain([burn_block]).collect::<Vec<_>>();
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
