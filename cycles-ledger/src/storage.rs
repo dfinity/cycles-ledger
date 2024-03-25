@@ -111,10 +111,11 @@ impl Transaction {
             map.insert("memo".to_string(), Value::Blob(memo.0));
         }
         match self.operation {
-            Operation::Mint { to, amount } => {
+            Operation::Mint { to, amount, fee } => {
                 map.insert("op".to_string(), Value::text("mint"));
                 map.insert("to".to_string(), account_to_value(to));
                 map.insert("amt".to_string(), Value::Nat(candid::Nat::from(amount)));
+                map.insert("fee".to_string(), Value::Nat(candid::Nat::from(fee)));
             }
             Operation::Transfer {
                 from,
@@ -2395,7 +2396,7 @@ mod tests {
     };
     use proptest::{
         prelude::any,
-        prop_assert, prop_assert_eq, prop_compose, prop_oneof, proptest,
+        prop_assert_eq, prop_compose, prop_oneof, proptest,
         strategy::{Just, Strategy},
     };
 
