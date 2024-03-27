@@ -8,6 +8,15 @@ Additionally, it implements the endpoints defined in the proposed [ICRC-3](https
 The cycles ledger further provides endpoints to deposit and withdraw cycles, and also
 to create canisters using cycles. These custom endpoints are introduced in the following.
 
+## Cycles Ledger Canister
+
+### Principal
+```text
+um5iw-rqaaa-aaaaq-qaaba-cai
+```
+
+[View on Internet Computer Dashboard](https://dashboard.internetcomputer.org/canister/um5iw-rqaaa-aaaaq-qaaba-cai)
+
 ## Depositing Cycles
 
 The cycles ledger has the following endpoint for other canisters to deposit cycles.
