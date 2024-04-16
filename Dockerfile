@@ -1,4 +1,4 @@
-# This is copied and adapter from https://github.com/dfinity/exchange-rate-canister/blob/458adc36f9c3f6b7232a8868528262c0c3eb52ab/Dockerfile
+# This is copied and adapted from https://github.com/dfinity/exchange-rate-canister/blob/458adc36f9c3f6b7232a8868528262c0c3eb52ab/Dockerfile
 
 # Use this with
 #

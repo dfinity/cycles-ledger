@@ -1,3 +1,7 @@
+# git
+.git/
+.github/
+
 # Various IDEs and Editors
 .vscode/
 .idea/

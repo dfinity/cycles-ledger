@@ -16,3 +16,6 @@ target/
 ic-test-state-machine
 
 .vscode
+
+# cycles-ledger wasm file created by docker
+cycles-ledger.wasm.gz
