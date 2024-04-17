@@ -4,12 +4,12 @@
 #
 # docker build . -t cycles-ledger
 # container_id=$(docker create cycles-ledger no-op)
-# docker cp $container_id:cycles-ledger.wasm cycles-ledger.wasm
+# docker cp $container_id:cycles-ledger.wasm.gz cycles-ledger.wasm.gz
 # docker rm --volumes $container_id
 
 # This is the "builder", i.e. the base image used later to build the final
 # code.
-FROM ubuntu:20.04 as builder
+FROM --platform=linux/x86_64 ubuntu:20.04 as builder
 SHELL ["bash", "-c"]
 
 ARG rust_version=1.75.0
@@ -62,7 +62,7 @@ RUN DFXVM_INIT_YES=true DFX_VERSION="$(jq -cr .dfx dfx.json)" \
     dfx --version
 
 # Start the second container
-FROM builder AS build
+FROM --platform=linux/x86_64 builder AS build
 SHELL ["bash", "-c"]
 
 # Build
@@ -76,5 +76,5 @@ RUN ls -sh /build
 RUN ls -sh /build/.dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
 RUN sha256sum /build/.dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
 
-FROM scratch AS scratch
+FROM --platform=linux/x86_64 scratch AS scratch
 COPY --from=build /build/.dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz /
