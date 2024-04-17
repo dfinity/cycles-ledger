@@ -4313,6 +4313,7 @@ fn test_deduplication() {
     assert_eq!(expected_blocks, env.get_all_blocks());
 }
 
+#[ignore = "FI-1284 The docker build doesn't support features because we want to test the production wasm. This test should be rewritten to use only the public endpoints"]
 #[test]
 fn test_pruning_transactions() {
     let env = TestEnv::setup();
