@@ -17,21 +17,23 @@ function usage() {
     cat << EOF
 
 Usage:
-  $0
+  $0 [<output_dir>]
 
+<output_dir>: (optional) the directory where cycles-ledger.wasm.gz will be put. If unset then the root of the project is used.
 EOF
 }
 
 function help() {
     cat << EOF
 
-This will create (and override) "./cycles-ledger.wasm.gz".
+This will create (and override) "<output_dir>/cycles-ledger.wasm.gz".
 EOF
 }
 
 ## Building
 
 function build() {
+    outdir="$1"
     image_name="cycles-ledger"
     docker_build_args+=(--tag "$image_name" .)
 
@@ -44,7 +46,8 @@ function build() {
     set +x
 
     echo "Copying build output from $tmp_outdir to $PWD"
-    cp "$tmp_outdir/cycles-ledger.wasm.gz" .
+    mkdir -p "$(dirname ${outdir})"
+    cp "$tmp_outdir/cycles-ledger.wasm.gz" "$outdir"
 
     echo "Removing $tmp_outdir"
     rm -rf "$tmp_outdir"
@@ -52,22 +55,27 @@ function build() {
 
 # ARGUMENT PARSING
 
-while [[ $# -gt 0 ]]
-do
+if [[ $# -gt 1 ]]; then
+    >&2 echo "Too many arguments"
+    usage
+    echo
+    exit 1
+fi
+
+OUTDIR="."
+while [[ $# -gt 0 ]]; do
     case $1 in
-        --help)
+        -h|--help)
             title
             usage
             help
             exit 0
             ;;
         *)
-            echo "ERROR: unknown argument $1"
-            usage
-            echo
-            exit 1
+            OUTDIR="$1"
+            shift
             ;;
     esac
 done
 
-build
+build "$OUTDIR"
