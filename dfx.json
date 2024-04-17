@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "dfx": "0.18.0",
   "canisters": {
     "cycles-ledger": {
