@@ -1,8 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Display,
     path::PathBuf,
-    sync::Arc,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -56,9 +57,11 @@ use icrc_ledger_types::{
         transfer_from::{TransferFromArgs, TransferFromError},
     },
 };
+use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
+use tempdir::TempDir;
 
 use crate::{
     client::{
@@ -166,17 +169,57 @@ fn new_state_machine() -> StateMachine {
     StateMachine::new(state_machine_path.to_str().unwrap(), false)
 }
 
-fn get_wasm(name: &str) -> Vec<u8> {
-    let binary = CargoBuild::new()
-        .manifest_path("../Cargo.toml")
-        .target("wasm32-unknown-unknown")
-        .bin(name)
-        .arg("--release")
-        .arg("--features")
-        .arg("testing")
-        .run()
-        .expect("Unable to run cargo build");
-    std::fs::read(binary.path()).unwrap_or_else(|_| panic!("{} wasm file not found", name))
+lazy_static! {
+    static ref WASMS: Mutex<HashMap<&'static str, Vec<u8>>> = Mutex::new(HashMap::new());
+}
+
+fn get_wasm(name: &'static str) -> Vec<u8> {
+    WASMS
+        .lock()
+        .unwrap()
+        .entry(name)
+        .or_insert_with(|| build_wasm(name))
+        .to_owned()
+}
+
+fn build_wasm(name: &str) -> Vec<u8> {
+    if name == "cycles-ledger" {
+        let tmp_dir = TempDir::new("cycles-ledger-tmp-dir").unwrap();
+        let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let cargo_manifest_dir = PathBuf::from(cargo_manifest_dir);
+        let docker_build_script = cargo_manifest_dir
+            .join("../scripts/docker-build")
+            .canonicalize()
+            .unwrap();
+        let exit_status = Command::new(docker_build_script.clone())
+            .arg(tmp_dir.path().canonicalize().unwrap())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+        if !exit_status.success() {
+            panic!(
+                "{} failed with exit status {exit_status}",
+                docker_build_script.display()
+            )
+        }
+        let wasm_file = tmp_dir.path().join("cycles-ledger.wasm.gz");
+        std::fs::read(wasm_file.clone())
+            .unwrap_or_else(|e| panic!("{} file not found: {e}", wasm_file.display()))
+    } else {
+        let binary = CargoBuild::new()
+            .manifest_path("../Cargo.toml")
+            .target("wasm32-unknown-unknown")
+            .bin(name)
+            .arg("--release")
+            .arg("--features")
+            .arg("testing")
+            .run()
+            .expect("Unable to run cargo build");
+        std::fs::read(binary.path()).unwrap_or_else(|_| panic!("{} wasm file not found", name))
+    }
 }
 
 fn install_ledger(env: &StateMachine) -> Principal {
@@ -4270,6 +4313,7 @@ fn test_deduplication() {
     assert_eq!(expected_blocks, env.get_all_blocks());
 }
 
+#[ignore = "FI-1284 The docker build doesn't support features because we want to test the production wasm. This test should be rewritten to use only the public endpoints"]
 #[test]
 fn test_pruning_transactions() {
     let env = TestEnv::setup();

@@ -152,6 +152,10 @@ The cost for the canister creation itself can be found
 > NOTE: The canister is created on a **random subnet** unless specified otherwise. `SubnetSelection`
 can be used to specify a particular subnet or subnet type.
 
+## Build the cycles-ledger
+
+The cycles-ledger should be built using the script [./scripts/docker-build](./scripts/docker-build). The script will put the `cycles-ledger.wasm.gz` in the directory where it was run.
+
 ## Make a new Release
 
 The CI job [release-with-github.yml](https://github.com/dfinity/cycles-ledger/actions/workflows/release-with-github.yml) is responsible to create a new release. The release job uses [cargo-release](https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md). This project follows [Semantic Versioning 2.0.0](https://semver.org/) (aka semver).
