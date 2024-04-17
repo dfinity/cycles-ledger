@@ -58,7 +58,7 @@ COPY dfx.json dfx.json
 
 ENV PATH="/root/.local/share/dfx/bin:${PATH}"
 RUN DFXVM_INIT_YES=true DFX_VERSION="$(jq -cr .dfx dfx.json)" \
-    sh -c "$(curl -fsSL https://sdk.dfinity.org/install.sh)" && \
+    sh -c "$(curl -fsSL https://internetcomputer.org/install.sh)" && \
     dfx --version
 
 # Start the second container
