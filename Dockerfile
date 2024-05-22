@@ -9,7 +9,7 @@
 
 # This is the "builder", i.e. the base image used later to build the final
 # code.
-FROM --platform=linux/x86_64 ubuntu:20.04 as builder
+FROM --platform=linux/amd64 ubuntu:20.04 as builder
 SHELL ["bash", "-c"]
 
 ARG rust_version=1.72.0
@@ -62,7 +62,7 @@ RUN DFXVM_INIT_YES=true DFX_VERSION="$(jq -cr .dfx dfx.json)" \
     dfx --version
 
 # Start the second container
-FROM --platform=linux/x86_64 builder AS build
+FROM --platform=linux/amd64 builder AS build
 SHELL ["bash", "-c"]
 
 # Build
@@ -76,5 +76,5 @@ RUN ls -sh /build
 RUN ls -sh /build/.dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
 RUN sha256sum /build/.dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz
 
-FROM --platform=linux/x86_64 scratch AS scratch
+FROM --platform=linux/amd64 scratch AS scratch
 COPY --from=build /build/.dfx/local/canisters/cycles-ledger/cycles-ledger.wasm.gz /
