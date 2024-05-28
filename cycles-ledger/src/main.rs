@@ -174,18 +174,6 @@ fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
-#[update]
-#[candid_method]
-fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
-    let cycles_available = msg_cycles_available128();
-    let amount = msg_cycles_accept128(cycles_available);
-
-    match storage::deposit(arg.to, amount, arg.memo, ic_cdk::api::time()) {
-        Ok(res) => res,
-        Err(err) => ic_cdk::trap(&err.to_string()),
-    }
-}
-
 fn execute_transfer(
     from: Account,
     to: Account,
