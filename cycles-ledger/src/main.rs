@@ -218,44 +218,6 @@ fn execute_transfer(
     Ok(block_index)
 }
 
-#[update]
-#[candid_method]
-fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
-    let from = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.from_subaccount,
-    };
-
-    execute_transfer(
-        from,
-        args.to,
-        None,
-        args.amount,
-        args.fee,
-        args.memo,
-        args.created_at_time,
-    )
-    .map_err(transfer_from_error_to_transfer_error)
-}
-
-#[update]
-#[candid_method]
-fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError> {
-    let spender = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.spender_subaccount,
-    };
-    execute_transfer(
-        args.from,
-        args.to,
-        Some(spender),
-        args.amount,
-        args.fee,
-        args.memo,
-        args.created_at_time,
-    )
-}
-
 #[query]
 #[candid_method(query)]
 fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
@@ -279,35 +241,6 @@ async fn execute_withdraw(
     storage::withdraw(from, to, spender, amount, now, created_at_time).await
 }
 
-#[update]
-#[candid_method]
-async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
-    let from = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.from_subaccount,
-    };
-    execute_withdraw(from, args.to, None, args.amount, args.created_at_time)
-        .await
-        .map_err(withdraw_from_error_to_withdraw_error)
-}
-
-#[update]
-#[candid_method]
-async fn withdraw_from(args: endpoints::WithdrawFromArgs) -> Result<Nat, WithdrawFromError> {
-    let spender = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.spender_subaccount,
-    };
-    execute_withdraw(
-        args.from,
-        args.to,
-        Some(spender),
-        args.amount,
-        args.created_at_time,
-    )
-    .await
-}
-
 async fn execute_create_canister(
     from: Account,
     spender: Option<Account>,
@@ -324,46 +257,6 @@ async fn execute_create_canister(
     storage::create_canister(from, spender, amount, now, created_at_time, creation_args).await
 }
 
-#[update]
-#[candid_method]
-async fn create_canister(
-    args: endpoints::CreateCanisterArgs,
-) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterError> {
-    let from = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.from_subaccount,
-    };
-
-    execute_create_canister(
-        from,
-        None,
-        args.amount,
-        args.created_at_time,
-        args.creation_args,
-    )
-    .await
-    .map_err(create_canister_from_error_to_create_canister_error)
-}
-
-#[update]
-#[candid_method]
-async fn create_canister_from(
-    args: endpoints::CreateCanisterFromArgs,
-) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterFromError> {
-    let spender = Account {
-        owner: ic_cdk::caller(),
-        subaccount: args.spender_subaccount,
-    };
-    execute_create_canister(
-        args.from,
-        Some(spender),
-        args.amount,
-        args.created_at_time,
-        args.creation_args,
-    )
-    .await
-}
-
 #[query]
 #[candid_method(query)]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
@@ -377,56 +270,6 @@ fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
         allowance: Nat::from(allowance.0),
         expires_at,
     }
-}
-
-#[update]
-#[candid_method]
-fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
-    let from = Account {
-        owner: ic_cdk::api::caller(),
-        subaccount: args.from_subaccount,
-    };
-
-    let now = ic_cdk::api::time();
-
-    let expected_allowance = match args.expected_allowance {
-        Some(n) => match n.0.to_u128() {
-            None => {
-                return Err(ApproveError::AllowanceChanged {
-                    current_allowance: Nat::from(storage::allowance(&from, &args.spender, now).0),
-                })
-            }
-            Some(n) => Some(n),
-        },
-        None => None,
-    };
-    let suggested_fee = match args.fee {
-        Some(fee) => match fee.0.to_u128() {
-            None => {
-                return Err(ApproveError::BadFee {
-                    expected_fee: Nat::from(config::FEE),
-                })
-            }
-            Some(fee) => Some(fee),
-        },
-        None => None,
-    };
-
-    let block_index = storage::approve(
-        from,
-        args.spender,
-        args.amount.0.to_u128().unwrap_or(u128::MAX),
-        args.memo,
-        now,
-        args.created_at_time,
-        suggested_fee,
-        expected_allowance,
-        args.expires_at,
-    )?;
-
-    prune(now);
-
-    Ok(block_index)
 }
 
 #[query]
