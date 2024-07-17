@@ -26,6 +26,10 @@ pub struct Config {
     /// The principal of the index canister
     /// for this ledger
     pub index_id: Option<Principal>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The logo of the `TOKEN_SYMBOL` token
+    pub logo: Option<Vec<u8>>,
 }
 
 impl Default for Config {
@@ -33,6 +37,7 @@ impl Default for Config {
         Self {
             max_blocks_per_request: 100,
             index_id: None,
+            logo: None,
         }
     }
 }
@@ -59,6 +64,7 @@ fn test_config_ser_de() {
     let config = Config {
         max_blocks_per_request: 10,
         index_id: None,
+        logo: None,
     };
     assert_eq!(Config::from_bytes(config.to_bytes()), config);
 }

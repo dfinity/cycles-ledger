@@ -54,6 +54,14 @@ fn post_upgrade(ledger_args: Option<LedgerArgs>) {
                     config.index_id = change_index_id.into();
                 })
             }
+            if let Some(change_logo) = upgrade_args.logo {
+                mutate_config(|config| {
+                    match change_logo {
+                        endpoints::ChangeLogo::Unset => config.logo = None,
+                        endpoints::ChangeLogo::SetTo(logo) => config.logo = Some(logo),
+                    }
+                })
+            }
         }
         None | Some(LedgerArgs::Upgrade(None)) => {},
         _ =>
@@ -164,6 +172,9 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     ];
     if let Some(index_id) = read_config(|config| config.index_id) {
         metadata.push(MV::entry("dfn:index_id", index_id.as_slice()))
+    }
+    if let Some(logo) = read_config(|config| config.logo.clone()) {
+        metadata.push(MV::entry("icrc1:logo", logo))
     }
     metadata
 }

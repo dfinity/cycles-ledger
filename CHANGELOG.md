@@ -3,6 +3,7 @@
 # CHANGELOG
 
 ## [Unreleased] - ReleaseDate
+* Allow configuring a logo in init args or upgrade args.
 
 ## [0.2.1] - 2023-09-20
 

@@ -19,6 +19,12 @@ pub enum ChangeIndexId {
     SetTo(Principal),
 }
 
+#[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum ChangeLogo {
+    Unset,
+    SetTo(Vec<u8>),
+}
+
 impl From<ChangeIndexId> for Option<Principal> {
     fn from(value: ChangeIndexId) -> Self {
         match value {
@@ -32,6 +38,7 @@ impl From<ChangeIndexId> for Option<Principal> {
 pub struct UpgradeArgs {
     pub max_blocks_per_request: Option<u64>,
     pub change_index_id: Option<ChangeIndexId>,
+    pub logo: Option<ChangeLogo>,
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
