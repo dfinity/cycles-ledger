@@ -13,7 +13,7 @@ use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
-        BlockWithId, ChangeIndexId, ChangeLogo, CmcCreateCanisterError, CreateCanisterFromArgs,
+        BlockWithId, ChangeIndexId, CmcCreateCanisterError, CreateCanisterFromArgs,
         CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
         UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs, WithdrawFromError,
     },
@@ -4792,7 +4792,6 @@ fn test_get_blocks_max_length() {
     let env = TestEnv::setup_with_ledger_conf(LedgerConfig {
         max_blocks_per_request: MAX_BLOCKS_PER_REQUEST,
         index_id: None,
-        logo: None,
     });
     let fee = env.icrc1_fee();
 
@@ -4832,7 +4831,6 @@ fn test_set_max_blocks_per_request_in_upgrade() {
     let arg = Encode!(&Some(LedgerArgs::Upgrade(Some(UpgradeArgs {
         max_blocks_per_request: Some(MAX_BLOCKS_PER_REQUEST),
         change_index_id: None,
-        logo: None,
     }))))
     .unwrap();
     env.state_machine
@@ -4878,7 +4876,6 @@ fn test_change_index_id() {
     let args = UpgradeArgs {
         max_blocks_per_request: None,
         change_index_id: Some(ChangeIndexId::SetTo(index_id)),
-        logo: None,
     };
     env.upgrade_ledger(Some(args)).unwrap();
     assert_eq!(
@@ -4892,61 +4889,10 @@ fn test_change_index_id() {
     let args = UpgradeArgs {
         max_blocks_per_request: None,
         change_index_id: Some(ChangeIndexId::Unset),
-        logo: None,
     };
     env.upgrade_ledger(Some(args)).unwrap();
     let metadata = env.icrc1_metadata();
     assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
-}
-
-#[test]
-fn test_set_logo_in_init() {
-    let logo = vec![1, 2, 3, 4];
-    let env = TestEnv::setup_with_ledger_conf(LedgerConfig {
-        logo: Some(logo.clone()),
-        ..Default::default()
-    });
-    let metadata = env.icrc1_metadata();
-    assert_eq!(
-        metadata
-            .iter()
-            .find_map(|(k, v)| if k == "icrc1:logo" { Some(v) } else { None }),
-        Some(logo.clone().into()).as_ref(),
-    );
-}
-
-#[test]
-fn test_change_logo() {
-    let env = TestEnv::setup();
-
-    // by default there is no index_id set
-    let metadata = env.icrc1_metadata();
-    assert!(metadata.iter().all(|(k, _)| k != "icrc1:logo"));
-
-    // set the index_id
-    let logo = vec![1, 2, 2, 4];
-    let args = UpgradeArgs {
-        max_blocks_per_request: None,
-        change_index_id: None,
-        logo: Some(ChangeLogo::SetTo(logo.clone())),
-    };
-    env.upgrade_ledger(Some(args)).unwrap();
-    assert_eq!(
-        env.icrc1_metadata()
-            .iter()
-            .find_map(|(k, v)| if k == "icrc1:logo" { Some(v) } else { None }),
-        Some(logo.clone().into()).as_ref(),
-    );
-
-    // unset the index_id
-    let args = UpgradeArgs {
-        max_blocks_per_request: None,
-        change_index_id: None,
-        logo: Some(ChangeLogo::Unset),
-    };
-    env.upgrade_ledger(Some(args)).unwrap();
-    let metadata = env.icrc1_metadata();
-    assert!(metadata.iter().all(|(k, _)| k != "icrc1:logo"));
 }
 
 #[tokio::test]

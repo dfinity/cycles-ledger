@@ -179,7 +179,6 @@ type DataCertificate = record {
 type InitArgs = record {
   max_blocks_per_request : nat64;
   index_id : opt principal;
-  logo : opt blob;
 };
 
 type ChangeIndexId = variant {
@@ -187,15 +186,9 @@ type ChangeIndexId = variant {
   SetTo : principal;
 };
 
-type ChangeLogo = variant {
-  Unset;
-  SetTo : blob;
-};
-
 type UpgradeArgs = record {
   max_blocks_per_request : opt nat64;
   change_index_id : opt ChangeIndexId;
-  logo : opt ChangeLogo;
 };
 
 type LedgerArgs = variant {
