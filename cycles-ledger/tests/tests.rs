@@ -5105,6 +5105,7 @@ fn test_create_canister() {
     );
 
     // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
+    // creation_args is Some, canister_settings is Some, controllers is None
     let canister_settings = CanisterSettings {
         controllers: None,
         compute_allocation: Some(Nat::from(7_u128)),
@@ -5124,6 +5125,55 @@ fn test_create_canister() {
                 subnet_selection: None,
                 settings: Some(canister_settings),
             }),
+        },
+    )
+    .unwrap();
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister_id, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(status.settings.controllers, vec![account10_0.owner]);
+
+    // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
+    // creation_args is Some, canister_settings is None
+    let CreateCanisterSuccess { canister_id, .. } = create_canister(
+        &env,
+        ledger_id,
+        account10_0.owner,
+        CreateCanisterArgs {
+            from_subaccount: account10_0.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: Some(CmcCreateCanisterArgs {
+                subnet_selection: None,
+                settings: None,
+            }),
+        },
+    )
+    .unwrap();
+    expected_balance -= CREATE_CANISTER_CYCLES + FEE;
+    let status = canister_status(&env, canister_id, account10_0.owner);
+    assert_eq!(
+        expected_balance,
+        icrc1_balance_of(&env, ledger_id, account10_0)
+    );
+    assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
+    assert_eq!(status.settings.controllers, vec![account10_0.owner]);
+
+    // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
+    // creation_args is None
+    let CreateCanisterSuccess { canister_id, .. } = create_canister(
+        &env,
+        ledger_id,
+        account10_0.owner,
+        CreateCanisterArgs {
+            from_subaccount: account10_0.subaccount,
+            created_at_time: None,
+            amount: CREATE_CANISTER_CYCLES.into(),
+            creation_args: None,
         },
     )
     .unwrap();

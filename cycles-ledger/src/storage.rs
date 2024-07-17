@@ -1955,14 +1955,22 @@ pub async fn create_canister(
 
     let argument = argument
         .map(|arg| CmcCreateCanisterArgs {
-            settings: arg.settings.map(|settings| CanisterSettings {
-                controllers: Some(
-                    settings
-                        .controllers
-                        .unwrap_or_else(|| vec![ic_cdk::api::caller()]),
-                ),
-                ..settings
-            }),
+            settings: arg
+                .settings
+                .map(|settings| CanisterSettings {
+                    controllers: Some(
+                        settings
+                            .controllers
+                            .unwrap_or_else(|| vec![ic_cdk::api::caller()]),
+                    ),
+                    ..settings
+                })
+                .or_else(|| {
+                    Some(CanisterSettings {
+                        controllers: Some(vec![ic_cdk::api::caller()]),
+                        ..Default::default()
+                    })
+                }),
             ..arg
         })
         .unwrap_or_else(|| CmcCreateCanisterArgs {
