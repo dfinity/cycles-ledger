@@ -4,6 +4,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+* Fixed a bug where the cycles ledger took control over a newly created canister if `creation_args` is `Some` and `canister_settings` is `None`.
+
 ## [0.2.1] - 2023-09-20
 
 ## [0.2.0] - 2023-09-18
