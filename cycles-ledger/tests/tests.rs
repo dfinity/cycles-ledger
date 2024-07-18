@@ -61,7 +61,7 @@ use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 use crate::{
     client::{
