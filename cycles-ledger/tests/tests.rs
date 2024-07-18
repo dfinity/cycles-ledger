@@ -5105,7 +5105,7 @@ fn test_create_canister() {
     );
 
     // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
-    // creation_args is Some, canister_settings is Some, controllers is None
+    // `creation_args` is `Some`, `canister_settings` is `Some`, `controllers` is `None`
     let canister_settings = CanisterSettings {
         controllers: None,
         compute_allocation: Some(Nat::from(7_u128)),
@@ -5138,7 +5138,7 @@ fn test_create_canister() {
     assert_eq!(status.settings.controllers, vec![account10_0.owner]);
 
     // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
-    // creation_args is Some, canister_settings is None
+    // `creation_args` is `Some`, `canister_settings` is `None`
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
         ledger_id,
@@ -5164,7 +5164,7 @@ fn test_create_canister() {
     assert_eq!(status.settings.controllers, vec![account10_0.owner]);
 
     // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
-    // creation_args is None
+    // `creation_args` is `None`
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
         ledger_id,
