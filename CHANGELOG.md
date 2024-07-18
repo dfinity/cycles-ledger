@@ -3,6 +3,7 @@
 # CHANGELOG
 
 ## [Unreleased] - ReleaseDate
+* Added the logo to the metadata value `icrc1:logo`.
 
 * Fixed a bug where the cycles ledger took control over a newly created canister if `creation_args` is `Some` and `canister_settings` is `None`.
 

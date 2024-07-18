@@ -161,6 +161,7 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
             "dfn:max_blocks_per_request",
             read_config(|config| config.max_blocks_per_request),
         ),
+        MV::entry("icrc1:logo", config::TOKEN_LOGO),
     ];
     if let Some(index_id) = read_config(|config| config.index_id) {
         metadata.push(MV::entry("dfn:index_id", index_id.as_slice()))
