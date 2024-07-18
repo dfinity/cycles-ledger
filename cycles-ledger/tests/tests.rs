@@ -61,7 +61,7 @@ use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde_bytes::ByteBuf;
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 use crate::{
     client::{
@@ -184,7 +184,7 @@ fn get_wasm(name: &'static str) -> Vec<u8> {
 
 fn build_wasm(name: &str) -> Vec<u8> {
     if name == "cycles-ledger" {
-        let tmp_dir = TempDir::new("cycles-ledger-tmp-dir").unwrap();
+        let tmp_dir = TempDir::with_prefix("cycles-ledger-tmp-dir").unwrap();
         let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let cargo_manifest_dir = PathBuf::from(cargo_manifest_dir);
         let docker_build_script = cargo_manifest_dir
