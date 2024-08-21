@@ -164,7 +164,7 @@ fn new_state_machine() -> StateMachine {
         let platform: &str = "darwin";
         #[cfg(target_os = "linux")]
         let platform: &str = "linux";
-        let suggested_ic_commit = "6968299131311c836917f0d16d0b1b963526c9b1";
+        let suggested_ic_commit = "19dbb5cc6e3dc85c0ccd899b3182552612f1607d";
 
         // not run automatically because parallel test execution screws this up
         panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
