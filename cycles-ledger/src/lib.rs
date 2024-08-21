@@ -132,7 +132,7 @@ pub fn generic_to_ciborium_value(value: &Value, depth: usize) -> anyhow::Result<
         )),
         Value::Nat(nat) => {
             let value_bytes = nat.0.to_bytes_be();
-            let value = CiboriumValue::try_from(value_bytes)?;
+            let value = CiboriumValue::from(value_bytes);
             Ok(CiboriumValue::Tag(known_tags::BIGNUM, Box::new(value)))
         }
         v => bail!("Unknown value: {:?}", v),
