@@ -4,6 +4,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+* Update `ic-cdk` dependency to patch a memory leak.
+
 ## [1.0.0] - 2024-06-18
 * Added the logo to the metadata value `icrc1:logo`.
 * Fixed a bug where the cycles ledger took control over a newly created canister if `creation_args` is `Some` and `canister_settings` is `None`.
