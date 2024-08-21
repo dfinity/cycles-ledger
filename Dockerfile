@@ -12,7 +12,7 @@
 FROM --platform=linux/amd64 ubuntu:20.04 as builder
 SHELL ["bash", "-c"]
 
-ARG rust_version=1.72.0
+ARG rust_version=1.75.0
 
 ENV TZ=UTC
 

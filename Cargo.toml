@@ -18,10 +18,10 @@ repository = "https://github.com/dfinity/cycles-ledger"
 publish = false                                         # don't publish to crates.io
 
 [workspace.dependencies]
-candid = "0.10"
+candid = "0.10.10"
 candid_parser = "0.1"
-ic-cdk = { version = "0.12.1" }
-ic-cdk-macros = { version = "0.8.4" }
+ic-cdk = { version = "0.15.1" }
+ic-cdk-macros = { version = "0.15.0" }
 icrc-ledger-types = "0.1.5"
 serde = "1"
 

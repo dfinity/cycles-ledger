@@ -37,7 +37,10 @@ use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
 use ic_cdk::api::{
     call::RejectionCode,
-    management_canister::{main::CanisterStatusResponse, provisional::CanisterSettings},
+    management_canister::{
+        main::{CanisterStatusResponse, LogVisibility},
+        provisional::CanisterSettings,
+    },
 };
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
@@ -161,7 +164,7 @@ fn new_state_machine() -> StateMachine {
         let platform: &str = "darwin";
         #[cfg(target_os = "linux")]
         let platform: &str = "linux";
-        let suggested_ic_commit = "072b2a6586c409efa88f2244d658307ff3a645d8";
+        let suggested_ic_commit = "6968299131311c836917f0d16d0b1b963526c9b1";
 
         // not run automatically because parallel test execution screws this up
         panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
@@ -5049,6 +5052,8 @@ fn test_create_canister() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        wasm_memory_limit: Some(Nat::from(11_u128)),
+        log_visibility: Some(LogVisibility::Public),
     };
     let CreateCanisterSuccess {
         canister_id,
@@ -5112,6 +5117,8 @@ fn test_create_canister() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        wasm_memory_limit: Some(Nat::from(11_u128)),
+        log_visibility: Some(LogVisibility::Public),
     };
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
@@ -5725,6 +5732,8 @@ fn test_create_canister_from() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        wasm_memory_limit: Some(Nat::from(11_u128)),
+        log_visibility: Some(LogVisibility::Public),
     };
     let CreateCanisterSuccess {
         canister_id,
