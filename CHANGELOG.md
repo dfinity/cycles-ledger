@@ -29,7 +29,7 @@
 
 <!-- next-url -->
 [Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.1...HEAD
-[1.0.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.0...cycles-ledger-v1.0.1
+[1.0.1]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.0...cycles-ledger-v1.0.1
 [1.0.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v0.6.0...cycles-ledger-v1.0.0
 [0.6.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v0.5.0...cycles-ledger-v0.6.0
 [0.5.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v0.4.0...cycles-ledger-v0.5.0
