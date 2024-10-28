@@ -33,7 +33,8 @@ pub struct IcpXdrConversionRate {
 impl Default for IcpXdrConversionRate {
     fn default() -> Self {
         Self {
-            xdr_permyriad_per_icp: 3_000_000_000_000,
+            // mocked value
+            xdr_permyriad_per_icp: 50_000,
             timestamp_seconds: Time(),
         }
     }
