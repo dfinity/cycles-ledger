@@ -22,8 +22,21 @@ type SubnetSelection = variant {
     Filter : SubnetFilter;
     Subnet : record { subnet : principal };
 };
+
+type IcpXdrConversionRate = record {
+  timestamp_seconds : nat64;
+  xdr_permyriad_per_icp : nat64;
+};
+
+type IcpXdrConversionRateResponse = record {
+  data : IcpXdrConversionRate;
+  hash_tree : blob;
+  certificate : blob;
+};
+
 service : {
     create_canister : (CmcCreateCanisterArgs) -> (CmcCreateCanisterResult);
     fail_next_create_canister_with : (CmcCreateCanisterError) -> ();
     last_create_canister_args : () -> (CmcCreateCanisterArgs) query;
+    get_icp_xdr_conversion_rate : () -> (IcpXdrConversionRateResponse) query;
 };
