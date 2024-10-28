@@ -4,6 +4,10 @@
 
 ## [Unreleased] - ReleaseDate
 
+## [1.0.2] - 2024-10-28
+* Added `get_icp_xdr_conversion_rate` to mock CMC
+No changes to the cycles ledger. Released because a community project relies on the mock CMC and would like to have this feature available.
+
 ## [1.0.1] - 2024-08-22
 * Update `ic-cdk` dependency to patch a security issue.
 
@@ -28,7 +32,8 @@
 ## [0.1.0] - 2023-07-12
 
 <!-- next-url -->
-[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.1...HEAD
+[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.2...HEAD
+[1.0.2]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.1...cycles-ledger-v1.0.2
 [1.0.1]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.0...cycles-ledger-v1.0.1
 [1.0.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v0.6.0...cycles-ledger-v1.0.0
 [0.6.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v0.5.0...cycles-ledger-v0.6.0
