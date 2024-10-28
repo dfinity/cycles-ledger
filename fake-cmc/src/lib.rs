@@ -1,4 +1,6 @@
+use candid::CandidType;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
+use ic_cdk::api::time;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Default)]
@@ -7,21 +9,11 @@ pub struct State {
     pub fail_next_create_canister_with: Option<CmcCreateCanisterError>,
 }
 
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Default)]
 pub struct IcpXdrConversionRateResponse {
-    pub certificate: serde_bytes::ByteBuf,
+    pub certificate: Vec<u8>,
     pub data: IcpXdrConversionRate,
-    pub hash_tree: serde_bytes::ByteBuf,
-}
-
-impl Default for IcpXdrConversionRateResponse {
-    fn default() -> Self {
-        Self {
-            certificate: Default::default(),
-            data: Default::default(),
-            hash_tree: Default::default(),
-        }
-    }
+    pub hash_tree: Vec<u8>,
 }
 
 #[derive(CandidType, Deserialize)]
@@ -35,7 +27,7 @@ impl Default for IcpXdrConversionRate {
         Self {
             // mocked value
             xdr_permyriad_per_icp: 50_000,
-            timestamp_seconds: Time(),
+            timestamp_seconds: time(),
         }
     }
 }

@@ -1,7 +1,7 @@
 use candid::{candid_method, Principal};
 use core::panic;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
-use fake_cmc::{IcpXdrConversionRate, State};
+use fake_cmc::{IcpXdrConversionRate, IcpXdrConversionRateResponse, State};
 use ic_cdk::{
     api::{
         call::{msg_cycles_accept128, msg_cycles_available128},
