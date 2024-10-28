@@ -33,6 +33,7 @@ type IcpXdrConversionRateResponse = record {
   hash_tree : blob;
   certificate : blob;
 };
+
 service : {
     create_canister : (CmcCreateCanisterArgs) -> (CmcCreateCanisterResult);
     fail_next_create_canister_with : (CmcCreateCanisterError) -> ();
