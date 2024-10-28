@@ -3,6 +3,8 @@ use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
 use ic_cdk::api::time;
 use serde::Deserialize;
 
+const NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
+
 #[derive(Debug, Deserialize, Eq, PartialEq, Default)]
 pub struct State {
     pub last_create_canister_args: Option<CmcCreateCanisterArgs>,
@@ -27,7 +29,7 @@ impl Default for IcpXdrConversionRate {
         Self {
             // mocked value
             xdr_permyriad_per_icp: 50_000,
-            timestamp_seconds: time(),
+            timestamp_seconds: time() / NANOSECONDS_PER_SECOND,
         }
     }
 }

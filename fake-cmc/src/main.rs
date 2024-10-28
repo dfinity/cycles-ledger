@@ -1,7 +1,7 @@
 use candid::{candid_method, Principal};
 use core::panic;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
-use fake_cmc::{IcpXdrConversionRate, IcpXdrConversionRateResponse, State};
+use fake_cmc::{IcpXdrConversionRateResponse, State};
 use ic_cdk::{
     api::{
         call::{msg_cycles_accept128, msg_cycles_available128},
@@ -78,11 +78,7 @@ fn fail_next_create_canister_with(error: CmcCreateCanisterError) {
 #[candid_method]
 #[query]
 fn get_icp_xdr_conversion_rate() -> IcpXdrConversionRateResponse {
-    IcpXdrConversionRateResponse {
-        certificate: Default::default(),
-        data: IcpXdrConversionRate::default(),
-        hash_tree: Default::default(),
-    }
+    Default::default()
 }
 
 #[candid_method]
