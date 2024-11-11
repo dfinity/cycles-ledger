@@ -3,6 +3,7 @@
 # CHANGELOG
 
 ## [Unreleased] - ReleaseDate
+* Adapted `icrc3_get_tip_certificate` to be compliant with the ICRC-3 specification by changing the encoding of `last_block_index` to `leb128`.
 
 ## [1.0.2] - 2024-10-28
 * Added `get_icp_xdr_conversion_rate` to mock CMC
