@@ -2721,7 +2721,7 @@ mod tests {
 
     #[test]
     fn test_u64_to_leb128() {
-        for i in [0, 1, u64::MAX-1, u64::MAX] {
+        for i in [0, 1, u64::MAX - 1, u64::MAX] {
             let mut buf = Vec::with_capacity(crate::storage::MAX_U64_ENCODING_BYTES);
             leb128::write::unsigned(&mut buf, i).unwrap();
             let decoded = leb128::read::unsigned(&mut buf.as_slice()).unwrap();
