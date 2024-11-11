@@ -775,12 +775,17 @@ fn check_invariants(s: &State) {
     }
 }
 
+/// The maximum amount of bytes a 64-bit number can occupy when encoded in LEB128.
+const MAX_U64_ENCODING_BYTES: usize = 10;
+
 pub fn populate_last_block_hash_and_hash_tree(
     hash_tree: &mut RbTree<&'static str, Vec<u8>>,
     last_block_index: u64,
     last_block_hash: Hash,
 ) {
-    hash_tree.insert("last_block_index", last_block_index.to_be_bytes().to_vec());
+    let mut last_block_index_buf = Vec::with_capacity(MAX_U64_ENCODING_BYTES);
+    leb128::write::unsigned(&mut last_block_index_buf, last_block_index).unwrap();
+    hash_tree.insert("last_block_index", last_block_index_buf.to_vec());
     hash_tree.insert("last_block_hash", last_block_hash.to_vec());
 }
 

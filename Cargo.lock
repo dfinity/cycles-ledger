@@ -386,6 +386,7 @@ dependencies = [
  "icrc1-test-env-state-machine",
  "icrc1-test-suite",
  "lazy_static",
+ "leb128",
  "minicbor",
  "num-bigint",
  "num-traits",
