@@ -775,7 +775,7 @@ fn check_invariants(s: &State) {
     }
 }
 
-/// The maximum amount of bytes a 64-bit number can occupy when encoded in LEB128.
+/// The maximum number of bytes a 64-bit number can occupy when encoded in LEB128.
 const MAX_U64_ENCODING_BYTES: usize = 10;
 
 pub fn populate_last_block_hash_and_hash_tree(
