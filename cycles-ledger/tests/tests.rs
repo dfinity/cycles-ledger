@@ -563,7 +563,8 @@ impl TestEnv {
         let expected_last_block_index = match hash_tree.lookup_subtree([b"last_block_index"]) {
             SubtreeLookupResult::Found(tree) => match tree.as_ref() {
                 HashTreeNode::Leaf(last_block_index_bytes) => {
-                    u64::from_be_bytes(last_block_index_bytes.clone().try_into().unwrap())
+                    leb128::read::unsigned(&mut last_block_index_bytes.as_slice())
+                        .expect("Unable to read last_block_index from the hash_tree")
                 }
                 _ => panic!("last_block_index value in the hash_tree should be a Leaf"),
             },
