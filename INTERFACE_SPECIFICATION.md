@@ -24,7 +24,7 @@ deposit : (DepositArgs) -> (DepositResult);
 ```
 
 This endpoint increments the balance of the provided account by the number of attached cycles. There is no fee when depositing cycles but at least 100M cycles must be attached, otherwise the call is rejected. 
-The sender can optionally provide a memo as well.
+The sender can optionally provide a memo as well. The memo may be at most 32 bytes long.
 
 ### `withdraw`
 ```
