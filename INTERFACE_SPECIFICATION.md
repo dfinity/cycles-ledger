@@ -139,7 +139,7 @@ create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess;
 
 This endpoint instructs the cycles ledger to create a canister, deducting the required cycles from the caller's account.
 The caller must specify the number of cycles to be used for the creation of the canister. In addition to the specified amount, a fee of 100M cycles is deducted.
-A `created_at_time` timestamp can be provided to ensure that (at most) once canister is created when calling the endpoint multiple times with the same parameters.
+A `created_at_time` timestamp can be provided to ensure that (at most) one canister is created when calling the endpoint multiple times with the same parameters.
 The caller can specify the desired [canister settings](https://internetcomputer.org/docs/current/developer-docs/smart-contracts/maintain/settings). If no settings are provided, the standard settings are used.
 Moreover, the caller can influence where the canister will be deployed by selecting a specific subnet or by providing a [subnet type](https://internetcomputer.org/docs/current/references/subnets/subnet-types/).
 
