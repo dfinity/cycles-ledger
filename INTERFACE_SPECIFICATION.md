@@ -75,7 +75,7 @@ type WithdrawFromArgs = record {
 withdraw_from : (WithdrawFromArgs) -> (variant { Ok : BlockIndex; Err : WithdrawFromError });
 ```
 This endpoint is similar to `withdraw` in that cycles are sent to the target canister (parameter `to`) if the call is successful. The difference is that the caller can specify any account (parameter `from`) from which the cycles are deducted.
-The owner of this account must have issued a `icrc2_approve` call beforehand, authorizing access to the funds for the caller's account, composed of the caller's principal and, optionally, a specific subaccount (parameter `spender_subaccount`).
+The owner of this account must have issued an `icrc2_approve` call beforehand, authorizing access to the funds for the caller's account, composed of the caller's principal and, optionally, a specific subaccount (parameter `spender_subaccount`).
 
 A fee of 100M cycles is deducted when withdrawing cycles. 
 
@@ -156,6 +156,6 @@ create_canister_from : (CreateCanisterFromArgs) -> (variant { Ok : CreateCaniste
 ```
 
 This endpoint creates a new canister the same way as the `create_canister` endpoint, the difference being the source of the cycles spent to create the canister.
-The call specifies the account (parameter `from`) from which the cycles are deducted.
-The owner of this account must have issued a `icrc2_approve` call beforehand, authorizing access to the funds for the caller's account, composed of the caller's principal and, optionally, a specific subaccount (parameter `spender_subaccount`).
+The call specifies the account (parameter `from`) from which the cycles are deducted. Note that there is again a fee of 100M added to the specified amount.
+The owner of this account must have issued an `icrc2_approve` call beforehand, authorizing access to the funds for the caller's account, composed of the caller's principal and, optionally, a specific subaccount (parameter `spender_subaccount`).
 
