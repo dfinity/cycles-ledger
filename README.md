@@ -6,7 +6,7 @@ The cycles ledger complies with the [ICRC-2](https://github.com/dfinity/ICRC-1/b
 Additionally, it implements the endpoints defined in the proposed [ICRC-3](https://github.com/dfinity/ICRC-1/pull/128) standard.
 
 The cycles ledger further provides endpoints to deposit and withdraw cycles, and also
-to create canisters using cycles. These custom endpoints are introduced in the following.
+to create canisters using cycles. The full specification can be found [here](INTERFACE_SPECIFICATION.md).
 
 ## Cycles Ledger Canister
 
