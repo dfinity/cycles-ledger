@@ -58,7 +58,7 @@ withdraw : (WithdrawArgs) -> (variant { Ok : BlockIndex; Err : WithdrawError });
 ```
 
 This endpoint withdraws the given amount from the caller's account and transfers the cycles to the provided canister ID.
-In addition to the amount and the canister ID (parameter `to`), the caller can provide a subaccount and a `created_at_time` timestamp.
+In addition to the amount and the canister ID (parameter `to`), the caller can provide a subaccount and a `created_at_time` timestamp,. The timestamp is used to deduplicate calls, i.e., a canister is created (at most) once when calling the endpoint multiple times with the same parameters.
 
 A fee of 100M cycles is deducted when withdrawing cycles. 
 
