@@ -12,7 +12,7 @@
 FROM --platform=linux/amd64 ubuntu:20.04 as builder
 SHELL ["bash", "-c"]
 
-ARG rust_version=1.72.0
+ARG rust_version=1.85.0
 
 ENV TZ=UTC
 
@@ -30,7 +30,8 @@ ENV RUSTUP_HOME=/opt/rustup \
 RUN curl --fail https://sh.rustup.rs -sSf \
     | sh -s -- -y --default-toolchain ${rust_version}-x86_64-unknown-linux-gnu --no-modify-path && \
     rustup default ${rust_version}-x86_64-unknown-linux-gnu && \
-    rustup target add wasm32-unknown-unknown
+    rustup target add wasm32-unknown-unknown && \
+    rustup show active-toolchain || rustup toolchain install
 
 ENV PATH=/cargo/bin:$PATH
 

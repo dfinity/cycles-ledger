@@ -1537,7 +1537,7 @@ fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionEr
     {
         return Err(PTErr::Duplicate {
             duplicate_of: block_index,
-            canister_id: maybe_canister.map(Into::into),
+            canister_id: maybe_canister,
         });
     }
 
