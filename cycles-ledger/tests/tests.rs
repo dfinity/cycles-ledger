@@ -19,7 +19,7 @@ use cycles_ledger::{
     },
     memo::encode_withdraw_memo,
     storage::{
-        transfer_from::{CANNOT_TRANSFER_FROM_ZERO, DENIED_OWNER},
+        transfer_from::{expired_approval, CANNOT_TRANSFER_FROM_ZERO, DENIED_OWNER},
         Block, Hash,
         Operation::{self, Approve, Burn, Mint, Transfer},
         Transaction, CREATE_CANISTER_MEMO, PENALIZE_MEMO, REFUND_MEMO,
@@ -485,6 +485,10 @@ impl TestEnv {
             .min(self.nanos_since_epoch())
             .try_into()
             .unwrap()
+    }
+
+    fn advance_time(&self, duration: Duration) {
+        self.state_machine.advance_time(duration);
     }
 
     fn withdraw(&self, caller: Principal, args: WithdrawArgs) -> Result<Nat, WithdrawError> {
@@ -3996,6 +4000,64 @@ fn test_icrc2_transfer_from_insufficient_funds_with_params(
     assert_vec_display_eq(blocks, env.get_all_blocks());
 }
 
+fn test_icrc2_transfer_from_approval_expired(env: &TestEnv) {
+    let account_from = account(12351, None);
+    let account_to = account(2, None);
+    let account_spender = account(4, None);
+    let fee = env.icrc1_fee();
+    let now = env.nanos_since_epoch_u64();
+    let expiry_duration = Duration::from_nanos(1_000_000);
+    let expires_at = now + (expiry_duration.as_nanos() as u64);
+
+    let _deposit_index = env.deposit(account_from, 4 * fee, None);
+    let amount_to_remove = env.icrc1_balance_of(account_from).saturating_sub(fee);
+
+    env.icrc2_approve_or_trap(
+        account_from.owner,
+        ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(amount_to_remove + fee),
+            expected_allowance: None,
+            expires_at: Some(expires_at),
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    env.advance_time(expiry_duration);
+
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let account_to_balance = env.icrc1_balance_of(account_to);
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let args = TransferFromArgs {
+        from: account_from,
+        to: account_to,
+        spender_subaccount: account_spender.subaccount,
+        amount: amount_to_remove.into(),
+        fee: None,
+        created_at_time: None,
+        memo: None,
+    };
+    // As soon as time >= expires_at the allowance no longer exists
+    assert_eq!(expires_at, env.nanos_since_epoch_u64());
+    assert_eq!(
+        Err(expired_approval()),
+        env.icrc2_transfer_from(account_spender.owner, args)
+    );
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender),
+    );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
+}
+
 fn test_icrc2_transfer_from_insufficient_funds(env: &TestEnv) {
     use ShouldSetCreatedAtTime::*;
     use ShouldSetFee::*;
@@ -4181,6 +4243,7 @@ fn test_icrc2_transfer_from_failures() {
 
     test_icrc2_transfer_from_invalid_arg(&env);
     test_icrc2_transfer_from_insufficient_funds(&env);
+    test_icrc2_transfer_from_approval_expired(&env);
     test_icrc2_transfer_from_duplicate(&env);
 }
 
