@@ -1811,6 +1811,7 @@ pub async fn withdraw(
 
     // 2. call deposit_cycles on the management canister
     let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
+    let now = ic_cdk::api::time();
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
@@ -1825,7 +1826,6 @@ pub async fn withdraw(
                 rejection_reason,
             });
         }
-        let now = ic_cdk::api::time();
         match reimburse(from, amount_to_reimburse, now, PENALIZE_MEMO) {
             Ok(fee_block) => {
                 prune(now);
@@ -1992,6 +1992,7 @@ pub async fn create_canister(
         (Result<Principal, CmcCreateCanisterError>,),
         (RejectionCode, String),
     > = call_with_payment128(CMC_PRINCIPAL, "create_canister", (argument,), amount).await;
+    let now = ic_cdk::api::time();
 
     // 3. if 2. fails then mint cycles
 
@@ -2029,7 +2030,6 @@ pub async fn create_canister(
                     rejection_reason,
                 });
             }
-            let now = ic_cdk::api::time();
             match reimburse(from, amount_to_reimburse, now, REFUND_MEMO) {
                 Ok(refund_block) => {
                     prune(now);
