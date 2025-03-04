@@ -1537,7 +1537,7 @@ fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionEr
     {
         return Err(PTErr::Duplicate {
             duplicate_of: block_index,
-            canister_id: maybe_canister.map(Into::into),
+            canister_id: maybe_canister,
         });
     }
 
@@ -1811,6 +1811,7 @@ pub async fn withdraw(
 
     // 2. call deposit_cycles on the management canister
     let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
+    let now = ic_cdk::api::time();
 
     // 3. if 2. fails then mint cycles
     if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
@@ -1829,8 +1830,10 @@ pub async fn withdraw(
             Ok(fee_block) => {
                 prune(now);
                 if let Some(spender) = spender {
+                    let approval_still_valid =
+                        old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                     // charge FEE for every block: withdraw attempt, refund, refund approval
-                    if spender != from && amount > 2 * config::FEE {
+                    if spender != from && amount > 2 * config::FEE && approval_still_valid {
                         match reimburse_approval(
                             from,
                             spender,
@@ -1989,6 +1992,7 @@ pub async fn create_canister(
         (Result<Principal, CmcCreateCanisterError>,),
         (RejectionCode, String),
     > = call_with_payment128(CMC_PRINCIPAL, "create_canister", (argument,), amount).await;
+    let now = ic_cdk::api::time();
 
     // 3. if 2. fails then mint cycles
 
@@ -2030,8 +2034,13 @@ pub async fn create_canister(
                 Ok(refund_block) => {
                     prune(now);
                     if let Some(spender) = spender {
+                        let approval_still_valid =
+                            old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                         // charge FEE for every block: withdraw attempt, refund, refund approval
-                        if spender != from && amount_to_reimburse > config::FEE {
+                        if spender != from
+                            && amount_to_reimburse > config::FEE
+                            && approval_still_valid
+                        {
                             match reimburse_approval(
                                 from,
                                 spender,

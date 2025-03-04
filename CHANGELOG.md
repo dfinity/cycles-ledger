@@ -4,6 +4,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+* Fixed a bug where refund blocks after an unsuccessful `withdraw` or `create_canister` had the timestamp of the initial burn block instead of the time when the error was processed. Approvals that have expired in the meantime will not be refunded.
+
 ## [1.0.3] - 2024-11-18
 * Adapted `icrc3_get_tip_certificate` to be compliant with the ICRC-3 specification by changing the encoding of `last_block_index` to `leb128`.
 
