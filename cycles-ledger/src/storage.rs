@@ -1825,12 +1825,15 @@ pub async fn withdraw(
                 rejection_reason,
             });
         }
+        let now = ic_cdk::api::time();
         match reimburse(from, amount_to_reimburse, now, PENALIZE_MEMO) {
             Ok(fee_block) => {
                 prune(now);
                 if let Some(spender) = spender {
+                    let approval_still_valid =
+                        old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                     // charge FEE for every block: withdraw attempt, refund, refund approval
-                    if spender != from && amount > 2 * config::FEE {
+                    if spender != from && amount > 2 * config::FEE && approval_still_valid {
                         match reimburse_approval(
                             from,
                             spender,
@@ -2026,12 +2029,18 @@ pub async fn create_canister(
                     rejection_reason,
                 });
             }
+            let now = ic_cdk::api::time();
             match reimburse(from, amount_to_reimburse, now, REFUND_MEMO) {
                 Ok(refund_block) => {
                     prune(now);
                     if let Some(spender) = spender {
+                        let approval_still_valid =
+                            old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                         // charge FEE for every block: withdraw attempt, refund, refund approval
-                        if spender != from && amount_to_reimburse > config::FEE {
+                        if spender != from
+                            && amount_to_reimburse > config::FEE
+                            && approval_still_valid
+                        {
                             match reimburse_approval(
                                 from,
                                 spender,
