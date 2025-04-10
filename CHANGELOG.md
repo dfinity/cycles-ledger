@@ -4,6 +4,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+## [1.0.4] - 2025-04-10
 * Fixed a bug where refund blocks after an unsuccessful `withdraw` or `create_canister` had the timestamp of the initial burn block instead of the time when the error was processed. Approvals that have expired in the meantime will not be refunded.
 
 ## [1.0.3] - 2024-11-18
@@ -38,7 +39,8 @@ No changes to the cycles ledger. Released because a community project relies on 
 ## [0.1.0] - 2023-07-12
 
 <!-- next-url -->
-[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.3...HEAD
+[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.4...HEAD
+[1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.3...cycles-ledger-v1.0.4
 [1.0.3]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.2...cycles-ledger-v1.0.3
 [1.0.2]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.1...cycles-ledger-v1.0.2
 [1.0.1]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.0...cycles-ledger-v1.0.1
