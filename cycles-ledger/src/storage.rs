@@ -2451,10 +2451,9 @@ pub fn get_allowances(
             if expiration > 0 && expiration <= now {
                 continue;
             }
-            let expires_at = if expiration > 0 {
-                Some(expiration)
-            } else {
-                None
+            let expires_at = match expiration {
+                0 => None,
+                _ => Some(expiration),
             };
             result.push(Allowance {
                 from_account,
