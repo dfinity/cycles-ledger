@@ -3,6 +3,7 @@ use crate::endpoints::{
     CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
     CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
 };
+use crate::list_allowances::{Allowance, Allowances};
 use crate::logs::{P0, P1};
 use crate::memo::{encode_withdraw_memo, validate_memo};
 use crate::{
@@ -2402,6 +2403,61 @@ pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
         blocks,
         archived_blocks: vec![],
     }
+}
+
+pub fn get_allowances(
+    from: Account,
+    spender: Option<Account>,
+    max_results: u64,
+    now: u64,
+) -> Allowances {
+    let mut result = vec![];
+    let start_account_spender = match spender {
+        Some(spender) => (to_account_key(&from), to_account_key(&spender)),
+        None => (
+            to_account_key(&from),
+            to_account_key(&Account {
+                owner: Principal::from_slice(&[0u8; 0]),
+                subaccount: None,
+            }),
+        ),
+    };
+    read_state(|state| {
+        for (account_spender, storable_allowance) in
+            state.approvals.range(start_account_spender.clone()..)
+        {
+            if spender.is_some() && account_spender == start_account_spender {
+                continue;
+            }
+            if result.len() >= max_results as usize {
+                break;
+            }
+            if account_spender.0 .0 != from.owner {
+                break;
+            }
+            if storable_allowance.1 > 0 && storable_allowance.1 <= now {
+                continue;
+            }
+            let expiration = if storable_allowance.1 > 0 {
+                Some(storable_allowance.1)
+            } else {
+                None
+            };
+            result.push(Allowance {
+                from_account: Account {
+                    owner: account_spender.0 .0,
+                    subaccount: Some(account_spender.0 .1),
+                },
+                to_spender: Account {
+                    owner: account_spender.1 .0,
+                    subaccount: Some(account_spender.1 .1),
+                },
+                allowance: Nat::from(storable_allowance.0),
+                expires_at: expiration,
+            });
+        }
+    });
+    result
 }
 
 #[cfg(test)]

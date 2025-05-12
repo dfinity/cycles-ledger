@@ -3,6 +3,7 @@ use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs,
     GetBlocksResult, LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
 };
+use cycles_ledger::list_allowances::{Allowances, GetAllowancesArgs, GetAllowancesError};
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::storage::{
@@ -273,6 +274,32 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
 #[candid_method(query)]
 fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     storage::get_blocks(args)
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllowancesError> {
+    let from_account = match arg.from_account {
+        Some(from_account) => from_account,
+        None => Account {
+            owner: ic_cdk::api::caller(),
+            subaccount: None,
+        },
+    };
+    let max_results = arg.take.unwrap_or(Nat::from(u64::MAX));
+    let max_results = std::cmp::min(
+        max_results
+            .0
+            .to_u64()
+            .unwrap_or(config::MAX_TAKE_ALLOWANCES),
+        config::MAX_TAKE_ALLOWANCES,
+    );
+    Ok(storage::get_allowances(
+        from_account,
+        arg.prev_spender,
+        max_results,
+        ic_cdk::api::time(),
+    ))
 }
 
 async fn execute_withdraw(
