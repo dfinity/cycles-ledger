@@ -2436,7 +2436,7 @@ pub fn get_allowances(
     };
     read_state(|state| {
         for (account_spender, (allowance_amount, expiration)) in
-            state.approvals.range(start_account_spender.clone()..)
+            state.approvals.range(start_account_spender..)
         {
             if spender.is_some() && account_spender == start_account_spender {
                 continue;
