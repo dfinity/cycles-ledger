@@ -828,6 +828,18 @@ pub fn to_account_key(account: &Account) -> AccountKey {
     (account.owner, *account.effective_subaccount())
 }
 
+pub fn to_account_pair(approval_key: &ApprovalKey) -> (Account, Account) {
+    let account1 = Account {
+        owner: approval_key.0 .0,
+        subaccount: Some(approval_key.0 .1),
+    };
+    let account2 = Account {
+        owner: approval_key.1 .0,
+        subaccount: Some(approval_key.1 .1),
+    };
+    (account1, account2)
+}
+
 pub fn balance_of(account: &Account) -> u128 {
     read_state(|s| s.balances.get(&to_account_key(account)).unwrap_or_default())
 }
@@ -2423,7 +2435,7 @@ pub fn get_allowances(
         ),
     };
     read_state(|state| {
-        for (account_spender, storable_allowance) in
+        for (account_spender, (allowance_amount, expiration)) in
             state.approvals.range(start_account_spender.clone()..)
         {
             if spender.is_some() && account_spender == start_account_spender {
@@ -2432,28 +2444,23 @@ pub fn get_allowances(
             if result.len() >= max_results as usize {
                 break;
             }
-            if account_spender.0 .0 != from.owner {
+            let (from_account, to_spender) = to_account_pair(&account_spender);
+            if from_account.owner != from.owner {
                 break;
             }
-            if storable_allowance.1 > 0 && storable_allowance.1 <= now {
+            if expiration > 0 && expiration <= now {
                 continue;
             }
-            let expiration = if storable_allowance.1 > 0 {
-                Some(storable_allowance.1)
+            let expires_at = if expiration > 0 {
+                Some(expiration)
             } else {
                 None
             };
             result.push(Allowance {
-                from_account: Account {
-                    owner: account_spender.0 .0,
-                    subaccount: Some(account_spender.0 .1),
-                },
-                to_spender: Account {
-                    owner: account_spender.1 .0,
-                    subaccount: Some(account_spender.1 .1),
-                },
-                allowance: Nat::from(storable_allowance.0),
-                expires_at: expiration,
+                from_account,
+                to_spender,
+                allowance: Nat::from(allowance_amount),
+                expires_at,
             });
         }
     });
