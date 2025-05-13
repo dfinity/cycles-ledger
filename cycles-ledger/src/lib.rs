@@ -14,6 +14,7 @@ use thiserror::Error;
 pub mod compact_account;
 pub mod config;
 pub mod endpoints;
+pub mod list_allowances;
 pub mod logs;
 pub mod memo;
 pub mod storage;
