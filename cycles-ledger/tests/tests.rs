@@ -2907,6 +2907,70 @@ pub fn test_allowance_listing_subaccount() {
     assert_eq!(allowances.len(), 1);
 }
 
+// The test focuses on testing various values for the `take` parameter.
+#[test]
+pub fn test_allowance_listing_take() {
+    const MAX_RESULTS: usize = 500;
+    const NUM_SPENDERS: usize = MAX_RESULTS + 1;
+
+    let approver = account(1, None);
+
+    let mut spenders = vec![];
+    for i in 2..NUM_SPENDERS + 2 {
+        spenders.push(account(i as u64, None));
+    }
+    assert_eq!(spenders.len(), NUM_SPENDERS);
+
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    env.deposit(approver, 1_000_000 * fee, None);
+
+    for spender in &spenders {
+        let approve_args = ApproveArgs {
+            from_subaccount: None,
+            spender: *spender,
+            amount: Nat::from(10u64),
+            expected_allowance: None,
+            expires_at: None,
+            fee: Some(Nat::from(FEE)),
+            memo: None,
+            created_at_time: None,
+        };
+        let _ = env
+            .icrc2_approve(approver.owner, approve_args)
+            .expect("approve failed");
+    }
+
+    let mut args = GetAllowancesArgs {
+        from_account: Some(approver),
+        prev_spender: None,
+        take: None,
+    };
+
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), MAX_RESULTS);
+
+    args.take = Some(Nat::from(0u64));
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 0);
+
+    args.take = Some(Nat::from(5u64));
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 5);
+
+    args.take = Some(Nat::from(u64::MAX));
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), MAX_RESULTS);
+
+    args.take = Some(Nat::from(
+        BigUint::parse_bytes(b"1000000000000000000000000000000000000000", 10).unwrap(),
+    ));
+    assert!(args.take.clone().unwrap().0.to_u64().is_none());
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args);
+    assert_eq!(allowances.len(), MAX_RESULTS);
+}
+
 #[derive(Clone, Copy)]
 enum ShouldSetCreatedAtTime {
     SetCreatedAtTime,
