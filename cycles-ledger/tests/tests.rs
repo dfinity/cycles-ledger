@@ -499,6 +499,7 @@ impl TestEnv {
 
     fn advance_time(&self, duration: Duration) {
         self.state_machine.advance_time(duration);
+        self.state_machine.tick();
     }
 
     fn withdraw(&self, caller: Principal, args: WithdrawArgs) -> Result<Nat, WithdrawError> {
@@ -2791,7 +2792,6 @@ pub fn test_allowance_listing_values() {
     assert_eq!(allowances[1].expires_at, expiration_near);
 
     env.advance_time(Duration::from_secs(10));
-    env.state_machine.tick();
 
     let allowances_later = env.icrc103_get_allowances_or_panic(approver.owner, args);
     assert_eq!(allowances_later.len(), 1);
