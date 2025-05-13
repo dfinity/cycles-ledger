@@ -49,7 +49,7 @@ use ic_test_state_machine_client::{CallError, ErrorCode, StateMachine, WasmResul
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
     icrc1::{
-        account::Account,
+        account::{Account, DEFAULT_SUBACCOUNT},
         transfer::{Memo, TransferArg as TransferArgs, TransferError},
     },
     icrc2::{
@@ -2795,6 +2795,116 @@ pub fn test_allowance_listing_values() {
     let allowances_later = env.icrc103_get_allowances_or_panic(approver.owner, args);
     assert_eq!(allowances_later.len(), 1);
     assert_eq!(allowances_later[0], allowances[0]);
+}
+
+// Test whether specifying None/DEFAULT_SUBACCOUNT does not affect the results.
+#[test]
+pub fn test_allowance_listing_subaccount() {
+    let approver_none = Account {
+        owner: Principal::from_slice(&[1u8]),
+        subaccount: None,
+    };
+    let approver_default = Account {
+        owner: Principal::from_slice(&[2u8]),
+        subaccount: Some(*DEFAULT_SUBACCOUNT),
+    };
+    let spender_none = Account {
+        owner: Principal::from_slice(&[3u8]),
+        subaccount: None,
+    };
+    let spender_default = Account {
+        owner: Principal::from_slice(&[3u8]),
+        subaccount: Some(*DEFAULT_SUBACCOUNT),
+    };
+
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    env.deposit(approver_none, 100 * fee, None);
+    env.deposit(approver_default, 100 * fee, None);
+
+    let default_approve_args = ApproveArgs {
+        from_subaccount: None,
+        spender: spender_none,
+        amount: Nat::from(1u64),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+
+    let approve_args = default_approve_args.clone();
+    let block_index = env
+        .icrc2_approve(approver_none.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(2u64));
+
+    let mut approve_args = default_approve_args.clone(); //(spender_default, 1);
+    approve_args.spender = spender_default;
+    approve_args.from_subaccount = approver_default.subaccount;
+    let block_index = env
+        .icrc2_approve(approver_default.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(3u64));
+
+    // Should return the allowance, if we specify `from_account` as when creating approval
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 1);
+
+    // Should return the allowance, if we specify `from_account` with explicit default subaccount.
+    let mut approver_none_default = approver_none;
+    approver_none_default.subaccount = Some(*DEFAULT_SUBACCOUNT);
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none_default),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 1);
+
+    // Should filter out the allowance if subaccount is none
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none),
+        prev_spender: Some(spender_none),
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 0);
+
+    // Should filter out the allowance if subaccount is default
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none),
+        prev_spender: Some(spender_default),
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 0);
+
+    // Should return the allowance, if we specify `from_account` as when creating approval
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_default),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_default.owner, args.clone());
+    assert_eq!(allowances.len(), 1);
+
+    // Should return the allowance, if we specify `from_account` with none subaccount.
+    let mut approver_default_none = approver_default;
+    approver_default_none.subaccount = None;
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_default_none),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_default.owner, args);
+    assert_eq!(allowances.len(), 1);
 }
 
 #[derive(Clone, Copy)]
