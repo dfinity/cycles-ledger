@@ -2546,6 +2546,8 @@ fn test_approval_expiring() {
     }
 }
 
+// The test focuses on testing whether given an (approver, spender) pair the correct
+// sequence of allowances is returned.
 #[test]
 fn test_allowance_listing_sequences() {
     let env = TestEnv::setup();
@@ -2674,6 +2676,125 @@ fn test_allowance_listing_sequences() {
         let allowances = env.icrc103_get_allowances_or_panic(from.owner, args);
         check_allowances(allowances, idx, from.owner);
     }
+}
+
+// The test focuses on testing if the returned allowances have the correct
+// values for all fields (from, spender, amount, expiration).
+#[test]
+pub fn test_allowance_listing_values() {
+    let approver = account(1, None);
+    let approver_sub = account(2, Some(2));
+    let spender = account(3, None);
+    let spender_sub = account(4, Some(3));
+
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    env.deposit(approver, 100 * fee, None);
+    env.deposit(approver_sub, 100 * fee, None);
+
+    let default_approve_args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: Nat::from(1u64),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+
+    // Simplest possible approval.
+    let approve_args = default_approve_args.clone();
+    let block_index = env
+        .icrc2_approve(approver.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(2u64));
+
+    let now = env.nanos_since_epoch_u64();
+
+    // Spender subaccount, expiration
+    let expiration_far = Some(now + Duration::from_secs(3600).as_nanos() as u64);
+    let mut approve_args = default_approve_args.clone();
+    approve_args.spender = spender_sub;
+    approve_args.amount = Nat::from(2u64);
+    approve_args.expires_at = expiration_far;
+    let block_index = env
+        .icrc2_approve(approver.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(3u64));
+
+    // From subaccount
+    let mut approve_args = default_approve_args.clone();
+    approve_args.from_subaccount = approver_sub.subaccount;
+    approve_args.amount = Nat::from(3u64);
+    let block_index = env
+        .icrc2_approve(approver_sub.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(4u64));
+
+    // From subaccount, spender subaccount, expiration
+    let expiration_near = Some(now + Duration::from_secs(10).as_nanos() as u64);
+    let mut approve_args = default_approve_args.clone(); //(spender_sub, 4);
+    approve_args.spender = spender_sub;
+    approve_args.amount = Nat::from(4u64);
+    approve_args.from_subaccount = approver_sub.subaccount;
+    approve_args.expires_at = expiration_near;
+    let block_index = env
+        .icrc2_approve(approver_sub.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(5u64));
+
+    let mut args = GetAllowancesArgs {
+        from_account: Some(approver),
+        prev_spender: None,
+        take: None,
+    };
+
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 2);
+
+    assert_eq!(allowances[0].from_account, approver);
+    assert_eq!(allowances[0].to_spender, spender);
+    assert_eq!(allowances[0].allowance, Nat::from(1u64));
+    assert_eq!(allowances[0].expires_at, None);
+
+    assert_eq!(allowances[1].from_account, approver);
+    assert_eq!(allowances[1].to_spender, spender_sub);
+    assert_eq!(allowances[1].allowance, Nat::from(2u64));
+    assert_eq!(allowances[1].expires_at, expiration_far);
+
+    args.take = Some(Nat::from(1u64));
+
+    let allowances_take = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances_take.len(), 1);
+    assert_eq!(allowances_take[0], allowances[0]);
+
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_sub),
+        prev_spender: None,
+        take: None,
+    };
+
+    // Here we additionally test listing approvals of another Principal.
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 2);
+
+    assert_eq!(allowances[0].from_account, approver_sub);
+    assert_eq!(allowances[0].to_spender, spender);
+    assert_eq!(allowances[0].allowance, Nat::from(3u64));
+    assert_eq!(allowances[0].expires_at, None);
+
+    assert_eq!(allowances[1].from_account, approver_sub);
+    assert_eq!(allowances[1].to_spender, spender_sub);
+    assert_eq!(allowances[1].allowance, Nat::from(4u64));
+    assert_eq!(allowances[1].expires_at, expiration_near);
+
+    env.advance_time(Duration::from_secs(10));
+
+    let allowances_later = env.icrc103_get_allowances_or_panic(approver.owner, args);
+    assert_eq!(allowances_later.len(), 1);
+    assert_eq!(allowances_later[0], allowances[0]);
 }
 
 #[derive(Clone, Copy)]
