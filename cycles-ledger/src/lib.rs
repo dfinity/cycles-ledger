@@ -14,10 +14,10 @@ use thiserror::Error;
 pub mod compact_account;
 pub mod config;
 pub mod endpoints;
+pub mod list_allowances;
 pub mod logs;
 pub mod memo;
 pub mod storage;
-pub mod list_allowances;
 
 /// The maximum allowed value nesting within a CBOR value.
 const VALUE_DEPTH_LIMIT: usize = 64;
