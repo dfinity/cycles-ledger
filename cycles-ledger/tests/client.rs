@@ -8,7 +8,7 @@ use cycles_ledger::{
         CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
         GetBlocksResult, WithdrawArgs, WithdrawFromArgs,
     },
-    list_allowances::{Allowances, GetAllowancesArgs},
+    list_allowances::{Allowances, GetAllowancesArgs, GetAllowancesError},
     storage::{Block, CMC_PRINCIPAL},
 };
 use depositor::endpoints::DepositArg;
@@ -223,12 +223,12 @@ pub fn icrc2_approve(
     update_or_panic(env, ledger_id, caller, "icrc2_approve", args)
 }
 
-pub fn icrc103_get_allowances_or_panic(
+pub fn icrc103_get_allowances(
     env: &StateMachine,
     ledger_id: Principal,
     caller: Principal,
     args: GetAllowancesArgs,
-) -> Allowances {
+) -> Result<Allowances, GetAllowancesError> {
     query_or_panic(env, ledger_id, caller, "icrc103_get_allowances", args)
 }
 

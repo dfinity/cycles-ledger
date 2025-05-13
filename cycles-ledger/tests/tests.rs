@@ -456,7 +456,8 @@ impl TestEnv {
         caller: Principal,
         args: GetAllowancesArgs,
     ) -> Allowances {
-        client::icrc103_get_allowances_or_panic(&self.state_machine, self.ledger_id, caller, args)
+        client::icrc103_get_allowances(&self.state_machine, self.ledger_id, caller, args)
+            .expect("failed to list allowances")
     }
 
     fn icrc2_transfer_from(
