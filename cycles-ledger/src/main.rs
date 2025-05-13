@@ -453,14 +453,11 @@ fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllow
             subaccount: None,
         },
     };
-    let max_results = arg.take.unwrap_or(Nat::from(u64::MAX));
-    let max_results = std::cmp::min(
-        max_results
-            .0
-            .to_u64()
-            .unwrap_or(config::MAX_TAKE_ALLOWANCES),
-        config::MAX_TAKE_ALLOWANCES,
-    );
+    let max_results = arg
+        .take
+        .map(|take| take.0.to_u64().unwrap_or(config::MAX_TAKE_ALLOWANCES))
+        .map(|take| std::cmp::min(take, config::MAX_TAKE_ALLOWANCES))
+        .unwrap_or(config::MAX_TAKE_ALLOWANCES);
     Ok(storage::get_allowances(
         from_account,
         arg.prev_spender,
