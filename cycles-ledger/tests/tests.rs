@@ -17,6 +17,7 @@ use cycles_ledger::{
         CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
         UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs, WithdrawFromError,
     },
+    list_allowances::{Allowances, GetAllowancesArgs},
     memo::encode_withdraw_memo,
     storage::{
         transfer_from::{expired_approval, CANNOT_TRANSFER_FROM_ZERO, DENIED_OWNER},
@@ -448,6 +449,14 @@ impl TestEnv {
         self.icrc2_approve(caller, args.clone())
             .unwrap_or_else(|err|
                 panic!("Call to icrc2_approve({args:?}) from caller {caller} failed with error {err:?}"))
+    }
+
+    fn icrc103_get_allowances_or_panic(
+        &self,
+        caller: Principal,
+        args: GetAllowancesArgs,
+    ) -> Allowances {
+        client::icrc103_get_allowances_or_panic(&self.state_machine, self.ledger_id, caller, args)
     }
 
     fn icrc2_transfer_from(
@@ -2533,6 +2542,136 @@ fn test_approval_expiring() {
             },
         )
         .unwrap_err(); // TODO(FI-1206): check the error
+    }
+}
+
+#[test]
+fn test_allowance_listing_sequences() {
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    const NUM_PRINCIPALS: u64 = 3;
+    const NUM_SUBACCOUNTS: u64 = 3;
+
+    let mut approvers = vec![];
+    let mut spenders = vec![];
+
+    for pid in 1..NUM_PRINCIPALS + 1 {
+        for sub in 0..NUM_SUBACCOUNTS {
+            let approver = Account {
+                owner: Principal::from_slice(&[pid as u8; 2]),
+                subaccount: Some([sub as u8; 32]),
+            };
+            approvers.push(approver);
+            env.deposit(approver, 100 * fee, None);
+            spenders.push(Account {
+                owner: Principal::from_slice(&[pid as u8 + NUM_PRINCIPALS as u8; 2]),
+                subaccount: Some([sub as u8; 32]),
+            });
+        }
+    }
+
+    // Create approvals between all (approver, spender) pairs from `approvers` and `spenders`.
+    // Additionally store all pairs in an array in sorted order in `approve_pairs`.
+    // This allows us to check if the allowances returned by the `icrc103_get_allowances`
+    // endpoint are correct - they will always form a contiguous subarray of `approve_pairs`.
+    let mut approve_pairs = vec![];
+    for approver in &approvers {
+        for spender in &spenders {
+            let approve_args = ApproveArgs {
+                from_subaccount: approver.subaccount,
+                spender: *spender,
+                amount: Nat::from(10u64),
+                expected_allowance: None,
+                expires_at: None,
+                fee: Some(Nat::from(FEE)),
+                memo: None,
+                created_at_time: None,
+            };
+            let _ = env
+                .icrc2_approve(approver.owner, approve_args)
+                .expect("approve failed");
+            approve_pairs.push((approver, spender));
+        }
+    }
+    assert!(approve_pairs.is_sorted());
+
+    // Check if given allowances match the elements of `approve_pairs` starting at index `pair_index`.
+    // Additionally check that the next element in `approve_pairs` has a different `from.owner`
+    // and could not be part of the same response of `icrc103_get_allowances`.
+    let check_allowances = |allowances: Allowances, pair_idx: usize, owner: Principal| {
+        for i in 0..allowances.len() {
+            let allowance = &allowances[i];
+            let pair = approve_pairs[pair_idx + i];
+            assert_eq!(allowance.from_account, *pair.0, "incorrect from account");
+            assert_eq!(allowance.to_spender, *pair.1, "incorrect spender account");
+        }
+        let next_pair_idx = pair_idx + allowances.len();
+        if next_pair_idx < approve_pairs.len() {
+            assert_ne!(approve_pairs[next_pair_idx].0.owner, owner);
+        }
+    };
+
+    // Create an Account that is lexicographically smaller than the given Account.
+    // In the above Account generation scheme, the returned account will fall
+    // between two approvers or spenders - we only modify the second byte of
+    // the owner slice or the last byte of the subaccount slice.
+    let prev_account = |account: &Account| {
+        if account.subaccount.unwrap() == [0u8; 32] {
+            let owner = account.owner.as_slice();
+            let prev_owner = [owner[0], owner[1] - 1];
+            Account {
+                owner: Principal::from_slice(&prev_owner),
+                subaccount: account.subaccount,
+            }
+        } else {
+            let mut prev_subaccount = account.subaccount.unwrap();
+            prev_subaccount[31] -= 1;
+            Account {
+                owner: account.owner,
+                subaccount: Some(prev_subaccount),
+            }
+        }
+    };
+
+    let mut prev_from = None;
+    for (idx, (&from, &spender)) in approve_pairs.iter().enumerate() {
+        let mut args = GetAllowancesArgs {
+            from_account: Some(from),
+            prev_spender: None,
+            take: None,
+        };
+
+        if prev_from != Some(from) {
+            prev_from = Some(from);
+
+            // Listing without specifying the spender.
+            let allowances = env.icrc103_get_allowances_or_panic(from.owner, args.clone());
+            check_allowances(allowances, idx, from.owner);
+
+            // List from a smaller `from_account`. If the smaller `from_account` has a different owner
+            // the result list is empty - we don't have any approvals for that owner.
+            // If the smaller `from_account` has a different subaccount, the result is the same
+            // as listing for current `from_account` - the smaller subaccount does not match any account we generated.
+            args.from_account = Some(prev_account(&from));
+            let allowances = env.icrc103_get_allowances_or_panic(from.owner, args.clone());
+            if args.from_account.unwrap().owner == from.owner {
+                check_allowances(allowances, idx, from.owner);
+            } else {
+                assert_eq!(allowances.len(), 0);
+            }
+            args.from_account = Some(from);
+        }
+
+        // Listing with spender specified, the current `approve_pair` is skipped.
+        args.prev_spender = Some(spender);
+        let allowances = env.icrc103_get_allowances_or_panic(from.owner, args.clone());
+        check_allowances(allowances, idx + 1, from.owner);
+
+        // Listing with smaller spender, the current `approve_pair` is included.
+        args.prev_spender = Some(prev_account(&spender));
+        let allowances = env.icrc103_get_allowances_or_panic(from.owner, args);
+        check_allowances(allowances, idx, from.owner);
     }
 }
 
