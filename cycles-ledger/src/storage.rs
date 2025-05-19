@@ -3,7 +3,6 @@ use crate::endpoints::{
     CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
     CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
 };
-use crate::list_allowances::{Allowance, Allowances};
 use crate::logs::{P0, P1};
 use crate::memo::{encode_withdraw_memo, validate_memo};
 use crate::{
@@ -33,6 +32,7 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{BlockIndex, Memo},
     },
+    icrc103::get_allowances::{Allowance, Allowances},
 };
 use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};

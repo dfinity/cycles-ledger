@@ -8,7 +8,6 @@ use cycles_ledger::{
         CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
         GetBlocksResult, WithdrawArgs, WithdrawFromArgs,
     },
-    list_allowances::{Allowances, GetAllowancesArgs, GetAllowancesError},
     storage::{Block, CMC_PRINCIPAL},
 };
 use depositor::endpoints::DepositArg;
@@ -22,6 +21,7 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{Memo, TransferArg as TransferArgs, TransferError},
     },
+    icrc103::get_allowances::{Allowances, GetAllowancesArgs, GetAllowancesError},
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},

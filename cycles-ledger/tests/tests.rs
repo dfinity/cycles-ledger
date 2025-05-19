@@ -17,7 +17,6 @@ use cycles_ledger::{
         CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
         UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs, WithdrawFromError,
     },
-    list_allowances::{Allowances, GetAllowancesArgs},
     memo::encode_withdraw_memo,
     storage::{
         transfer_from::{expired_approval, CANNOT_TRANSFER_FROM_ZERO, DENIED_OWNER},
@@ -52,6 +51,7 @@ use icrc_ledger_types::{
         account::{Account, DEFAULT_SUBACCOUNT},
         transfer::{Memo, TransferArg as TransferArgs, TransferError},
     },
+    icrc103::get_allowances::{Allowances, GetAllowancesArgs},
     icrc2::{
         allowance::Allowance,
         approve::{ApproveArgs, ApproveError},

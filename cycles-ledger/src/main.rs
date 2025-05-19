@@ -3,7 +3,6 @@ use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs,
     GetBlocksResult, LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
 };
-use cycles_ledger::list_allowances::{Allowances, GetAllowancesArgs, GetAllowancesError};
 use cycles_ledger::logs::{Log, LogEntry, Priority};
 use cycles_ledger::logs::{P0, P1};
 use cycles_ledger::storage::{
@@ -21,6 +20,9 @@ use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::TransferArg as TransferArgs;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferError};
+use icrc_ledger_types::icrc103::get_allowances::{
+    Allowances, GetAllowancesArgs, GetAllowancesError,
+};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
