@@ -21,6 +21,7 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{Memo, TransferArg as TransferArgs, TransferError},
     },
+    icrc103::get_allowances::{Allowances, GetAllowancesArgs, GetAllowancesError},
     icrc2::{
         allowance::{Allowance, AllowanceArgs},
         approve::{ApproveArgs, ApproveError},
@@ -220,6 +221,15 @@ pub fn icrc2_approve(
     args: ApproveArgs,
 ) -> Result<Nat, ApproveError> {
     update_or_panic(env, ledger_id, caller, "icrc2_approve", args)
+}
+
+pub fn icrc103_get_allowances(
+    env: &StateMachine,
+    ledger_id: Principal,
+    caller: Principal,
+    args: GetAllowancesArgs,
+) -> Result<Allowances, GetAllowancesError> {
+    query_or_panic(env, ledger_id, caller, "icrc103_get_allowances", args)
 }
 
 pub fn icrc1_transfer(
