@@ -113,6 +113,10 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
             url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-3/README.md"
                 .to_string(),
         },
+        endpoints::SupportedStandard {
+            name: "ICRC-103".to_string(),
+            url: "https://github.com/dfinity/ICRC/tree/main/ICRCs/ICRC-103".to_string(),
+        },
     ]
 }
 
