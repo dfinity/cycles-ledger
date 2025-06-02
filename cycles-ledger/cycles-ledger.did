@@ -310,7 +310,7 @@ type GetAllowancesArgs = record {
     take: opt nat;
 };
 
-type Allowance103 = record {
+type Allowances = vec record {
     from_account: Account;
     to_spender: Account;
     allowance: nat;
@@ -328,7 +328,7 @@ type GetAllowancesError = variant {
 };
 
 type icrc103_get_allowances_response = variant {
-    Ok: vec Allowance103;
+    Ok: Allowances;
     Err: GetAllowancesError;
 };
 
