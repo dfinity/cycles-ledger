@@ -327,7 +327,7 @@ type GetAllowancesError = variant {
    };
 };
 
-type icrc103_get_allowances_response = variant {
+type ICRC103GetAllowancesResponse = variant {
     Ok: Allowances;
     Err: GetAllowancesError;
 };
@@ -352,7 +352,7 @@ service : (ledger_args : LedgerArgs) -> {
   icrc3_get_tip_certificate : () -> (opt DataCertificate) query;
   icrc3_get_blocks : (GetBlocksArgs) -> (GetBlocksResult) query;
   icrc3_supported_block_types : () -> (vec SupportedBlockType) query;
-  icrc103_get_allowances : (GetAllowancesArgs) -> (icrc103_get_allowances_response) query;
+  icrc103_get_allowances : (GetAllowancesArgs) -> (ICRC103GetAllowancesResponse) query;
   withdraw : (WithdrawArgs) -> (variant { Ok : BlockIndex; Err : WithdrawError });
   withdraw_from : (WithdrawFromArgs) -> (variant { Ok : BlockIndex; Err : WithdrawFromError });
   create_canister : (CreateCanisterArgs) -> (variant { Ok : CreateCanisterSuccess; Err : CreateCanisterError });
