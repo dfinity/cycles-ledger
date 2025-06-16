@@ -2547,8 +2547,8 @@ fn test_approval_expiring() {
     }
 }
 
-// The test focuses on testing whether given an (approver, spender) pair the correct
-// sequence of allowances is returned.
+// The test focuses on testing whether the correct
+// sequence of allowances is returned for a given an (approver, spender) pair.
 #[test]
 fn test_allowance_listing_sequences() {
     let env = TestEnv::setup();
