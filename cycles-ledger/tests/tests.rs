@@ -48,9 +48,10 @@ use ic_test_state_machine_client::{CallError, ErrorCode, StateMachine, WasmResul
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
     icrc1::{
-        account::Account,
+        account::{Account, DEFAULT_SUBACCOUNT},
         transfer::{Memo, TransferArg as TransferArgs, TransferError},
     },
+    icrc103::get_allowances::{Allowances, GetAllowancesArgs},
     icrc2::{
         allowance::Allowance,
         approve::{ApproveArgs, ApproveError},
@@ -450,6 +451,15 @@ impl TestEnv {
                 panic!("Call to icrc2_approve({args:?}) from caller {caller} failed with error {err:?}"))
     }
 
+    fn icrc103_get_allowances_or_panic(
+        &self,
+        caller: Principal,
+        args: GetAllowancesArgs,
+    ) -> Allowances {
+        client::icrc103_get_allowances(&self.state_machine, self.ledger_id, caller, args)
+            .expect("failed to list allowances")
+    }
+
     fn icrc2_transfer_from(
         &self,
         caller: Principal,
@@ -489,6 +499,7 @@ impl TestEnv {
 
     fn advance_time(&self, duration: Duration) {
         self.state_machine.advance_time(duration);
+        self.state_machine.tick();
     }
 
     fn withdraw(&self, caller: Principal, args: WithdrawArgs) -> Result<Nat, WithdrawError> {
@@ -2534,6 +2545,431 @@ fn test_approval_expiring() {
         )
         .unwrap_err(); // TODO(FI-1206): check the error
     }
+}
+
+// The test focuses on testing whether the correct
+// sequence of allowances is returned for a given an (approver, spender) pair.
+#[test]
+fn test_allowance_listing_sequences() {
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    const NUM_PRINCIPALS: u64 = 3;
+    const NUM_SUBACCOUNTS: u64 = 3;
+
+    let mut approvers = vec![];
+    let mut spenders = vec![];
+
+    for pid in 1..NUM_PRINCIPALS + 1 {
+        for sub in 0..NUM_SUBACCOUNTS {
+            let approver = Account {
+                owner: Principal::from_slice(&[pid as u8; 2]),
+                subaccount: Some([sub as u8; 32]),
+            };
+            approvers.push(approver);
+            env.deposit(approver, 100 * fee, None);
+            spenders.push(Account {
+                owner: Principal::from_slice(&[pid as u8 + NUM_PRINCIPALS as u8; 2]),
+                subaccount: Some([sub as u8; 32]),
+            });
+        }
+    }
+
+    // Create approvals between all (approver, spender) pairs from `approvers` and `spenders`.
+    // Additionally store all pairs in an array in sorted order in `approve_pairs`.
+    // This allows us to check if the allowances returned by the `icrc103_get_allowances`
+    // endpoint are correct - they will always form a contiguous subarray of `approve_pairs`.
+    let mut approve_pairs = vec![];
+    for approver in &approvers {
+        for spender in &spenders {
+            let approve_args = ApproveArgs {
+                from_subaccount: approver.subaccount,
+                spender: *spender,
+                amount: Nat::from(10u64),
+                expected_allowance: None,
+                expires_at: None,
+                fee: Some(Nat::from(FEE)),
+                memo: None,
+                created_at_time: None,
+            };
+            let _ = env
+                .icrc2_approve(approver.owner, approve_args)
+                .expect("approve failed");
+            approve_pairs.push((approver, spender));
+        }
+    }
+    assert!(approve_pairs.is_sorted());
+
+    // Check if given allowances match the elements of `approve_pairs` starting at index `pair_index`.
+    // Additionally check that the next element in `approve_pairs` has a different `from.owner`
+    // and could not be part of the same response of `icrc103_get_allowances`.
+    let check_allowances = |allowances: Allowances, pair_idx: usize, owner: Principal| {
+        for i in 0..allowances.len() {
+            let allowance = &allowances[i];
+            let pair = approve_pairs[pair_idx + i];
+            assert_eq!(allowance.from_account, *pair.0, "incorrect from account");
+            assert_eq!(allowance.to_spender, *pair.1, "incorrect spender account");
+        }
+        let next_pair_idx = pair_idx + allowances.len();
+        if next_pair_idx < approve_pairs.len() {
+            assert_ne!(approve_pairs[next_pair_idx].0.owner, owner);
+        }
+    };
+
+    // Create an Account that is lexicographically smaller than the given Account.
+    // In the above Account generation scheme, the returned account will fall
+    // between two approvers or spenders - we only modify the second byte of
+    // the owner slice or the last byte of the subaccount slice.
+    let prev_account = |account: &Account| {
+        if account.subaccount.unwrap() == [0u8; 32] {
+            let owner = account.owner.as_slice();
+            let prev_owner = [owner[0], owner[1] - 1];
+            Account {
+                owner: Principal::from_slice(&prev_owner),
+                subaccount: account.subaccount,
+            }
+        } else {
+            let mut prev_subaccount = account.subaccount.unwrap();
+            prev_subaccount[31] -= 1;
+            Account {
+                owner: account.owner,
+                subaccount: Some(prev_subaccount),
+            }
+        }
+    };
+
+    let mut prev_from = None;
+    for (idx, (&from, &spender)) in approve_pairs.iter().enumerate() {
+        let mut args = GetAllowancesArgs {
+            from_account: Some(from),
+            prev_spender: None,
+            take: None,
+        };
+
+        if prev_from != Some(from) {
+            prev_from = Some(from);
+
+            // Listing without specifying the spender.
+            let allowances = env.icrc103_get_allowances_or_panic(from.owner, args.clone());
+            check_allowances(allowances, idx, from.owner);
+
+            // List from a smaller `from_account`. If the smaller `from_account` has a different owner
+            // the result list is empty - we don't have any approvals for that owner.
+            // If the smaller `from_account` has a different subaccount, the result is the same
+            // as listing for current `from_account` - the smaller subaccount does not match any account we generated.
+            args.from_account = Some(prev_account(&from));
+            let allowances = env.icrc103_get_allowances_or_panic(from.owner, args.clone());
+            if args.from_account.unwrap().owner == from.owner {
+                check_allowances(allowances, idx, from.owner);
+            } else {
+                assert_eq!(allowances.len(), 0);
+            }
+            args.from_account = Some(from);
+        }
+
+        // Listing with spender specified, the current `approve_pair` is skipped.
+        args.prev_spender = Some(spender);
+        let allowances = env.icrc103_get_allowances_or_panic(from.owner, args.clone());
+        check_allowances(allowances, idx + 1, from.owner);
+
+        // Listing with smaller spender, the current `approve_pair` is included.
+        args.prev_spender = Some(prev_account(&spender));
+        let allowances = env.icrc103_get_allowances_or_panic(from.owner, args);
+        check_allowances(allowances, idx, from.owner);
+    }
+}
+
+// The test focuses on testing if the returned allowances have the correct
+// values for all fields (from, spender, amount, expiration).
+#[test]
+pub fn test_allowance_listing_values() {
+    let approver = account(1, None);
+    let approver_sub = account(2, Some(2));
+    let spender = account(3, None);
+    let spender_sub = account(4, Some(3));
+
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    env.deposit(approver, 100 * fee, None);
+    env.deposit(approver_sub, 100 * fee, None);
+
+    let default_approve_args = ApproveArgs {
+        from_subaccount: None,
+        spender,
+        amount: Nat::from(1u64),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+
+    // Simplest possible approval.
+    let approve_args = default_approve_args.clone();
+    let block_index = env
+        .icrc2_approve(approver.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(2u64));
+
+    let now = env.nanos_since_epoch_u64();
+
+    // Spender subaccount, expiration
+    let expiration_far = Some(now + Duration::from_secs(3600).as_nanos() as u64);
+    let mut approve_args = default_approve_args.clone();
+    approve_args.spender = spender_sub;
+    approve_args.amount = Nat::from(2u64);
+    approve_args.expires_at = expiration_far;
+    let block_index = env
+        .icrc2_approve(approver.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(3u64));
+
+    // From subaccount
+    let mut approve_args = default_approve_args.clone();
+    approve_args.from_subaccount = approver_sub.subaccount;
+    approve_args.amount = Nat::from(3u64);
+    let block_index = env
+        .icrc2_approve(approver_sub.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(4u64));
+
+    // From subaccount, spender subaccount, expiration
+    let expiration_near = Some(now + Duration::from_secs(10).as_nanos() as u64);
+    let mut approve_args = default_approve_args.clone(); //(spender_sub, 4);
+    approve_args.spender = spender_sub;
+    approve_args.amount = Nat::from(4u64);
+    approve_args.from_subaccount = approver_sub.subaccount;
+    approve_args.expires_at = expiration_near;
+    let block_index = env
+        .icrc2_approve(approver_sub.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(5u64));
+
+    let mut args = GetAllowancesArgs {
+        from_account: Some(approver),
+        prev_spender: None,
+        take: None,
+    };
+
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 2);
+
+    assert_eq!(allowances[0].from_account, approver);
+    assert_eq!(allowances[0].to_spender, spender);
+    assert_eq!(allowances[0].allowance, Nat::from(1u64));
+    assert_eq!(allowances[0].expires_at, None);
+
+    assert_eq!(allowances[1].from_account, approver);
+    assert_eq!(allowances[1].to_spender, spender_sub);
+    assert_eq!(allowances[1].allowance, Nat::from(2u64));
+    assert_eq!(allowances[1].expires_at, expiration_far);
+
+    args.take = Some(Nat::from(1u64));
+
+    let allowances_take = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances_take.len(), 1);
+    assert_eq!(allowances_take[0], allowances[0]);
+
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_sub),
+        prev_spender: None,
+        take: None,
+    };
+
+    // Here we additionally test listing approvals of another Principal.
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 2);
+
+    assert_eq!(allowances[0].from_account, approver_sub);
+    assert_eq!(allowances[0].to_spender, spender);
+    assert_eq!(allowances[0].allowance, Nat::from(3u64));
+    assert_eq!(allowances[0].expires_at, None);
+
+    assert_eq!(allowances[1].from_account, approver_sub);
+    assert_eq!(allowances[1].to_spender, spender_sub);
+    assert_eq!(allowances[1].allowance, Nat::from(4u64));
+    assert_eq!(allowances[1].expires_at, expiration_near);
+
+    env.advance_time(Duration::from_secs(10));
+
+    let allowances_later = env.icrc103_get_allowances_or_panic(approver.owner, args);
+    assert_eq!(allowances_later.len(), 1);
+    assert_eq!(allowances_later[0], allowances[0]);
+}
+
+// Test whether specifying None/DEFAULT_SUBACCOUNT does not affect the results.
+#[test]
+pub fn test_allowance_listing_subaccount() {
+    let approver_none = Account {
+        owner: Principal::from_slice(&[1u8]),
+        subaccount: None,
+    };
+    let approver_default = Account {
+        owner: Principal::from_slice(&[2u8]),
+        subaccount: Some(*DEFAULT_SUBACCOUNT),
+    };
+    let spender_none = Account {
+        owner: Principal::from_slice(&[3u8]),
+        subaccount: None,
+    };
+    let spender_default = Account {
+        owner: Principal::from_slice(&[3u8]),
+        subaccount: Some(*DEFAULT_SUBACCOUNT),
+    };
+
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    env.deposit(approver_none, 100 * fee, None);
+    env.deposit(approver_default, 100 * fee, None);
+
+    let default_approve_args = ApproveArgs {
+        from_subaccount: None,
+        spender: spender_none,
+        amount: Nat::from(1u64),
+        expected_allowance: None,
+        expires_at: None,
+        fee: None,
+        memo: None,
+        created_at_time: None,
+    };
+
+    let approve_args = default_approve_args.clone();
+    let block_index = env
+        .icrc2_approve(approver_none.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(2u64));
+
+    let mut approve_args = default_approve_args.clone(); //(spender_default, 1);
+    approve_args.spender = spender_default;
+    approve_args.from_subaccount = approver_default.subaccount;
+    let block_index = env
+        .icrc2_approve(approver_default.owner, approve_args)
+        .expect("approve failed");
+    assert_eq!(block_index, Nat::from(3u64));
+
+    // Should return the allowance, if we specify `from_account` as when creating approval
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 1);
+
+    // Should return the allowance, if we specify `from_account` with explicit default subaccount.
+    let mut approver_none_default = approver_none;
+    approver_none_default.subaccount = Some(*DEFAULT_SUBACCOUNT);
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none_default),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 1);
+
+    // Should filter out the allowance if subaccount is none
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none),
+        prev_spender: Some(spender_none),
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 0);
+
+    // Should filter out the allowance if subaccount is default
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_none),
+        prev_spender: Some(spender_default),
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_none.owner, args.clone());
+    assert_eq!(allowances.len(), 0);
+
+    // Should return the allowance, if we specify `from_account` as when creating approval
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_default),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_default.owner, args.clone());
+    assert_eq!(allowances.len(), 1);
+
+    // Should return the allowance, if we specify `from_account` with none subaccount.
+    let mut approver_default_none = approver_default;
+    approver_default_none.subaccount = None;
+    let args = GetAllowancesArgs {
+        from_account: Some(approver_default_none),
+        prev_spender: None,
+        take: None,
+    };
+    let allowances = env.icrc103_get_allowances_or_panic(approver_default.owner, args);
+    assert_eq!(allowances.len(), 1);
+}
+
+// The test focuses on testing various values for the `take` parameter.
+#[test]
+pub fn test_allowance_listing_take() {
+    const MAX_RESULTS: usize = 500;
+    const NUM_SPENDERS: usize = MAX_RESULTS + 1;
+
+    let approver = account(1, None);
+
+    let mut spenders = vec![];
+    for i in 2..NUM_SPENDERS + 2 {
+        spenders.push(account(i as u64, None));
+    }
+    assert_eq!(spenders.len(), NUM_SPENDERS);
+
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    env.deposit(approver, 1_000_000 * fee, None);
+
+    for spender in &spenders {
+        let approve_args = ApproveArgs {
+            from_subaccount: None,
+            spender: *spender,
+            amount: Nat::from(10u64),
+            expected_allowance: None,
+            expires_at: None,
+            fee: Some(Nat::from(FEE)),
+            memo: None,
+            created_at_time: None,
+        };
+        let _ = env
+            .icrc2_approve(approver.owner, approve_args)
+            .expect("approve failed");
+    }
+
+    let mut args = GetAllowancesArgs {
+        from_account: Some(approver),
+        prev_spender: None,
+        take: None,
+    };
+
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), MAX_RESULTS);
+
+    args.take = Some(Nat::from(0u64));
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 0);
+
+    args.take = Some(Nat::from(5u64));
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), 5);
+
+    args.take = Some(Nat::from(u64::MAX));
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args.clone());
+    assert_eq!(allowances.len(), MAX_RESULTS);
+
+    args.take = Some(Nat::from(
+        BigUint::parse_bytes(b"1000000000000000000000000000000000000000", 10).unwrap(),
+    ));
+    assert!(args.take.clone().unwrap().0.to_u64().is_none());
+    let allowances = env.icrc103_get_allowances_or_panic(approver.owner, args);
+    assert_eq!(allowances.len(), MAX_RESULTS);
 }
 
 #[derive(Clone, Copy)]

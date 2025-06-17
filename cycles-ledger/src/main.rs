@@ -20,6 +20,9 @@ use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::TransferArg as TransferArgs;
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferError};
+use icrc_ledger_types::icrc103::get_allowances::{
+    Allowances, GetAllowancesArgs, GetAllowancesError,
+};
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
@@ -109,6 +112,10 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
             name: "ICRC-3".to_string(),
             url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-3/README.md"
                 .to_string(),
+        },
+        endpoints::SupportedStandard {
+            name: "ICRC-103".to_string(),
+            url: "https://github.com/dfinity/ICRC/tree/main/ICRCs/ICRC-103".to_string(),
         },
     ]
 }
@@ -440,6 +447,29 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     prune(now);
 
     Ok(block_index)
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllowancesError> {
+    let from_account = match arg.from_account {
+        Some(from_account) => from_account,
+        None => Account {
+            owner: ic_cdk::api::caller(),
+            subaccount: None,
+        },
+    };
+    let max_results = arg
+        .take
+        .map(|take| take.0.to_u64().unwrap_or(config::MAX_TAKE_ALLOWANCES))
+        .map(|take| std::cmp::min(take, config::MAX_TAKE_ALLOWANCES))
+        .unwrap_or(config::MAX_TAKE_ALLOWANCES);
+    Ok(storage::get_allowances(
+        from_account,
+        arg.prev_spender,
+        max_results,
+        ic_cdk::api::time(),
+    ))
 }
 
 #[query]

@@ -17,6 +17,7 @@ pub const TRANSACTION_PRUNE_LIMIT: usize = 100_000;
 // The maximum number of entries in the approval list and expiration queue to be pruned in a single prune process
 pub const APPROVE_PRUNE_LIMIT: usize = 100;
 pub const REMOTE_FUTURE: u64 = u64::MAX;
+pub const MAX_TAKE_ALLOWANCES: u64 = 500;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Config {

@@ -22,7 +22,7 @@ candid = "0.10"
 candid_parser = "0.1"
 ic-cdk = { version = "0.12.2" }
 ic-cdk-macros = { version = "0.8.4" }
-icrc-ledger-types = "0.1.5"
+icrc-ledger-types = "0.1.9"
 serde = "1"
 
 [workspace.metadata.release] # cargo-release

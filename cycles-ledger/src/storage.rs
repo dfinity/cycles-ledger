@@ -32,6 +32,7 @@ use icrc_ledger_types::{
         account::Account,
         transfer::{BlockIndex, Memo},
     },
+    icrc103::get_allowances::{Allowance, Allowances},
 };
 use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
@@ -825,6 +826,18 @@ where
 
 pub fn to_account_key(account: &Account) -> AccountKey {
     (account.owner, *account.effective_subaccount())
+}
+
+pub fn to_account_pair(approval_key: &ApprovalKey) -> (Account, Account) {
+    let account1 = Account {
+        owner: approval_key.0 .0,
+        subaccount: Some(approval_key.0 .1),
+    };
+    let account2 = Account {
+        owner: approval_key.1 .0,
+        subaccount: Some(approval_key.1 .1),
+    };
+    (account1, account2)
 }
 
 pub fn balance_of(account: &Account) -> u128 {
@@ -2402,6 +2415,55 @@ pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
         blocks,
         archived_blocks: vec![],
     }
+}
+
+pub fn get_allowances(
+    from: Account,
+    spender: Option<Account>,
+    max_results: u64,
+    now: u64,
+) -> Allowances {
+    let mut result = vec![];
+    let start_account_spender = match spender {
+        Some(spender) => (to_account_key(&from), to_account_key(&spender)),
+        None => (
+            to_account_key(&from),
+            to_account_key(&Account {
+                owner: Principal::from_slice(&[0u8; 0]),
+                subaccount: None,
+            }),
+        ),
+    };
+    read_state(|state| {
+        for (account_spender, (allowance_amount, expiration)) in
+            state.approvals.range(start_account_spender..)
+        {
+            if spender.is_some() && account_spender == start_account_spender {
+                continue;
+            }
+            if result.len() >= max_results as usize {
+                break;
+            }
+            let (from_account, to_spender) = to_account_pair(&account_spender);
+            if from_account.owner != from.owner {
+                break;
+            }
+            if expiration > 0 && expiration <= now {
+                continue;
+            }
+            let expires_at = match expiration {
+                0 => None,
+                _ => Some(expiration),
+            };
+            result.push(Allowance {
+                from_account,
+                to_spender,
+                allowance: Nat::from(allowance_amount),
+                expires_at,
+            });
+        }
+    });
+    result
 }
 
 #[cfg(test)]
