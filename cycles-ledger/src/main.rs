@@ -194,6 +194,24 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     }
 }
 
+#[update]
+#[candid_method]
+fn admin_mint(arg: endpoints::AdminMintArg) -> endpoints::AdminMintResult {
+    let caller = ic_cdk::caller();
+    if !ic_cdk::api::is_controller(&caller) {
+        ic_cdk::trap("Only the controller can mint cycles");
+    }
+
+    let amount = arg.amount.0.to_u128().expect("Invalid amount.");
+    match storage::mint(arg.to, amount, arg.memo, ic_cdk::api::time()) {
+        Ok(block_index) => endpoints::AdminMintResult {
+            block_index: Nat::from(block_index),
+            balance: Nat::from(storage::balance_of(&arg.to)),
+        },
+        Err(err) => ic_cdk::trap(&err.to_string()),
+    }
+}
+
 fn execute_transfer(
     from: Account,
     to: Account,

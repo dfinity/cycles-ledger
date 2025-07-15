@@ -55,6 +55,19 @@ pub struct DepositResult {
 }
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AdminMintArg {
+    pub to: Account,
+    pub amount: Nat,
+    pub memo: Option<Memo>,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AdminMintResult {
+    pub block_index: Nat,
+    pub balance: Nat,
+}
+
+#[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SupportedStandard {
     pub name: String,
     pub url: String,

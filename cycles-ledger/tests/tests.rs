@@ -13,9 +13,10 @@ use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
-        BlockWithId, ChangeIndexId, CmcCreateCanisterError, CreateCanisterFromArgs,
-        CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
-        UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs, WithdrawFromError,
+        AdminMintResult, BlockWithId, ChangeIndexId, CmcCreateCanisterError,
+        CreateCanisterFromArgs, CreateCanisterFromError, DataCertificate, DepositResult,
+        GetBlocksResult, LedgerArgs, UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs,
+        WithdrawFromError,
     },
     memo::encode_withdraw_memo,
     storage::{
@@ -223,14 +224,29 @@ fn build_wasm(name: &str) -> Vec<u8> {
     }
 }
 
-fn install_ledger(env: &StateMachine) -> Principal {
-    install_ledger_with_conf(env, LedgerConfig::default())
+fn install_ledger(env: &StateMachine, controller: Principal) -> Principal {
+    install_ledger_with_conf(env, LedgerConfig::default(), controller)
 }
 
-fn install_ledger_with_conf(env: &StateMachine, config: LedgerConfig) -> Principal {
-    let canister = env.create_canister(None);
+fn install_ledger_with_conf(
+    env: &StateMachine,
+    config: LedgerConfig,
+    controller: Principal,
+) -> Principal {
+    let canister = env.create_canister_with_settings(
+        Some(ic_test_state_machine_client::CanisterSettings {
+            controllers: Some(vec![controller]),
+            ..Default::default()
+        }),
+        Some(controller),
+    );
     let init_args = Encode!(&LedgerArgs::Init(config)).unwrap();
-    env.install_canister(canister, get_wasm("cycles-ledger"), init_args, None);
+    env.install_canister(
+        canister,
+        get_wasm("cycles-ledger"),
+        init_args,
+        Some(controller),
+    );
     canister
 }
 
@@ -292,6 +308,7 @@ pub fn account(owner: u64, subaccount: Option<u64>) -> Account {
 struct TestEnv {
     pub state_machine: StateMachine,
     pub ledger_id: Principal,
+    pub ledger_controller: Principal,
     pub depositor_id: Principal,
     #[allow(dead_code)]
     pub cmc_id: Principal,
@@ -299,26 +316,30 @@ struct TestEnv {
 
 impl TestEnv {
     fn setup() -> Self {
+        let ledger_controller = Principal::anonymous();
         let state_machine = new_state_machine();
         let cmc_id = install_fake_cmc(&state_machine);
-        let ledger_id = install_ledger(&state_machine);
+        let ledger_id = install_ledger(&state_machine, ledger_controller);
         let depositor_id = install_depositor(&state_machine, ledger_id);
         Self {
             state_machine,
             ledger_id,
+            ledger_controller,
             depositor_id,
             cmc_id,
         }
     }
 
     fn setup_with_ledger_conf(conf: LedgerConfig) -> Self {
+        let ledger_controller = Principal::anonymous();
         let state_machine = new_state_machine();
         let cmc_id = install_fake_cmc(&state_machine);
-        let ledger_id = install_ledger_with_conf(&state_machine, conf);
+        let ledger_id = install_ledger_with_conf(&state_machine, conf, ledger_controller);
         let depositor_id = install_depositor(&state_machine, ledger_id);
         Self {
             state_machine,
             ledger_id,
+            ledger_controller,
             depositor_id,
             cmc_id,
         }
@@ -368,6 +389,10 @@ impl TestEnv {
 
     fn deposit(&self, to: Account, amount: u128, memo: Option<Memo>) -> DepositResult {
         client::deposit(&self.state_machine, self.depositor_id, to, amount, memo)
+    }
+
+    fn admin_mint(&self, to: Account, amount: u128, memo: Option<Memo>) -> AdminMintResult {
+        client::admin_mint(&self.state_machine, self.ledger_id, to, amount, memo)
     }
 
     fn get_all_blocks(&self) -> Vec<Block> {
@@ -5496,7 +5521,7 @@ fn test_create_canister() {
     const CREATE_CANISTER_CYCLES_MINUS_FEE: u128 = 1_000_000_000_000 - FEE;
     let env = new_state_machine();
     install_fake_cmc(&env);
-    let ledger_id = install_ledger(&env);
+    let ledger_id = install_ledger(&env, Principal::anonymous());
     let depositor_id = install_depositor(&env, ledger_id);
     let account10_0 = Account {
         owner: Principal::from_slice(&[10]),
@@ -5900,7 +5925,7 @@ fn test_create_canister_duplicate() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
     let env = new_state_machine();
     install_fake_cmc(&env);
-    let ledger_id = install_ledger(&env);
+    let ledger_id = install_ledger(&env, Principal::anonymous());
     let depositor_id = install_depositor(&env, ledger_id);
     let account10_0 = Account {
         owner: Principal::from_slice(&[10]),

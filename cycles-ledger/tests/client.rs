@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
 use cycles_ledger::{
     endpoints::{
-        self, CmcCreateCanisterError, CreateCanisterArgs, CreateCanisterFromArgs,
-        CreateCanisterSuccess, DataCertificate, DepositResult, GetBlocksArg, GetBlocksArgs,
-        GetBlocksResult, WithdrawArgs, WithdrawFromArgs,
+        self, AdminMintArg, AdminMintResult, CmcCreateCanisterError, CreateCanisterArgs,
+        CreateCanisterFromArgs, CreateCanisterSuccess, DataCertificate, DepositResult,
+        GetBlocksArg, GetBlocksArgs, GetBlocksResult, WithdrawArgs, WithdrawFromArgs,
     },
     storage::{Block, CMC_PRINCIPAL},
 };
@@ -92,6 +92,26 @@ pub fn deposit(
         to.owner,
         "deposit",
         DepositArg { cycles, to, memo },
+    )
+}
+
+pub fn admin_mint(
+    env: &StateMachine,
+    cycles_ledger: Principal,
+    to: Account,
+    cycles: u128,
+    memo: Option<Memo>,
+) -> AdminMintResult {
+    update_or_panic(
+        env,
+        cycles_ledger,
+        to.owner,
+        "admin_mint",
+        AdminMintArg {
+            amount: Nat::from(cycles),
+            to,
+            memo,
+        },
     )
 }
 
