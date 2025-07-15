@@ -7,6 +7,26 @@ The cycles ledger complies with the [ICRC-1](https://github.com/dfinity/ICRC-1/b
 
 The additional endpoints are presented in the following.
 
+### `admin_mint`
+```
+type Account = record { owner : principal; subaccount : opt vec nat8 };
+
+type BlockIndex = nat;
+
+type AdminMintArg = record {
+  to : Account;
+  memo : opt vec nat8;
+  amount : nat;
+};
+
+type AdminMintResult = record { balance : nat; block_index : BlockIndex };
+
+admin_mint : (AdminMintArg) -> (AdminMintResult);
+```
+
+This endpoint allows the controller of the cycles ledger to mint cycles to any account without depositing cycles at the same time. Only controllers can call this endpoint. There is no fee when admin minting cycles.
+The controller can optionally provide a memo as well. The memo may be at most 32 bytes long.
+
 ### `deposit`
 ```
 type Account = record { owner : principal; subaccount : opt vec nat8 };

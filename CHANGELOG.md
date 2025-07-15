@@ -3,6 +3,7 @@
 # CHANGELOG
 
 ## [Unreleased] - ReleaseDate
+* Add `admin_mint` endpoint that allows controllers to mint cycles to any account.
 
 ## [1.0.5] - 2025-06-24
 * Add support for [ICRC-103](https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-103/ICRC-103.md).
