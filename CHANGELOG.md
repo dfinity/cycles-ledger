@@ -3,7 +3,7 @@
 # CHANGELOG
 
 ## [Unreleased] - ReleaseDate
-* Add `admin_mint` endpoint that allows controllers to mint cycles to any account.
+* Add `admin_mint` endpoint that allows controllers to mint cycles to any account without depositing cycles at the same time.
 
 ## [1.0.5] - 2025-06-24
 * Add support for [ICRC-103](https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-103/ICRC-103.md).
@@ -44,7 +44,7 @@ No changes to the cycles ledger. Released because a community project relies on 
 
 <!-- next-url -->
 [Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.5...HEAD
-[1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.4...cycles-ledger-v1.0.5
+[1.0.5]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.4...cycles-ledger-v1.0.5
 [1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.3...cycles-ledger-v1.0.4
 [1.0.3]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.2...cycles-ledger-v1.0.3
 [1.0.2]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.1...cycles-ledger-v1.0.2
