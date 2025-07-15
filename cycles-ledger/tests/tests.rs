@@ -7339,7 +7339,7 @@ fn test_admin_mint_flow() {
 }
 
 #[test]
-#[should_panic(expected = "Only the controller can mint cycles")]
+#[should_panic(expected = "Only the controller can admin_mint cycles.")]
 fn test_admin_mint_flow_with_caller() {
     let env = TestEnv::setup();
     let account0 = account(0, None);
