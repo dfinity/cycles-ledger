@@ -199,7 +199,7 @@ fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
 fn admin_mint(arg: endpoints::AdminMintArg) -> endpoints::AdminMintResult {
     let caller = ic_cdk::caller();
     if !ic_cdk::api::is_controller(&caller) {
-        ic_cdk::trap("Only the controller can mint cycles");
+        ic_cdk::trap("Only the controller can admin_mint cycles.");
     }
 
     let amount = arg.amount.0.to_u128().expect("Invalid amount.");
