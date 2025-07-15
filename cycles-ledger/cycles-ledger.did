@@ -1,4 +1,6 @@
 type Account = record { owner : principal; subaccount : opt vec nat8 };
+type AdminMintArg = record { to : Account; memo : opt blob; amount : nat };
+type AdminMintResult = record { balance : nat; block_index : nat };
 type Allowance = record { allowance : nat; expires_at : opt nat64 };
 type AllowanceArgs = record { account : Account; spender : Account };
 type BlockIndex = nat;
@@ -333,6 +335,7 @@ type ICRC103GetAllowancesResponse = variant {
 };
 
 service : (ledger_args : LedgerArgs) -> {
+  admin_mint : (AdminMintArg) -> (AdminMintResult);
   deposit : (DepositArgs) -> (DepositResult);
   http_request : (HttpRequest) -> (HttpResponse) query;
   icrc1_balance_of : (Account) -> (nat) query;

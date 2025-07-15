@@ -98,6 +98,7 @@ pub fn deposit(
 pub fn admin_mint(
     env: &StateMachine,
     cycles_ledger: Principal,
+    caller: Principal,
     to: Account,
     cycles: u128,
     memo: Option<Memo>,
@@ -105,7 +106,7 @@ pub fn admin_mint(
     update_or_panic(
         env,
         cycles_ledger,
-        to.owner,
+        caller,
         "admin_mint",
         AdminMintArg {
             amount: Nat::from(cycles),

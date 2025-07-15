@@ -185,7 +185,7 @@ fn get_wasm(name: &'static str) -> Vec<u8> {
 }
 
 fn build_wasm(name: &str) -> Vec<u8> {
-    if name == "cycles-ledger" {
+    if name == "cycles-ledgerrr" {
         let tmp_dir = TempDir::with_prefix("cycles-ledger-tmp-dir").unwrap();
         let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let cargo_manifest_dir = PathBuf::from(cargo_manifest_dir);
@@ -392,9 +392,22 @@ impl TestEnv {
         client::deposit(&self.state_machine, self.depositor_id, to, amount, memo)
     }
 
-    #[allow(unused)]
-    fn admin_mint(&self, to: Account, amount: u128, memo: Option<Memo>) -> AdminMintResult {
-        client::admin_mint(&self.state_machine, self.ledger_id, to, amount, memo)
+    /// If caller is None, the ledger controller will be used.
+    fn admin_mint(
+        &self,
+        caller: Option<Principal>,
+        to: Account,
+        amount: u128,
+        memo: Option<Memo>,
+    ) -> AdminMintResult {
+        client::admin_mint(
+            &self.state_machine,
+            self.ledger_id,
+            caller.unwrap_or(self.ledger_controller),
+            to,
+            amount,
+            memo,
+        )
     }
 
     fn get_all_blocks(&self) -> Vec<Block> {
@@ -7228,4 +7241,108 @@ fn test_icrc2_transfer_from_invalid_memo() {
             created_at_time: None,
         },
     );
+}
+
+#[test]
+fn test_admin_mint_flow() {
+    let env = TestEnv::setup();
+    let account0 = account(0, None);
+    let fee = env.icrc1_fee();
+
+    // 0.0 Check that the total supply is 0.
+    assert_eq!(env.icrc1_total_supply(), 0u128);
+
+    // 0.1 Check that the user doesn't have any tokens before the first deposit.
+    assert_eq!(env.icrc1_balance_of(account0), 0u128);
+
+    // 1 Make the first deposit to the user and check the result.
+    let deposit_res = env.admin_mint(None, account0, 1_000_000_000, None);
+    assert_eq!(deposit_res.block_index, Nat::from(0_u128));
+    assert_eq!(deposit_res.balance, Nat::from(1_000_000_000_u128));
+
+    // 1.0 Check that the right amount of tokens have been minted.
+    assert_eq!(env.icrc1_total_supply(), 1_000_000_000);
+
+    // 1.1 Check that the user has the right balance.
+    assert_eq!(env.icrc1_balance_of(account0), 1_000_000_000);
+
+    // 1.2 Check that the block created is correct:
+    let block0 = env.get_block(deposit_res.block_index);
+    assert_display_eq(
+        &block0,
+        &Block {
+            // 1.2.0 first block has no parent hash.
+            phash: None,
+            // 1.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
+            // 1.2.2 timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // 1.2.3 transaction.created_at_time is not set.
+                created_at_time: None,
+                // 1.2.4 transaction.memo is not set because
+                // the user didn't set it.
+                memo: None,
+                // 1.2.5 transaction.operation is mint.
+                operation: Operation::Mint {
+                    // 1.2.6 transaction.operation.to is the user.
+                    to: account0,
+                    // 1.2.7 transaction.operation.amount is the deposited amount.
+                    amount: 1_000_000_000,
+                    // 1.2.8 transaction.operation.fee is the ledger fee.
+                    fee,
+                },
+            },
+        },
+    );
+
+    // 2 Make another deposit to the user and check the result.
+    let memo = Memo::from(vec![0xa, 0xb, 0xc, 0xd, 0xe, 0xf]);
+    let deposit_res = env.admin_mint(None, account0, 500_000_000, Some(memo.clone()));
+    assert_eq!(deposit_res.block_index, Nat::from(1_u128));
+    assert_eq!(deposit_res.balance, Nat::from(1_500_000_000_u128));
+
+    // 2.0 Check that the right amount of tokens have been minted
+    assert_eq!(env.icrc1_total_supply(), 1_500_000_000);
+
+    // 2.1 Check that the user has the right balance after both deposits.
+    assert_eq!(env.icrc1_balance_of(account0), 1_500_000_000);
+
+    // 2.2 Check that the block created is correct:
+    let block1 = env.get_block(deposit_res.block_index);
+    assert_display_eq(
+        &block1,
+        &Block {
+            // 2.2.0 second block has the first block hash as parent hash.
+            phash: Some(block0.hash()),
+            // 2.2.1 effective fee of mint blocks is 0.
+            effective_fee: Some(0),
+            // 2.2.2 timestamp is set by the ledger.
+            timestamp: env.nanos_since_epoch_u64(),
+            transaction: Transaction {
+                // 2.2.3 transaction.created_at_time is not set.
+                created_at_time: None,
+                // 2.2.4 transaction.memo is the one set by the user.
+                memo: Some(memo),
+                // 2.2.5 transaction.operation is mint.
+                operation: Operation::Mint {
+                    // 2.2.6 transaction.operation.to is the user.
+                    to: account0,
+                    // 2.2.7 transaction.operation.amount is the deposited amount.
+                    amount: 500_000_000,
+                    // 2.2.8 transaction.operation.fee is the ledger fee.
+                    fee,
+                },
+            },
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "Only the controller can mint cycles")]
+fn test_admin_mint_flow_with_caller() {
+    let env = TestEnv::setup();
+    let account0 = account(0, None);
+
+    env.admin_mint(Some(env.cmc_id), account0, 1_000_000_000, None);
 }
