@@ -185,7 +185,7 @@ fn get_wasm(name: &'static str) -> Vec<u8> {
 }
 
 fn build_wasm(name: &str) -> Vec<u8> {
-    if name == "cycles-ledgerrr" {
+    if name == "cycles-ledger" {
         let tmp_dir = TempDir::with_prefix("cycles-ledger-tmp-dir").unwrap();
         let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let cargo_manifest_dir = PathBuf::from(cargo_manifest_dir);
@@ -7345,4 +7345,18 @@ fn test_admin_mint_flow_with_caller() {
     let account0 = account(0, None);
 
     env.admin_mint(Some(env.cmc_id), account0, 1_000_000_000, None);
+}
+
+#[test]
+#[should_panic(expected = "memo length exceeds the maximum")]
+fn test_admin_mint_invalid_memo() {
+    let env = TestEnv::setup();
+
+    // Attempt deposit with memo exceeding `MAX_MEMO_LENGTH`. This call should panic.
+    let _res = env.admin_mint(
+        None,
+        account(1, None),
+        10 * FEE,
+        Some(Memo(ByteBuf::from([0; MAX_MEMO_LENGTH as usize + 1]))),
+    );
 }
