@@ -308,6 +308,7 @@ pub fn account(owner: u64, subaccount: Option<u64>) -> Account {
 struct TestEnv {
     pub state_machine: StateMachine,
     pub ledger_id: Principal,
+    #[allow(unused)]
     pub ledger_controller: Principal,
     pub depositor_id: Principal,
     #[allow(dead_code)]
@@ -391,6 +392,7 @@ impl TestEnv {
         client::deposit(&self.state_machine, self.depositor_id, to, amount, memo)
     }
 
+    #[allow(unused)]
     fn admin_mint(&self, to: Account, amount: u128, memo: Option<Memo>) -> AdminMintResult {
         client::admin_mint(&self.state_machine, self.ledger_id, to, amount, memo)
     }
