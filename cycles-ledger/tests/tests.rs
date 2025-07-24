@@ -61,6 +61,7 @@ use icrc_ledger_types::{
 use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
+use serde::Deserialize;
 use serde_bytes::ByteBuf;
 use tempfile::TempDir;
 
@@ -289,12 +290,37 @@ pub fn account(owner: u64, subaccount: Option<u64>) -> Account {
     }
 }
 
+/// Copied from rs/ledger_suite/icrc1/index-ng/src/lib.rs in the IC monorepo
+#[derive(Clone, Debug, CandidType)]
+pub enum IndexArg {
+    Init(InitArg),
+    Upgrade(UpgradeArg),
+}
+
+#[derive(Clone, Debug, CandidType)]
+pub struct InitArg {
+    pub ledger_id: Principal,
+    pub retrieve_blocks_from_ledger_interval_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, CandidType)]
+pub struct UpgradeArg {
+    pub ledger_id: Option<Principal>,
+    pub retrieve_blocks_from_ledger_interval_seconds: Option<u64>,
+}
+
 struct TestEnv {
     pub state_machine: StateMachine,
     pub ledger_id: Principal,
     pub depositor_id: Principal,
     #[allow(dead_code)]
     pub cmc_id: Principal,
+    pub index_id: Option<Principal>,
+}
+
+#[derive(Eq, PartialEq, Debug, CandidType, Deserialize)]
+pub struct Status {
+    pub num_blocks_synced: Nat,
 }
 
 impl TestEnv {
@@ -308,6 +334,7 @@ impl TestEnv {
             ledger_id,
             depositor_id,
             cmc_id,
+            index_id: None,
         }
     }
 
@@ -321,6 +348,7 @@ impl TestEnv {
             ledger_id,
             depositor_id,
             cmc_id,
+            index_id: None,
         }
     }
     fn fail_next_create_canister_with(&self, error: CmcCreateCanisterError) {
@@ -586,6 +614,41 @@ impl TestEnv {
             _ => panic!("last_block_hash not found in the response hash_tree"),
         };
         assert_eq!(last_block_index, expected_last_block_index);
+    }
+
+    fn install_index(&mut self) {
+        let canister = self.state_machine.create_canister(None);
+        let index_arg: Option<IndexArg> = Some(IndexArg::Init(InitArg {
+            ledger_id: self.ledger_id,
+            retrieve_blocks_from_ledger_interval_seconds: None,
+        }));
+        let init_args = Encode!(&index_arg).unwrap();
+        self.state_machine
+            .install_canister(canister, index_wasm(), init_args, None);
+        self.index_id = Some(canister);
+    }
+
+    fn index_synced_blocks_or_trap(&self) -> u64 {
+        let arg = Encode!(&()).unwrap();
+        match self.state_machine.query_call(
+            self.index_id.unwrap(),
+            Principal::anonymous(),
+            "status",
+            arg,
+        ) {
+            Err(err) => {
+                panic!("status query failed with error {err}");
+            }
+            Ok(WasmResult::Reject(err)) => {
+                panic!("status query rejected with error {err}");
+            }
+            Ok(WasmResult::Reply(res)) => Decode!(&res, Status)
+                .expect("error decoding response to status query")
+                .num_blocks_synced
+                .0
+                .to_u64()
+                .unwrap(),
+        }
     }
 }
 
@@ -7201,4 +7264,43 @@ fn test_icrc2_transfer_from_invalid_memo() {
             created_at_time: None,
         },
     );
+}
+
+fn index_wasm() -> Vec<u8> {
+    let wasm_path = env!("INDEX_WASM_PATH");
+    let wasm_bytes = std::fs::read(wasm_path).unwrap();
+
+    wasm_bytes
+}
+
+#[test]
+fn test_index_sync_smoke_test() {
+    let mut env = TestEnv::setup();
+    env.install_index();
+    let fee = env.icrc1_fee();
+
+    let account1 = account(1, None);
+
+    // add the first mint block
+    env.deposit(account1, 5_000_000_000 + fee, None);
+
+    let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
+    let log_length = get_blocks_res.log_length;
+    assert_eq!(log_length, 1_u128);
+    assert_eq!(get_blocks_res.archived_blocks.len(), 0);
+
+    const MAX_ATTEMPTS: u8 = 100;
+    const SYNC_STEP_SECONDS: Duration = Duration::from_secs(1);
+
+    let mut num_blocks_synced = u64::MAX;
+    for _i in 0..MAX_ATTEMPTS {
+        env.advance_time(SYNC_STEP_SECONDS);
+        num_blocks_synced = env.index_synced_blocks_or_trap();
+        if num_blocks_synced == log_length {
+            break;
+        }
+    }
+    if num_blocks_synced != log_length {
+        panic!("The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is 1", num_blocks_synced);
+    }
 }
