@@ -7268,9 +7268,7 @@ fn test_icrc2_transfer_from_invalid_memo() {
 
 fn index_wasm() -> Vec<u8> {
     let wasm_path = env!("INDEX_WASM_PATH");
-    let wasm_bytes = std::fs::read(wasm_path).unwrap();
-
-    wasm_bytes
+    std::fs::read(wasm_path).unwrap()
 }
 
 #[test]
