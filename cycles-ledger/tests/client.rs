@@ -15,6 +15,7 @@ use ic_cdk::api::management_canister::{
     main::CanisterStatusResponse, provisional::CanisterIdRecord,
 };
 use ic_test_state_machine_client::{StateMachine, WasmResult};
+use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
     icrc1::{
@@ -230,6 +231,19 @@ pub fn icrc103_get_allowances(
     args: GetAllowancesArgs,
 ) -> Result<Allowances, GetAllowancesError> {
     query_or_panic(env, ledger_id, caller, "icrc103_get_allowances", args)
+}
+
+pub fn icrc106_get_index_principal(
+    env: &StateMachine,
+    ledger_id: Principal,
+) -> Result<Principal, Icrc106Error> {
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc106_get_index_principal",
+        (),
+    )
 }
 
 pub fn icrc1_transfer(
