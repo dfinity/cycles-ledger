@@ -23,6 +23,7 @@ use icrc_ledger_types::icrc1::transfer::{Memo, TransferError};
 use icrc_ledger_types::icrc103::get_allowances::{
     Allowances, GetAllowancesArgs, GetAllowancesError,
 };
+use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::icrc2::allowance::{Allowance, AllowanceArgs};
 use icrc_ledger_types::icrc2::approve::{ApproveArgs, ApproveError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
@@ -171,6 +172,7 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
         MV::entry("icrc1:logo", config::TOKEN_LOGO),
     ];
     if let Some(index_id) = read_config(|config| config.index_id) {
+        metadata.push(MV::entry("icrc106:index_principal", index_id.to_text()));
         metadata.push(MV::entry("dfn:index_id", index_id.as_slice()))
     }
     metadata
@@ -470,6 +472,15 @@ fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllow
         max_results,
         ic_cdk::api::time(),
     ))
+}
+
+#[query]
+#[candid_method(query)]
+fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
+    match read_config(|config| config.index_id) {
+        None => Err(Icrc106Error::IndexPrincipalNotSet),
+        Some(index_principal) => Ok(index_principal),
+    }
 }
 
 #[query]
