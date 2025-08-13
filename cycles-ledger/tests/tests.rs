@@ -650,6 +650,14 @@ impl TestEnv {
                 .unwrap(),
         }
     }
+
+    fn index_icrc1_balance_of(&self, account: Account) -> u128 {
+        icrc1_balance_of(
+            &self.state_machine,
+            self.index_id.expect("index canister not installed"),
+            account,
+        )
+    }
 }
 
 impl IsCyclesLedger for TestEnv {
@@ -7273,18 +7281,58 @@ fn index_wasm() -> Vec<u8> {
 
 #[test]
 fn test_index_sync_smoke_test() {
+    const DEPOSIT_AMOUNT_ACCOUNT_1: u128 = 2_000_000_000;
+    const DEPOSIT_AMOUNT_ACCOUNT_2: u128 = 3_000_000_000;
+    const TRANSFER_AMOUNT: u128 = 1_000_000_000;
+    const WITHDRAW_AMOUNT: u128 = 1_000_000_000;
+
     let mut env = TestEnv::setup();
     env.install_index();
+
     let fee = env.icrc1_fee();
-
     let account1 = account(1, None);
+    let account2 = account(2, None);
 
-    // add the first mint block
-    env.deposit(account1, 5_000_000_000 + fee, None);
+    env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee, None);
+    let mut expected_balance_account_1 = DEPOSIT_AMOUNT_ACCOUNT_1;
+
+    env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee, None);
+    let mut expected_balance_account_2 = DEPOSIT_AMOUNT_ACCOUNT_2;
+
+    let fee = env.icrc1_fee();
+    let _block_index = env
+        .icrc1_transfer(
+            account1.owner,
+            TransferArgs {
+                from_subaccount: None,
+                to: account2,
+                fee: None,
+                created_at_time: None,
+                memo: None,
+                amount: Nat::from(TRANSFER_AMOUNT),
+            },
+        )
+        .unwrap();
+    // No fee collector is set for the cycles ledger, so we do not check that balance.
+    expected_balance_account_1 -= TRANSFER_AMOUNT + fee;
+    expected_balance_account_2 += TRANSFER_AMOUNT;
+
+    let _withdraw_res = env
+        .withdraw(
+            account2.owner,
+            WithdrawArgs {
+                from_subaccount: account2.subaccount,
+                to: env.depositor_id,
+                created_at_time: None,
+                amount: Nat::from(WITHDRAW_AMOUNT),
+            },
+        )
+        .unwrap();
+    expected_balance_account_2 -= WITHDRAW_AMOUNT + fee;
 
     let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
     let log_length = get_blocks_res.log_length;
-    assert_eq!(log_length, 1_u128);
+    assert_eq!(log_length, 4_u128);
     assert_eq!(get_blocks_res.archived_blocks.len(), 0);
 
     const MAX_ATTEMPTS: u8 = 100;
@@ -7300,5 +7348,24 @@ fn test_index_sync_smoke_test() {
     }
     if num_blocks_synced != log_length {
         panic!("The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is 1", num_blocks_synced);
+    }
+
+    for (account, expected_balance) in [
+        (account1, expected_balance_account_1),
+        (account2, expected_balance_account_2),
+    ] {
+        let ledger_balance = env.icrc1_balance_of(account);
+        let index_balance = env.index_icrc1_balance_of(account);
+
+        assert_eq!(
+            ledger_balance, expected_balance,
+            "The balance of account {} in the ledger ({}) does not match the expected balance ({}).",
+            account, ledger_balance, expected_balance
+        );
+        assert_eq!(
+            index_balance, expected_balance,
+            "The balance of account {} in the ledger ({}) does not match the expected balance ({}).",
+            account, index_balance, expected_balance
+        );
     }
 }
