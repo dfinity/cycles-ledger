@@ -32,7 +32,7 @@ type DepositResult = record { balance : nat; block_index : nat };
 deposit : (DepositArgs) -> (DepositResult);
 ```
 
-When invoked with a particular account (and, optionally, a memo), the balance of the account is incremented by the number of cycles attached to the call. There is no fee when depositing cycles; however, the number of cycles must be at least the transfer fee of **100M cycles**.
+When invoked with a particular account (and, optionally, a memo), the balance of the account is incremented by the number of cycles attached to the call, minus the transfer fee of 100M cycles. The number of cycles to deposit must be at least the transfer fee of **100M cycles**.
 
 > NOTE: The deposit is rejected if fewer than 100M cycles are attached to the call.
 
