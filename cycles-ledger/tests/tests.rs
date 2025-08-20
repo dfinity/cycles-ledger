@@ -7202,3 +7202,44 @@ fn test_icrc2_transfer_from_invalid_memo() {
         },
     );
 }
+
+#[test]
+fn test_init_with_initial_balances() {
+    let account1 = account(1, None);
+    let account2 = account(2, None);
+    let account3 = account(3, None);
+    let env = TestEnv::setup_with_ledger_conf(LedgerConfig {
+        initial_balances: Some(vec![
+            (account1, 1_000_000_000),
+            (account2, 2_000_000_000),
+            (account3, 3_000_000_000),
+        ]),
+        ..Default::default()
+    });
+    assert_eq!(env.icrc1_balance_of(account1), 1_000_000_000);
+    assert_eq!(env.icrc1_balance_of(account2), 2_000_000_000);
+    assert_eq!(env.icrc1_balance_of(account3), 3_000_000_000);
+    let block0 = get_block(&env.state_machine, env.ledger_id, Nat::from(0u8));
+    if let Operation::Mint { to, amount, .. } = block0.transaction.operation {
+        assert_eq!(to, account1);
+        assert_eq!(amount, 1_000_000_000);
+    } else {
+        panic!("Expected Mint operation for block 0");
+    }
+
+    let block1 = get_block(&env.state_machine, env.ledger_id, Nat::from(1u8));
+    if let Operation::Mint { to, amount, .. } = block1.transaction.operation {
+        assert_eq!(to, account2);
+        assert_eq!(amount, 2_000_000_000);
+    } else {
+        panic!("Expected Mint operation for block 1");
+    }
+
+    let block2 = get_block(&env.state_machine, env.ledger_id, Nat::from(2u8));
+    if let Operation::Mint { to, amount, .. } = block2.transaction.operation {
+        assert_eq!(to, account3);
+        assert_eq!(amount, 3_000_000_000);
+    } else {
+        panic!("Expected Mint operation for block 2");
+    }
+}
