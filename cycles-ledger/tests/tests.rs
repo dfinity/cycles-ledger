@@ -5292,6 +5292,7 @@ fn test_get_blocks_max_length() {
     let env = TestEnv::setup_with_ledger_conf(LedgerConfig {
         max_blocks_per_request: MAX_BLOCKS_PER_REQUEST,
         index_id: None,
+        initial_balances: None,
     });
     let fee = env.icrc1_fee();
 
