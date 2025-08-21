@@ -179,6 +179,7 @@ type DataCertificate = record {
 type InitArgs = record {
   max_blocks_per_request : nat64;
   index_id : opt principal;
+  initial_balances : opt vec record { Account; nat };
 };
 
 type ChangeIndexId = variant {

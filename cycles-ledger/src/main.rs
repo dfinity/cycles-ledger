@@ -33,6 +33,12 @@ use num_traits::ToPrimitive;
 fn init(ledger_args: LedgerArgs) {
     match ledger_args {
         LedgerArgs::Init(config) => {
+            if let Some(initial_balances) = config.initial_balances.as_ref() {
+                for (account, amount) in initial_balances {
+                    storage::mint(*account, *amount, None, ic_cdk::api::time())
+                        .expect("Failed to mint initial balance");
+                }
+            }
             mutate_state(|state| {
                 state.config.set(config)
                     .expect("Failed to change configuration");
