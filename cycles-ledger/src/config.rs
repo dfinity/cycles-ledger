@@ -1,5 +1,6 @@
 use candid::{CandidType, Deserialize, Principal};
 use ic_stable_structures::Storable;
+use icrc_ledger_types::icrc1::account::Account;
 use serde::Serialize;
 use std::{borrow::Cow, time::Duration};
 
@@ -29,6 +30,11 @@ pub struct Config {
     /// The principal of the index canister
     /// for this ledger
     pub index_id: Option<Principal>,
+
+    /// The initial balances of the ledger.
+    /// No fee will be charged for minting these initial balances.
+    /// Cycles covering the total initial balances need to be deposited, otherwise unexpected errors may occur.
+    pub initial_balances: Option<Vec<(Account, u128)>>,
 }
 
 impl Default for Config {
@@ -36,6 +42,7 @@ impl Default for Config {
         Self {
             max_blocks_per_request: 100,
             index_id: None,
+            initial_balances: None,
         }
     }
 }
@@ -62,6 +69,7 @@ fn test_config_ser_de() {
     let config = Config {
         max_blocks_per_request: 10,
         index_id: None,
+        initial_balances: None,
     };
     assert_eq!(Config::from_bytes(config.to_bytes()), config);
 }
