@@ -2515,35 +2515,36 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     // Should not be able to approve from/to a denied principal
-    let owner = Principal::management_canister();
-    env.icrc2_approve(
-        owner,
-        ApproveArgs {
-            from_subaccount: None,
-            spender: spender1,
-            amount: Nat::from(100_000_000u32),
-            memo: None,
-            expires_at: None,
-            expected_allowance: None,
-            fee: None,
-            created_at_time: None,
-        },
-    )
-    .unwrap_err(); // TODO(FI-1206): check the error
-    env.icrc2_approve(
-        owner,
-        ApproveArgs {
-            from_subaccount: None,
-            spender: spender2,
-            amount: Nat::from(100_000_000u32),
-            memo: None,
-            expires_at: None,
-            expected_allowance: None,
-            fee: None,
-            created_at_time: None,
-        },
-    )
-    .unwrap_err(); // TODO(FI-1206): check the error
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
+        env.icrc2_approve(
+            owner,
+            ApproveArgs {
+                from_subaccount: None,
+                spender: spender1,
+                amount: Nat::from(100_000_000u32),
+                memo: None,
+                expires_at: None,
+                expected_allowance: None,
+                fee: None,
+                created_at_time: None,
+            },
+        )
+        .unwrap_err(); // TODO(FI-1206): check the error
+        env.icrc2_approve(
+            owner,
+            ApproveArgs {
+                from_subaccount: None,
+                spender: spender2,
+                amount: Nat::from(100_000_000u32),
+                memo: None,
+                expires_at: None,
+                expected_allowance: None,
+                fee: None,
+                created_at_time: None,
+            },
+        )
+        .unwrap_err(); // TODO(FI-1206): check the error
+    }
 }
 
 // The test focuses on testing whether the correct
@@ -3171,7 +3172,7 @@ fn test_icrc1_transfer_denied_from(env: &TestEnv) {
     let account_to_balance = env.icrc1_balance_of(account_to);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::management_canister()] {
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
         for subaccount in [None, Some([0; 32])] {
             let args = TransferArgs {
                 from_subaccount: subaccount,
@@ -3201,27 +3202,27 @@ fn test_icrc1_transfer_denied_to(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    let owner = Principal::management_canister();
-    for subaccount in [None, Some([0; 32])] {
-        let account_to = Account { owner, subaccount };
-        let args = TransferArgs {
-            from_subaccount: account_from.subaccount,
-            to: account_to,
-            amount: Nat::from(0u8),
-            fee: None,
-            created_at_time: None,
-            memo: None,
-        };
-        let expected_error = TransferError::GenericError {
-            error_code: Nat::from(DENIED_OWNER),
-            message: format!(
-                "Owner of the account {} cannot be part of transactions",
-                account_to,
-            ),
-        };
-        assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
+        for subaccount in [None, Some([0; 32])] {
+            let account_to = Account { owner, subaccount };
+            let args = TransferArgs {
+                from_subaccount: account_from.subaccount,
+                to: account_to,
+                amount: Nat::from(0u8),
+                fee: None,
+                created_at_time: None,
+                memo: None,
+            };
+            let expected_error = TransferError::GenericError {
+                error_code: Nat::from(DENIED_OWNER),
+                message: format!(
+                    "Owner of the account {} cannot be part of transactions",
+                    account_to,
+                ),
+            };
+            assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
+        }
     }
-
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(total_supply, env.icrc1_total_supply());
     assert_vec_display_eq(blocks, env.get_all_blocks());
@@ -3669,7 +3670,7 @@ fn test_icrc2_approve_denied_from(env: &TestEnv) {
     let account_spender_balance = env.icrc1_balance_of(account_spender);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::management_canister()] {
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
         for subaccount in [None, Some([0; 32])] {
             let args = ApproveArgs {
                 from_subaccount: subaccount,
@@ -3704,7 +3705,7 @@ fn test_icrc2_approve_denied_spender(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::management_canister()] {
+    for owner in [Principal::anonymous(), Principal::management_canister()] {
         for subaccount in [None, Some([0; 32])] {
             let spender = Account { owner, subaccount };
             let args = ApproveArgs {
