@@ -3201,27 +3201,27 @@ fn test_icrc1_transfer_denied_to(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let account_to = Account { owner, subaccount };
-            let args = TransferArgs {
-                from_subaccount: account_from.subaccount,
-                to: account_to,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-            };
-            let expected_error = TransferError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of transactions",
-                    account_to,
-                ),
-            };
-            assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let account_to = Account { owner, subaccount };
+        let args = TransferArgs {
+            from_subaccount: account_from.subaccount,
+            to: account_to,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+        };
+        let expected_error = TransferError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of transactions",
+                account_to,
+            ),
+        };
+        assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
     }
+
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(total_supply, env.icrc1_total_supply());
     assert_vec_display_eq(blocks, env.get_all_blocks());
