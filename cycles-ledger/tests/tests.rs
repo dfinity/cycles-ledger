@@ -2515,7 +2515,7 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     // Should not be able to approve from/to a denied principal
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
+    for owner in [Principal::management_canister()] {
         env.icrc2_approve(
             owner,
             ApproveArgs {
@@ -3172,7 +3172,7 @@ fn test_icrc1_transfer_denied_from(env: &TestEnv) {
     let account_to_balance = env.icrc1_balance_of(account_to);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
+    for owner in [Principal::management_canister()] {
         for subaccount in [None, Some([0; 32])] {
             let args = TransferArgs {
                 from_subaccount: subaccount,
@@ -3670,7 +3670,7 @@ fn test_icrc2_approve_denied_from(env: &TestEnv) {
     let account_spender_balance = env.icrc1_balance_of(account_spender);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
+    for owner in [Principal::management_canister()] {
         for subaccount in [None, Some([0; 32])] {
             let args = ApproveArgs {
                 from_subaccount: subaccount,
@@ -3705,7 +3705,7 @@ fn test_icrc2_approve_denied_spender(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
+    for owner in [Principal::management_canister()] {
         for subaccount in [None, Some([0; 32])] {
             let spender = Account { owner, subaccount };
             let args = ApproveArgs {

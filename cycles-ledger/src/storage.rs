@@ -917,11 +917,20 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
     Ok(block_index)
 }
 
-const DENIED_PRINCIPALS: [Principal; 2] =
+const DENIED_RECEIVER_PRINCIPALS: [Principal; 2] =
     [Principal::anonymous(), Principal::management_canister()];
+const DENIED_SPENDER_PRINCIPALS: [Principal; 1] = [Principal::management_canister()];
 
-fn is_denied_account_owner(principal: &Principal) -> bool {
-    DENIED_PRINCIPALS.iter().any(|denied| denied == principal)
+fn is_denied_receiver_account(principal: &Principal) -> bool {
+    DENIED_RECEIVER_PRINCIPALS
+        .iter()
+        .any(|denied| denied == principal)
+}
+
+fn is_denied_spender_account(principal: &Principal) -> bool {
+    DENIED_SPENDER_PRINCIPALS
+        .iter()
+        .any(|denied| denied == principal)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -951,14 +960,14 @@ pub fn transfer(
     check_duplicate(&transaction)?;
 
     // check that no account is owned by a denied principal
-    if is_denied_account_owner(&from.owner) {
+    if is_denied_spender_account(&from.owner) {
         return Err(transfer_from::denied_owner(from));
     }
-    if is_denied_account_owner(&to.owner) {
+    if is_denied_receiver_account(&to.owner) {
         return Err(transfer_from::denied_owner(to));
     }
     if let Some(spender) = spender {
-        if is_denied_account_owner(&spender.owner) {
+        if is_denied_spender_account(&spender.owner) {
             return Err(transfer_from::denied_owner(spender));
         }
     }
@@ -1060,10 +1069,10 @@ pub fn approve(
     }
 
     // check that no account is owned by a denied principal
-    if is_denied_account_owner(&from.owner) {
+    if is_denied_spender_account(&from.owner) {
         return Err(approve::denied_owner(from));
     }
-    if is_denied_account_owner(&spender.owner) {
+    if is_denied_spender_account(&spender.owner) {
         return Err(approve::denied_owner(spender));
     }
 
