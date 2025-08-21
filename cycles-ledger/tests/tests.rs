@@ -7347,7 +7347,7 @@ fn test_index_sync_smoke_test() {
         }
     }
     if num_blocks_synced != log_length {
-        panic!("The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is 1", num_blocks_synced);
+        panic!("The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}", num_blocks_synced, log_length);
     }
 
     for (account, expected_balance) in [
