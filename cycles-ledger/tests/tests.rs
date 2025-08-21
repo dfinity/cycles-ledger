@@ -2515,36 +2515,35 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     // Should not be able to approve from/to a denied principal
-    for owner in [Principal::management_canister()] {
-        env.icrc2_approve(
-            owner,
-            ApproveArgs {
-                from_subaccount: None,
-                spender: spender1,
-                amount: Nat::from(100_000_000u32),
-                memo: None,
-                expires_at: None,
-                expected_allowance: None,
-                fee: None,
-                created_at_time: None,
-            },
-        )
-        .unwrap_err(); // TODO(FI-1206): check the error
-        env.icrc2_approve(
-            owner,
-            ApproveArgs {
-                from_subaccount: None,
-                spender: spender2,
-                amount: Nat::from(100_000_000u32),
-                memo: None,
-                expires_at: None,
-                expected_allowance: None,
-                fee: None,
-                created_at_time: None,
-            },
-        )
-        .unwrap_err(); // TODO(FI-1206): check the error
-    }
+    let owner = Principal::management_canister();
+    env.icrc2_approve(
+        owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: spender1,
+            amount: Nat::from(100_000_000u32),
+            memo: None,
+            expires_at: None,
+            expected_allowance: None,
+            fee: None,
+            created_at_time: None,
+        },
+    )
+    .unwrap_err(); // TODO(FI-1206): check the error
+    env.icrc2_approve(
+        owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: spender2,
+            amount: Nat::from(100_000_000u32),
+            memo: None,
+            expires_at: None,
+            expected_allowance: None,
+            fee: None,
+            created_at_time: None,
+        },
+    )
+    .unwrap_err(); // TODO(FI-1206): check the error
 }
 
 // The test focuses on testing whether the correct
