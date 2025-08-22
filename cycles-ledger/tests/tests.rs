@@ -3171,25 +3171,24 @@ fn test_icrc1_transfer_denied_from(env: &TestEnv) {
     let account_to_balance = env.icrc1_balance_of(account_to);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let args = TransferArgs {
-                from_subaccount: subaccount,
-                to: account_to,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-            };
-            let expected_error = TransferError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of transactions",
-                    Account { owner, subaccount },
-                ),
-            };
-            assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let args = TransferArgs {
+            from_subaccount: subaccount,
+            to: account_to,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+        };
+        let expected_error = TransferError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of transactions",
+                Account { owner, subaccount },
+            ),
+        };
+        assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
     }
     assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
     assert_eq!(total_supply, env.icrc1_total_supply());
@@ -3669,28 +3668,28 @@ fn test_icrc2_approve_denied_from(env: &TestEnv) {
     let account_spender_balance = env.icrc1_balance_of(account_spender);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let args = ApproveArgs {
-                from_subaccount: subaccount,
-                spender: account_spender,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-                expected_allowance: None,
-                expires_at: None,
-            };
-            let expected_error = ApproveError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of approvals",
-                    Account { owner, subaccount },
-                ),
-            };
-            assert_eq!(Err(expected_error), env.icrc2_approve(owner, args),);
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let args = ApproveArgs {
+            from_subaccount: subaccount,
+            spender: account_spender,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            expected_allowance: None,
+            expires_at: None,
+        };
+        let expected_error = ApproveError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of approvals",
+                Account { owner, subaccount },
+            ),
+        };
+        assert_eq!(Err(expected_error), env.icrc2_approve(owner, args),);
     }
+
     assert_eq!(
         account_spender_balance,
         env.icrc1_balance_of(account_spender)
@@ -3704,31 +3703,30 @@ fn test_icrc2_approve_denied_spender(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let spender = Account { owner, subaccount };
-            let args = ApproveArgs {
-                from_subaccount: account_from.subaccount,
-                spender,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-                expected_allowance: None,
-                expires_at: None,
-            };
-            let expected_error = ApproveError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of approvals",
-                    Account { owner, subaccount },
-                ),
-            };
-            assert_eq!(
-                Err(expected_error),
-                env.icrc2_approve(account_from.owner, args),
-            );
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let spender = Account { owner, subaccount };
+        let args = ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            expected_allowance: None,
+            expires_at: None,
+        };
+        let expected_error = ApproveError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of approvals",
+                Account { owner, subaccount },
+            ),
+        };
+        assert_eq!(
+            Err(expected_error),
+            env.icrc2_approve(account_from.owner, args),
+        );
     }
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(total_supply, env.icrc1_total_supply());
