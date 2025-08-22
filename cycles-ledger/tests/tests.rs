@@ -2544,6 +2544,33 @@ fn test_approval_expiring() {
         },
     )
     .unwrap_err(); // TODO(FI-1206): check the error
+
+    // Approving works from anon
+    let from = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
+    assert_eq!(
+        env.deposit(from, 1_000_000_000, None).balance,
+        1_000_000_000_u128
+    );
+    env.icrc2_approve(
+        from.owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: spender1,
+            amount: Nat::from(100_000_000u32),
+            memo: None,
+            expires_at: None,
+            expected_allowance: None,
+            fee: None,
+            created_at_time: None,
+        },
+    )
+    .unwrap();
+    let allowance = env.icrc2_allowance(from, spender1);
+    assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
 }
 
 // The test focuses on testing whether the correct
