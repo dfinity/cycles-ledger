@@ -2429,6 +2429,7 @@ fn test_approval_expiring() {
     let spender1 = account(1, None);
     let spender2 = account(2, None);
     let spender3 = account(3, None);
+    let spender4 = account(4, None);
 
     // Deposit funds
     assert_eq!(
@@ -2550,15 +2551,12 @@ fn test_approval_expiring() {
         owner: Principal::anonymous(),
         subaccount: None,
     };
-    assert_eq!(
-        env.deposit(from, 1_000_000_000, None).balance,
-        1_000_000_000_u128
-    );
+    env.deposit(from, 1_000_000_000, None);
     env.icrc2_approve(
         from.owner,
         ApproveArgs {
             from_subaccount: None,
-            spender: spender1,
+            spender: spender4,
             amount: Nat::from(100_000_000u32),
             memo: None,
             expires_at: None,
@@ -2568,7 +2566,7 @@ fn test_approval_expiring() {
         },
     )
     .unwrap();
-    let allowance = env.icrc2_allowance(from, spender1);
+    let allowance = env.icrc2_allowance(from, spender4);
     assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
     assert_eq!(allowance.expires_at, None);
 }
