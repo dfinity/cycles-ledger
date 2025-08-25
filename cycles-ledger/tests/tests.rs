@@ -2546,7 +2546,7 @@ fn test_approval_expiring() {
     )
     .unwrap_err(); // TODO(FI-1206): check the error
 
-    // Approving works from anon
+    // Approving works from the anonymous ID
     let from = Account {
         owner: Principal::anonymous(),
         subaccount: None,
