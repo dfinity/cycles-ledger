@@ -4,6 +4,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+* Added support for [ICRC-106](https://github.com/dfinity/ICRC-1/blob/7f9b4739d9b3ec2cf549bf468e3a1731c31eecbf/standards/ICRC-106/ICRC-106.md)
+
 ## [1.0.5] - 2025-06-24
 * Add support for [ICRC-103](https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-103/ICRC-103.md).
 
