@@ -45,6 +45,7 @@ use ic_certification::{
     Certificate, HashTree, LookupResult,
 };
 use ic_test_state_machine_client::{CallError, ErrorCode, StateMachine, WasmResult};
+use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
     icrc1::{
@@ -486,6 +487,10 @@ impl TestEnv {
     ) -> Allowances {
         client::icrc103_get_allowances(&self.state_machine, self.ledger_id, caller, args)
             .expect("failed to list allowances")
+    }
+
+    fn icrc106_index_principal(&self) -> Result<Principal, Icrc106Error> {
+        client::icrc106_get_index_principal(&self.state_machine, self.ledger_id)
     }
 
     fn icrc2_transfer_from(
@@ -2507,6 +2512,7 @@ fn test_approval_expiring() {
     let spender1 = account(1, None);
     let spender2 = account(2, None);
     let spender3 = account(3, None);
+    let spender4 = account(4, None);
 
     // Deposit funds
     assert_eq!(
@@ -2593,36 +2599,59 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     // Should not be able to approve from/to a denied principal
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
-        env.icrc2_approve(
-            owner,
-            ApproveArgs {
-                from_subaccount: None,
-                spender: spender1,
-                amount: Nat::from(100_000_000u32),
-                memo: None,
-                expires_at: None,
-                expected_allowance: None,
-                fee: None,
-                created_at_time: None,
-            },
-        )
-        .unwrap_err(); // TODO(FI-1206): check the error
-        env.icrc2_approve(
-            owner,
-            ApproveArgs {
-                from_subaccount: None,
-                spender: spender2,
-                amount: Nat::from(100_000_000u32),
-                memo: None,
-                expires_at: None,
-                expected_allowance: None,
-                fee: None,
-                created_at_time: None,
-            },
-        )
-        .unwrap_err(); // TODO(FI-1206): check the error
-    }
+    let owner = Principal::management_canister();
+    env.icrc2_approve(
+        owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: spender1,
+            amount: Nat::from(100_000_000u32),
+            memo: None,
+            expires_at: None,
+            expected_allowance: None,
+            fee: None,
+            created_at_time: None,
+        },
+    )
+    .unwrap_err(); // TODO(FI-1206): check the error
+    env.icrc2_approve(
+        owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: spender2,
+            amount: Nat::from(100_000_000u32),
+            memo: None,
+            expires_at: None,
+            expected_allowance: None,
+            fee: None,
+            created_at_time: None,
+        },
+    )
+    .unwrap_err(); // TODO(FI-1206): check the error
+
+    // Approving works from the anonymous ID
+    let from = Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    };
+    env.deposit(from, 1_000_000_000, None);
+    env.icrc2_approve(
+        from.owner,
+        ApproveArgs {
+            from_subaccount: None,
+            spender: spender4,
+            amount: Nat::from(100_000_000u32),
+            memo: None,
+            expires_at: None,
+            expected_allowance: None,
+            fee: None,
+            created_at_time: None,
+        },
+    )
+    .unwrap();
+    let allowance = env.icrc2_allowance(from, spender4);
+    assert_eq!(allowance.allowance, Nat::from(100_000_000_u128));
+    assert_eq!(allowance.expires_at, None);
 }
 
 // The test focuses on testing whether the correct
@@ -3250,25 +3279,24 @@ fn test_icrc1_transfer_denied_from(env: &TestEnv) {
     let account_to_balance = env.icrc1_balance_of(account_to);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let args = TransferArgs {
-                from_subaccount: subaccount,
-                to: account_to,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-            };
-            let expected_error = TransferError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of transactions",
-                    Account { owner, subaccount },
-                ),
-            };
-            assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let args = TransferArgs {
+            from_subaccount: subaccount,
+            to: account_to,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+        };
+        let expected_error = TransferError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of transactions",
+                Account { owner, subaccount },
+            ),
+        };
+        assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
     }
     assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
     assert_eq!(total_supply, env.icrc1_total_supply());
@@ -3280,27 +3308,27 @@ fn test_icrc1_transfer_denied_to(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let account_to = Account { owner, subaccount };
-            let args = TransferArgs {
-                from_subaccount: account_from.subaccount,
-                to: account_to,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-            };
-            let expected_error = TransferError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of transactions",
-                    account_to,
-                ),
-            };
-            assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let account_to = Account { owner, subaccount };
+        let args = TransferArgs {
+            from_subaccount: account_from.subaccount,
+            to: account_to,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+        };
+        let expected_error = TransferError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of transactions",
+                account_to,
+            ),
+        };
+        assert_eq!(Err(expected_error), env.icrc1_transfer(owner, args),);
     }
+
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(total_supply, env.icrc1_total_supply());
     assert_vec_display_eq(blocks, env.get_all_blocks());
@@ -3748,28 +3776,28 @@ fn test_icrc2_approve_denied_from(env: &TestEnv) {
     let account_spender_balance = env.icrc1_balance_of(account_spender);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let args = ApproveArgs {
-                from_subaccount: subaccount,
-                spender: account_spender,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-                expected_allowance: None,
-                expires_at: None,
-            };
-            let expected_error = ApproveError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of approvals",
-                    Account { owner, subaccount },
-                ),
-            };
-            assert_eq!(Err(expected_error), env.icrc2_approve(owner, args),);
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let args = ApproveArgs {
+            from_subaccount: subaccount,
+            spender: account_spender,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            expected_allowance: None,
+            expires_at: None,
+        };
+        let expected_error = ApproveError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of approvals",
+                Account { owner, subaccount },
+            ),
+        };
+        assert_eq!(Err(expected_error), env.icrc2_approve(owner, args),);
     }
+
     assert_eq!(
         account_spender_balance,
         env.icrc1_balance_of(account_spender)
@@ -3783,31 +3811,30 @@ fn test_icrc2_approve_denied_spender(env: &TestEnv) {
     let account_from_balance = env.icrc1_balance_of(account_from);
     let total_supply = env.icrc1_total_supply();
     let blocks = env.get_all_blocks();
-    for owner in [Principal::anonymous(), Principal::management_canister()] {
-        for subaccount in [None, Some([0; 32])] {
-            let spender = Account { owner, subaccount };
-            let args = ApproveArgs {
-                from_subaccount: account_from.subaccount,
-                spender,
-                amount: Nat::from(0u8),
-                fee: None,
-                created_at_time: None,
-                memo: None,
-                expected_allowance: None,
-                expires_at: None,
-            };
-            let expected_error = ApproveError::GenericError {
-                error_code: Nat::from(DENIED_OWNER),
-                message: format!(
-                    "Owner of the account {} cannot be part of approvals",
-                    Account { owner, subaccount },
-                ),
-            };
-            assert_eq!(
-                Err(expected_error),
-                env.icrc2_approve(account_from.owner, args),
-            );
-        }
+    let owner = Principal::management_canister();
+    for subaccount in [None, Some([0; 32])] {
+        let spender = Account { owner, subaccount };
+        let args = ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender,
+            amount: Nat::from(0u8),
+            fee: None,
+            created_at_time: None,
+            memo: None,
+            expected_allowance: None,
+            expires_at: None,
+        };
+        let expected_error = ApproveError::GenericError {
+            error_code: Nat::from(DENIED_OWNER),
+            message: format!(
+                "Owner of the account {} cannot be part of approvals",
+                Account { owner, subaccount },
+            ),
+        };
+        assert_eq!(
+            Err(expected_error),
+            env.icrc2_approve(account_from.owner, args),
+        );
     }
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(total_supply, env.icrc1_total_supply());
@@ -5433,13 +5460,7 @@ fn test_set_index_id_in_init() {
         index_id: Some(index_id),
         ..Default::default()
     });
-    let metadata = env.icrc1_metadata();
-    assert_eq!(
-        metadata
-            .iter()
-            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
-        Some(&index_id.as_slice().into()),
-    );
+    assert_index_set(&env, &index_id);
 }
 
 #[test]
@@ -5447,8 +5468,7 @@ fn test_change_index_id() {
     let env = TestEnv::setup();
 
     // by default there is no index_id set
-    let metadata = env.icrc1_metadata();
-    assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
+    assert_index_not_set(&env);
 
     // set the index_id
     let index_id = Principal::from_slice(&[111]);
@@ -5457,12 +5477,7 @@ fn test_change_index_id() {
         change_index_id: Some(ChangeIndexId::SetTo(index_id)),
     };
     env.upgrade_ledger(Some(args)).unwrap();
-    assert_eq!(
-        env.icrc1_metadata()
-            .iter()
-            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
-        Some(&index_id.as_slice().into()),
-    );
+    assert_index_set(&env, &index_id);
 
     // unset the index_id
     let args = UpgradeArgs {
@@ -5470,8 +5485,38 @@ fn test_change_index_id() {
         change_index_id: Some(ChangeIndexId::Unset),
     };
     env.upgrade_ledger(Some(args)).unwrap();
+    assert_index_not_set(&env);
+}
+
+fn assert_index_set(env: &TestEnv, index_id: &Principal) {
+    let metadata = env.icrc1_metadata();
+    assert_eq!(
+        metadata
+            .iter()
+            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
+        Some(&MetadataValue::from(index_id.as_slice())),
+    );
+    assert_eq!(
+        metadata
+            .iter()
+            .find_map(|(k, v)| if k == "icrc106:index_principal" {
+                Some(v)
+            } else {
+                None
+            }),
+        Some(&MetadataValue::from(index_id.to_text())),
+    );
+    assert_eq!(env.icrc106_index_principal(), Ok(*index_id));
+}
+
+fn assert_index_not_set(env: &TestEnv) {
     let metadata = env.icrc1_metadata();
     assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
+    assert!(metadata.iter().all(|(k, _)| k != "icrc106:index_principal"));
+    assert_eq!(
+        env.icrc106_index_principal(),
+        Err(Icrc106Error::IndexPrincipalNotSet)
+    );
 }
 
 #[tokio::test]
