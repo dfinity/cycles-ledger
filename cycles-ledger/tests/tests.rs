@@ -45,6 +45,7 @@ use ic_certification::{
     Certificate, HashTree, LookupResult,
 };
 use ic_test_state_machine_client::{CallError, ErrorCode, StateMachine, WasmResult};
+use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
     icrc1::{
@@ -458,6 +459,10 @@ impl TestEnv {
     ) -> Allowances {
         client::icrc103_get_allowances(&self.state_machine, self.ledger_id, caller, args)
             .expect("failed to list allowances")
+    }
+
+    fn icrc106_index_principal(&self) -> Result<Principal, Icrc106Error> {
+        client::icrc106_get_index_principal(&self.state_machine, self.ledger_id)
     }
 
     fn icrc2_transfer_from(
@@ -5377,13 +5382,7 @@ fn test_set_index_id_in_init() {
         index_id: Some(index_id),
         ..Default::default()
     });
-    let metadata = env.icrc1_metadata();
-    assert_eq!(
-        metadata
-            .iter()
-            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
-        Some(&index_id.as_slice().into()),
-    );
+    assert_index_set(&env, &index_id);
 }
 
 #[test]
@@ -5391,8 +5390,7 @@ fn test_change_index_id() {
     let env = TestEnv::setup();
 
     // by default there is no index_id set
-    let metadata = env.icrc1_metadata();
-    assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
+    assert_index_not_set(&env);
 
     // set the index_id
     let index_id = Principal::from_slice(&[111]);
@@ -5401,12 +5399,7 @@ fn test_change_index_id() {
         change_index_id: Some(ChangeIndexId::SetTo(index_id)),
     };
     env.upgrade_ledger(Some(args)).unwrap();
-    assert_eq!(
-        env.icrc1_metadata()
-            .iter()
-            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
-        Some(&index_id.as_slice().into()),
-    );
+    assert_index_set(&env, &index_id);
 
     // unset the index_id
     let args = UpgradeArgs {
@@ -5414,8 +5407,38 @@ fn test_change_index_id() {
         change_index_id: Some(ChangeIndexId::Unset),
     };
     env.upgrade_ledger(Some(args)).unwrap();
+    assert_index_not_set(&env);
+}
+
+fn assert_index_set(env: &TestEnv, index_id: &Principal) {
+    let metadata = env.icrc1_metadata();
+    assert_eq!(
+        metadata
+            .iter()
+            .find_map(|(k, v)| if k == "dfn:index_id" { Some(v) } else { None }),
+        Some(&MetadataValue::from(index_id.as_slice())),
+    );
+    assert_eq!(
+        metadata
+            .iter()
+            .find_map(|(k, v)| if k == "icrc106:index_principal" {
+                Some(v)
+            } else {
+                None
+            }),
+        Some(&MetadataValue::from(index_id.to_text())),
+    );
+    assert_eq!(env.icrc106_index_principal(), Ok(*index_id));
+}
+
+fn assert_index_not_set(env: &TestEnv) {
     let metadata = env.icrc1_metadata();
     assert!(metadata.iter().all(|(k, _)| k != "dfn:index_id"));
+    assert!(metadata.iter().all(|(k, _)| k != "icrc106:index_principal"));
+    assert_eq!(
+        env.icrc106_index_principal(),
+        Err(Icrc106Error::IndexPrincipalNotSet)
+    );
 }
 
 #[tokio::test]
