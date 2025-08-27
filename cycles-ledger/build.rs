@@ -28,10 +28,8 @@ fn main() {
     for wasm in &[MAINNET_INDEX_WASM, LATEST_INDEX_WASM] {
         let target_path = Path::new(&out_dir).join(wasm.target_filename);
 
-        if target_path.exists() {
-            if let Err(_) = verify_sha256(&target_path, wasm.expected_sha256) {
-                fs::remove_file(&target_path).expect("Failed to remove outdated WASM file");
-            }
+        if target_path.exists() && verify_sha256(&target_path, wasm.expected_sha256).is_err() {
+            fs::remove_file(&target_path).expect("Failed to remove outdated WASM file");
         }
         if !target_path.exists() {
             download_index_wasm(wasm, &target_path);
