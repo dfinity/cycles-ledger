@@ -1,12 +1,3 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt::Display,
-    path::PathBuf,
-    process::{Command, Stdio},
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
 use assert_matches::assert_matches;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
 use client::deposit;
@@ -64,6 +55,15 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde::Deserialize;
 use serde_bytes::ByteBuf;
+use std::path::Path;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt::Display,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tempfile::TempDir;
 
 use crate::{
@@ -7368,123 +7368,211 @@ fn test_init_with_initial_balances() {
     }
 }
 
-fn latest_index_wasm() -> Vec<u8> {
-    let wasm_path = env!("LATEST_INDEX_WASM_PATH");
-    std::fs::read(wasm_path).unwrap()
-}
+mod index {
+    use super::*;
 
-fn mainnet_index_wasm() -> Vec<u8> {
-    let wasm_path = env!("MAINNET_INDEX_WASM_PATH");
-    std::fs::read(wasm_path).unwrap()
-}
+    fn latest_index_wasm() -> Vec<u8> {
+        maybe_download_index_wasms();
+        let wasm_path = downloaded_wasm_path(&LATEST_INDEX_WASM);
+        std::fs::read(wasm_path).unwrap()
+    }
 
-#[test]
-fn test_index_sync_and_upgrade_test() {
-    const DEPOSIT_AMOUNT_ACCOUNT_1: u128 = 2_000_000_000;
-    const DEPOSIT_AMOUNT_ACCOUNT_2: u128 = 3_000_000_000;
-    const TRANSFER_AMOUNT: u128 = 1_000_000_000;
-    const WITHDRAW_AMOUNT: u128 = 1_000_000_000;
+    fn mainnet_index_wasm() -> Vec<u8> {
+        maybe_download_index_wasms();
+        let wasm_path = downloaded_wasm_path(&MAINNET_INDEX_WASM);
+        std::fs::read(wasm_path).unwrap()
+    }
 
-    let mut env = TestEnv::setup();
-    env.install_index(mainnet_index_wasm());
+    struct IndexWasm {
+        url: &'static str,
+        expected_sha256: &'static str,
+        target_filename: &'static str,
+    }
 
-    let fee = env.icrc1_fee();
-    let account1 = account(1, None);
-    let account2 = account(2, None);
-    let mut expected_balance_account_1 = 0;
-    let mut expected_balance_account_2 = 0;
-    let mut expected_log_length = 0u128;
-    let mut expected_burn_fees = 0u128;
-
-    let mut perform_transactions = |env: &mut TestEnv| {
-        env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee, None);
-        expected_balance_account_1 += DEPOSIT_AMOUNT_ACCOUNT_1;
-
-        env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee, None);
-        expected_balance_account_2 += DEPOSIT_AMOUNT_ACCOUNT_2;
-
-        let _block_index = env
-            .icrc1_transfer(
-                account1.owner,
-                TransferArgs {
-                    from_subaccount: None,
-                    to: account2,
-                    fee: None,
-                    created_at_time: None,
-                    memo: None,
-                    amount: Nat::from(TRANSFER_AMOUNT),
-                },
-            )
-            .unwrap();
-        // No fee collector is set for the cycles ledger, so we do not check that balance.
-        expected_balance_account_1 -= TRANSFER_AMOUNT + fee;
-        expected_balance_account_2 += TRANSFER_AMOUNT;
-
-        let _withdraw_res = env
-            .withdraw(
-                account2.owner,
-                WithdrawArgs {
-                    from_subaccount: account2.subaccount,
-                    to: env.depositor_id,
-                    created_at_time: None,
-                    amount: Nat::from(WITHDRAW_AMOUNT),
-                },
-            )
-            .unwrap();
-        expected_balance_account_2 -= WITHDRAW_AMOUNT + fee;
-
-        let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
-        let log_length = get_blocks_res.log_length;
-        expected_log_length += 4; // deposit, deposit, transfer, withdraw
-        assert_eq!(log_length, expected_log_length);
-        assert_eq!(get_blocks_res.archived_blocks.len(), 0);
-
-        const MAX_ATTEMPTS: u8 = 100;
-        const SYNC_STEP_SECONDS: Duration = Duration::from_secs(1);
-
-        let mut num_blocks_synced = u64::MAX;
-        for _i in 0..MAX_ATTEMPTS {
-            env.advance_time(SYNC_STEP_SECONDS);
-            num_blocks_synced = env.index_synced_blocks_or_trap();
-            if num_blocks_synced == log_length {
-                break;
-            }
-        }
-        if num_blocks_synced != log_length {
-            panic!("The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}", num_blocks_synced, log_length);
-        }
-
-        for (account, expected_balance) in [
-            (account1, expected_balance_account_1),
-            (account2, expected_balance_account_2),
-        ] {
-            let ledger_balance = env.icrc1_balance_of(account);
-            let index_balance = env.index_icrc1_balance_of(account);
-
-            assert_eq!(
-                ledger_balance, expected_balance,
-                "The balance of account {} in the ledger ({}) does not match the expected balance ({}).",
-                account, ledger_balance, expected_balance
-            );
-            // FIXME(FI-1818): Due to the fact that the index canister currently does not take into
-            //  account fees in burn blocks (generated from the `withdraw` endpoint), the expected
-            //  balance for account2 is higher in the index than in the ledger.
-            let mut expected_index_balance = expected_balance;
-            if account == account2 {
-                expected_burn_fees += fee;
-                expected_index_balance += expected_burn_fees;
-            }
-            assert_eq!(
-                index_balance, expected_index_balance,
-                "The balance of account {} in the index ({}) does not match the expected balance ({}).",
-                account, index_balance, expected_index_balance
-            );
-        }
+    const MAINNET_INDEX_WASM: IndexWasm = IndexWasm {
+        url: "https://github.com/dfinity/ic/releases/download/ledger-suite-icrc-2024-11-28/ic-icrc1-index-ng-u256.wasm.gz",
+        expected_sha256: "d615ea66e7ec7e39a3912889ffabfabb9b6f200584b9656789c3578fae1afac7",
+        target_filename: "mainnet-ic-icrc1-index-ng-u256.wasm.gz",
+    };
+    const LATEST_INDEX_WASM: IndexWasm = IndexWasm {
+        url: "https://github.com/dfinity/ic/releases/download/ledger-suite-icrc-2025-06-19/ic-icrc1-index-ng-u256.wasm.gz",
+        expected_sha256: "6c406b9dc332f3dc58b823518ab2b2c481467307ad9e540122f17bd9b926c123",
+        target_filename: "latest-ic-icrc1-index-ng-u256.wasm.gz",
     };
 
-    perform_transactions(&mut env);
+    fn test_fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_fixtures")
+    }
 
-    env.upgrade_index(latest_index_wasm());
+    fn downloaded_wasm_path(index_wasm: &IndexWasm) -> PathBuf {
+        Path::new(&test_fixtures_dir()).join(index_wasm.target_filename)
+    }
 
-    perform_transactions(&mut env);
+    /// Check if the index WASM files are present in `test_fixtures/` and have the expected SHA256
+    /// hash. If the files are missing or have an unexpected hash, download them from their
+    /// respective URLs.
+    fn maybe_download_index_wasms() {
+        let out_dir = test_fixtures_dir();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        for wasm in &[MAINNET_INDEX_WASM, LATEST_INDEX_WASM] {
+            let target_path = Path::new(&out_dir).join(wasm.target_filename);
+
+            if target_path.exists() && verify_sha256(&target_path, wasm.expected_sha256).is_err() {
+                std::fs::remove_file(&target_path).expect("Failed to remove outdated WASM file");
+            }
+            if !target_path.exists() {
+                download_index_wasm(wasm, &target_path);
+            }
+        }
+    }
+
+    fn download_index_wasm(index_wasm: &IndexWasm, target_path: &Path) {
+        let url = index_wasm.url;
+        let expected_sha256 = index_wasm.expected_sha256;
+
+        let response = ureq::get(url).call().expect("Failed to download WASM file");
+
+        let mut file = std::fs::File::create(target_path).expect("Failed to create target file");
+
+        std::io::copy(&mut response.into_reader(), &mut file)
+            .expect("Failed to write downloaded content");
+
+        if let Err(err) = verify_sha256(target_path, expected_sha256) {
+            panic!("{}", err);
+        }
+    }
+
+    fn verify_sha256(file_path: &Path, expected: &str) -> Result<(), String> {
+        use sha2::{Digest, Sha256};
+
+        let content = std::fs::read(file_path).expect("Failed to read downloaded file");
+        let mut hasher = Sha256::new();
+        hasher.update(&content);
+        let result = format!("{:x}", hasher.finalize());
+
+        if result == expected {
+            Ok(())
+        } else {
+            Err(format!(
+                "SHA256 mismatch! Expected: {}, Got: {}",
+                expected, result
+            ))
+        }
+    }
+
+    #[test]
+    fn test_index_sync_and_upgrade_test() {
+        const DEPOSIT_AMOUNT_ACCOUNT_1: u128 = 2_000_000_000;
+        const DEPOSIT_AMOUNT_ACCOUNT_2: u128 = 3_000_000_000;
+        const TRANSFER_AMOUNT: u128 = 1_000_000_000;
+        const WITHDRAW_AMOUNT: u128 = 1_000_000_000;
+
+        let mut env = TestEnv::setup();
+        env.install_index(mainnet_index_wasm());
+
+        let fee = env.icrc1_fee();
+        let account1 = account(1, None);
+        let account2 = account(2, None);
+        let mut expected_balance_account_1 = 0;
+        let mut expected_balance_account_2 = 0;
+        let mut expected_log_length = 0u128;
+        let mut expected_burn_fees = 0u128;
+
+        let mut perform_transactions = |env: &mut TestEnv| {
+            env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee, None);
+            expected_balance_account_1 += DEPOSIT_AMOUNT_ACCOUNT_1;
+
+            env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee, None);
+            expected_balance_account_2 += DEPOSIT_AMOUNT_ACCOUNT_2;
+
+            let _block_index = env
+                .icrc1_transfer(
+                    account1.owner,
+                    TransferArgs {
+                        from_subaccount: None,
+                        to: account2,
+                        fee: None,
+                        created_at_time: None,
+                        memo: None,
+                        amount: Nat::from(TRANSFER_AMOUNT),
+                    },
+                )
+                .unwrap();
+            // No fee collector is set for the cycles ledger, so we do not check that balance.
+            expected_balance_account_1 -= TRANSFER_AMOUNT + fee;
+            expected_balance_account_2 += TRANSFER_AMOUNT;
+
+            let _withdraw_res = env
+                .withdraw(
+                    account2.owner,
+                    WithdrawArgs {
+                        from_subaccount: account2.subaccount,
+                        to: env.depositor_id,
+                        created_at_time: None,
+                        amount: Nat::from(WITHDRAW_AMOUNT),
+                    },
+                )
+                .unwrap();
+            expected_balance_account_2 -= WITHDRAW_AMOUNT + fee;
+
+            let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
+            let log_length = get_blocks_res.log_length;
+            expected_log_length += 4; // deposit, deposit, transfer, withdraw
+            assert_eq!(log_length, expected_log_length);
+            assert_eq!(get_blocks_res.archived_blocks.len(), 0);
+
+            const MAX_ATTEMPTS: u8 = 100;
+            const SYNC_STEP_SECONDS: Duration = Duration::from_secs(1);
+
+            let mut num_blocks_synced = u64::MAX;
+            for _i in 0..MAX_ATTEMPTS {
+                env.advance_time(SYNC_STEP_SECONDS);
+                num_blocks_synced = env.index_synced_blocks_or_trap();
+                if num_blocks_synced == log_length {
+                    break;
+                }
+            }
+            if num_blocks_synced != log_length {
+                panic!(
+                    "The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}",
+                    num_blocks_synced,
+                    log_length
+                );
+            }
+
+            for (account, expected_balance) in [
+                (account1, expected_balance_account_1),
+                (account2, expected_balance_account_2),
+            ] {
+                let ledger_balance = env.icrc1_balance_of(account);
+                let index_balance = env.index_icrc1_balance_of(account);
+
+                assert_eq!(
+                    ledger_balance, expected_balance,
+                    "The balance of account {} in the ledger ({}) does not match the expected balance ({}).",
+                    account, ledger_balance, expected_balance
+                );
+                // FIXME(FI-1818): Due to the fact that the index canister currently does not take into
+                //  account fees in burn blocks (generated from the `withdraw` endpoint), the expected
+                //  balance for account2 is higher in the index than in the ledger.
+                let mut expected_index_balance = expected_balance;
+                if account == account2 {
+                    expected_burn_fees += fee;
+                    expected_index_balance += expected_burn_fees;
+                }
+                assert_eq!(
+                    index_balance, expected_index_balance,
+                    "The balance of account {} in the index ({}) does not match the expected balance ({}).",
+                    account, index_balance, expected_index_balance
+                );
+            }
+        };
+
+        perform_transactions(&mut env);
+
+        env.upgrade_index(latest_index_wasm());
+
+        perform_transactions(&mut env);
+    }
 }
