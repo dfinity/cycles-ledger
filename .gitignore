@@ -19,3 +19,6 @@ ic-test-state-machine
 
 # cycles-ledger wasm file created by docker
 cycles-ledger.wasm.gz
+
+# Directory for (downloaded) test fixtures
+test_fixtures/
