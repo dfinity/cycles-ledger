@@ -14,7 +14,7 @@ use depositor::endpoints::DepositArg;
 use ic_cdk::api::management_canister::{
     main::CanisterStatusResponse, provisional::CanisterIdRecord,
 };
-use ic_test_state_machine_client::{StateMachine, WasmResult};
+use pocket_ic::PocketIc;
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
@@ -34,7 +34,7 @@ use serde::Deserialize;
 
 // Panics if the canister is unreachable or it has rejected the query.
 pub fn query_or_panic<I, O>(
-    env: &StateMachine,
+    env: &PocketIc,
     canister_id: Principal,
     caller: Principal,
     method: &str,
@@ -49,16 +49,13 @@ where
         Err(err) => {
             panic!("{canister_id}.{method} query failed with error {err} (caller: {caller})");
         }
-        Ok(WasmResult::Reject(err)) => {
-            panic!("{canister_id}.{method} query rejected with error {err} (caller: {caller})");
-        }
-        Ok(WasmResult::Reply(res)) => Decode!(&res, O).unwrap(),
+        Ok(res) => Decode!(&res, O).unwrap(),
     }
 }
 
 // Panics if the canister is unreachable or it has rejected the update.
 pub fn update_or_panic<I, O>(
-    env: &StateMachine,
+    env: &PocketIc,
     canister_id: Principal,
     caller: Principal,
     method: &str,
@@ -73,15 +70,12 @@ where
         Err(err) => {
             panic!("{canister_id}.{method} failed with error {err} (caller: {caller})");
         }
-        Ok(WasmResult::Reject(err)) => {
-            panic!("{canister_id}.{method} rejected with error {err} (caller: {caller})");
-        }
-        Ok(WasmResult::Reply(res)) => Decode!(&res, O).unwrap(),
+        Ok(res) => Decode!(&res, O).unwrap(),
     }
 }
 
 pub fn deposit(
-    env: &StateMachine,
+    env: &PocketIc,
     depositor_id: Principal,
     to: Account,
     cycles: u128,
@@ -96,7 +90,7 @@ pub fn deposit(
     )
 }
 
-pub fn icrc1_balance_of(env: &StateMachine, ledger_id: Principal, account: Account) -> u128 {
+pub fn icrc1_balance_of(env: &PocketIc, ledger_id: Principal, account: Account) -> u128 {
     let res: Nat = query_or_panic(
         env,
         ledger_id,
@@ -107,12 +101,12 @@ pub fn icrc1_balance_of(env: &StateMachine, ledger_id: Principal, account: Accou
     res.0.to_u128().unwrap()
 }
 
-pub fn icrc1_fee(env: &StateMachine, ledger_id: Principal) -> u128 {
+pub fn icrc1_fee(env: &PocketIc, ledger_id: Principal) -> u128 {
     let res: Nat = query_or_panic(env, ledger_id, Principal::anonymous(), "icrc1_fee", ());
     res.0.to_u128().unwrap()
 }
 
-pub fn icrc1_total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
+pub fn icrc1_total_supply(env: &PocketIc, ledger_id: Principal) -> u128 {
     let res: Nat = query_or_panic(
         env,
         ledger_id,
@@ -123,7 +117,7 @@ pub fn icrc1_total_supply(env: &StateMachine, ledger_id: Principal) -> u128 {
     res.0.to_u128().unwrap()
 }
 
-pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> Block {
+pub fn get_block(env: &PocketIc, ledger_id: Principal, block_index: Nat) -> Block {
     let value = icrc3_get_blocks(env, ledger_id, vec![(block_index, Nat::from(1u64))])
         .blocks
         .remove(0)
@@ -132,7 +126,7 @@ pub fn get_block(env: &StateMachine, ledger_id: Principal, block_index: Nat) -> 
 }
 
 pub fn withdraw(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: WithdrawArgs,
@@ -141,7 +135,7 @@ pub fn withdraw(
 }
 
 pub fn withdraw_from(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: WithdrawFromArgs,
@@ -150,7 +144,7 @@ pub fn withdraw_from(
 }
 
 pub fn create_canister(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: CreateCanisterArgs,
@@ -159,7 +153,7 @@ pub fn create_canister(
 }
 
 pub fn create_canister_from(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: CreateCanisterFromArgs,
@@ -168,7 +162,7 @@ pub fn create_canister_from(
 }
 
 pub fn canister_status(
-    env: &StateMachine,
+    env: &PocketIc,
     canister_id: Principal,
     caller: Principal,
 ) -> CanisterStatusResponse {
@@ -181,24 +175,19 @@ pub fn canister_status(
     )
 }
 
-pub fn fail_next_create_canister_with(env: &StateMachine, error: CmcCreateCanisterError) {
+pub fn fail_next_create_canister_with(env: &PocketIc, error: CmcCreateCanisterError) {
     let arg = Encode!(&error).unwrap();
-    if !matches!(
-        env.update_call(
-            CMC_PRINCIPAL,
-            Principal::anonymous(),
-            "fail_next_create_canister_with",
-            arg,
-        )
-        .unwrap(),
-        WasmResult::Reply(_)
-    ) {
-        panic!("canister_status rejected")
-    }
+    env.update_call(
+        CMC_PRINCIPAL,
+        Principal::anonymous(),
+        "fail_next_create_canister_with",
+        arg,
+    )
+    .expect("fail_next_create_canister_with call should succeed");
 }
 
 pub fn icrc2_allowance(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     from: Account,
     spender: Account,
@@ -216,7 +205,7 @@ pub fn icrc2_allowance(
 }
 
 pub fn icrc2_approve(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: ApproveArgs,
@@ -225,7 +214,7 @@ pub fn icrc2_approve(
 }
 
 pub fn icrc103_get_allowances(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: GetAllowancesArgs,
@@ -234,7 +223,7 @@ pub fn icrc103_get_allowances(
 }
 
 pub fn icrc106_get_index_principal(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
 ) -> Result<Principal, Icrc106Error> {
     query_or_panic(
@@ -247,7 +236,7 @@ pub fn icrc106_get_index_principal(
 }
 
 pub fn icrc1_transfer(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     from_owner: Principal,
     args: TransferArgs,
@@ -256,7 +245,7 @@ pub fn icrc1_transfer(
 }
 
 pub fn icrc2_transfer_from(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     caller: Principal,
     args: TransferFromArgs,
@@ -264,12 +253,12 @@ pub fn icrc2_transfer_from(
     update_or_panic(env, ledger_id, caller, "icrc2_transfer_from", args)
 }
 
-pub fn icrc1_metadata(env: &StateMachine, ledger_id: Principal) -> Vec<(String, MetadataValue)> {
+pub fn icrc1_metadata(env: &PocketIc, ledger_id: Principal) -> Vec<(String, MetadataValue)> {
     query_or_panic(env, ledger_id, Principal::anonymous(), "icrc1_metadata", ())
 }
 
 pub fn icrc3_get_blocks<N: Into<Nat>>(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
     start_lengths: Vec<(N, N)>,
 ) -> GetBlocksResult {
@@ -289,7 +278,7 @@ pub fn icrc3_get_blocks<N: Into<Nat>>(
     )
 }
 
-pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<[u8; 32], u64> {
+pub fn transaction_hashes(env: &PocketIc, ledger_id: Principal) -> BTreeMap<[u8; 32], u64> {
     query_or_panic(
         env,
         ledger_id,
@@ -300,7 +289,7 @@ pub fn transaction_hashes(env: &StateMachine, ledger_id: Principal) -> BTreeMap<
 }
 
 pub fn transaction_timestamps(
-    env: &StateMachine,
+    env: &PocketIc,
     ledger_id: Principal,
 ) -> BTreeMap<(u64, u64), ()> {
     query_or_panic(
@@ -312,7 +301,7 @@ pub fn transaction_timestamps(
     )
 }
 
-pub fn get_tip_certificate(env: &StateMachine, ledger_id: Principal) -> DataCertificate {
+pub fn get_tip_certificate(env: &PocketIc, ledger_id: Principal) -> DataCertificate {
     let res: Option<DataCertificate> = query_or_panic(
         env,
         ledger_id,
