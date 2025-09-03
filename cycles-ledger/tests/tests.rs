@@ -537,7 +537,7 @@ impl TestEnv {
         let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
         let root_key = self.pocket_ic.root_key().expect("Root key should be available");
         assert_matches!(
-            certificate.verify(self.ledger_id.as_slice(), &root_key),
+            certificate.verify(self.ledger_id.as_slice(), &root_key, &(ic_cdk::api::time() as u128), &(ic_cdk::api::time() as u128)),
             Ok(_)
         );
 
@@ -5676,6 +5676,8 @@ fn test_create_canister() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        log_visibility: None,
+        wasm_memory_limit: None,
     };
     let CreateCanisterSuccess {
         canister_id,
@@ -5739,6 +5741,8 @@ fn test_create_canister() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        log_visibility: None,
+        wasm_memory_limit: None,
     };
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
@@ -6356,6 +6360,8 @@ fn test_create_canister_from() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        log_visibility: None,
+        wasm_memory_limit: None,
     };
     let CreateCanisterSuccess {
         canister_id,
