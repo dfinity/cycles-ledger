@@ -4,8 +4,10 @@ use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
 use fake_cmc::{IcpXdrConversionRateResponse, State};
 use ic_cdk::{
     api::{
-        call::{msg_cycles_accept128, msg_cycles_available128},
-        management_canister::main::CreateCanisterArgument,
+        call::{
+            call_with_payment128, msg_cycles_accept128, msg_cycles_available128, RejectionCode,
+        },
+        management_canister::main::{CanisterIdRecord, CreateCanisterArgument},
     },
     query,
 };
@@ -48,17 +50,24 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     };
     ic_cdk::api::call::msg_cycles_accept128(cycles);
 
+    // Use low-level call_with_payment128 to bypass PocketIC management canister routing issues
     // "Canister <id> is already installed" happens because the canister id counter doesn't take into account that a canister with that id
     // was already created using `provisional_create_canister_with_id`. Simply loop to try the next canister id.
     loop {
-        match ic_cdk::api::management_canister::main::create_canister(
-            CreateCanisterArgument {
-                settings: arg.settings.clone(),
-            },
+        let management_canister = Principal::management_canister();
+        let create_arg = CreateCanisterArgument {
+            settings: arg.settings.clone(),
+        };
+
+        let result: Result<(CanisterIdRecord,), (RejectionCode, String)> = call_with_payment128(
+            management_canister,
+            "create_canister",
+            (create_arg,),
             cycles,
         )
-        .await
-        {
+        .await;
+
+        match result {
             Ok((record,)) => return Ok(record.canister_id),
             Err(error) => {
                 if !error.1.contains("canister id already exists") {
