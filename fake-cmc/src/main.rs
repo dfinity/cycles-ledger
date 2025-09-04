@@ -1,13 +1,13 @@
-use candid::{candid_method, Principal};
+use candid::Principal;
 use core::panic;
-use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
+use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError, CanisterSettings};
 use fake_cmc::{IcpXdrConversionRateResponse, State};
 use ic_cdk::{
     api::{
         call::{
             call_with_payment128, msg_cycles_accept128, msg_cycles_available128, RejectionCode,
         },
-        management_canister::main::{CanisterIdRecord, CreateCanisterArgument},
+        management_canister::main::{CanisterIdRecord, CreateCanisterArgument, CanisterSettings as IcCanisterSettings},
     },
     query,
 };
@@ -18,9 +18,21 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
 }
 
+/// Convert cycles_ledger CanisterSettings to IC CDK CanisterSettings
+fn to_ic_canister_settings(settings: &CanisterSettings) -> IcCanisterSettings {
+    IcCanisterSettings {
+        controllers: settings.controllers.clone(),
+        compute_allocation: settings.compute_allocation.clone(),
+        memory_allocation: settings.memory_allocation.clone(),
+        freezing_threshold: settings.freezing_threshold.clone(),
+        reserved_cycles_limit: settings.reserved_cycles_limit.clone(),
+        log_visibility: None, // Not exposed in our public API
+        wasm_memory_limit: None, // Not exposed in our public API
+    }
+}
+
 fn main() {}
 
-#[candid_method]
 #[update]
 async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCreateCanisterError> {
     let cycles = msg_cycles_available128();
@@ -56,7 +68,7 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     loop {
         let management_canister = Principal::management_canister();
         let create_arg = CreateCanisterArgument {
-            settings: arg.settings.clone(),
+            settings: arg.settings.as_ref().map(to_ic_canister_settings),
         };
 
         let result: Result<(CanisterIdRecord,), (RejectionCode, String)> = call_with_payment128(
@@ -78,19 +90,16 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     }
 }
 
-#[candid_method]
 #[update]
 fn fail_next_create_canister_with(error: CmcCreateCanisterError) {
     STATE.with(|s| s.borrow_mut().fail_next_create_canister_with = Some(error))
 }
 
-#[candid_method]
 #[query]
 fn get_icp_xdr_conversion_rate() -> IcpXdrConversionRateResponse {
     Default::default()
 }
 
-#[candid_method]
 #[query]
 fn last_create_canister_args() -> CmcCreateCanisterArgs {
     STATE.with(|s| {

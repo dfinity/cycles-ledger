@@ -1,6 +1,6 @@
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{
-    CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
+    CanisterSettings, CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
     CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
 };
 use crate::logs::{P0, P1};
@@ -12,11 +12,11 @@ use crate::{
     generic_to_ciborium_value,
 };
 use anyhow::{anyhow, bail, Context};
-use candid::{Nat, Principal};
+use candid::{CandidType, Nat, Principal};
 use ic_canister_log::log;
 use ic_cdk::api::call::{call_with_payment128, RejectionCode};
 use ic_cdk::api::management_canister::main::deposit_cycles;
-use ic_cdk::api::management_canister::provisional::{CanisterIdRecord, CanisterSettings};
+use ic_cdk::api::management_canister::provisional::{CanisterIdRecord, CanisterSettings as IcCanisterSettings};
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
@@ -41,6 +41,35 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Display;
+
+/// Internal type for calling the CMC that uses the IC CDK's CanisterSettings
+/// This type should never be exposed in the public API
+#[derive(Clone, Debug, Serialize, CandidType)]
+struct InternalCmcCreateCanisterArgs {
+    subnet_selection: Option<crate::endpoints::SubnetSelection>,
+    settings: Option<IcCanisterSettings>,
+}
+
+/// Convert our custom CanisterSettings to the IC CDK's CanisterSettings
+fn to_ic_canister_settings(settings: &CanisterSettings) -> IcCanisterSettings {
+    IcCanisterSettings {
+        controllers: settings.controllers.clone(),
+        compute_allocation: settings.compute_allocation.clone(),
+        memory_allocation: settings.memory_allocation.clone(), 
+        freezing_threshold: settings.freezing_threshold.clone(),
+        reserved_cycles_limit: settings.reserved_cycles_limit.clone(),
+        log_visibility: None, // Not exposed in our public API
+        wasm_memory_limit: None, // Not exposed in our public API
+    }
+}
+
+/// Convert our public CmcCreateCanisterArgs to the internal type used for CMC calls
+fn to_internal_cmc_args(args: &crate::endpoints::CmcCreateCanisterArgs) -> InternalCmcCreateCanisterArgs {
+    InternalCmcCreateCanisterArgs {
+        subnet_selection: args.subnet_selection.clone(),
+        settings: args.settings.as_ref().map(to_ic_canister_settings),
+    }
+}
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
@@ -1974,30 +2003,25 @@ pub async fn create_canister(
     // 2. call create_canister on the CMC
 
     let argument = argument
-        .map(|arg| CmcCreateCanisterArgs {
-            settings: arg
-                .settings
-                .map(|settings| CanisterSettings {
-                    controllers: Some(
-                        settings
-                            .controllers
-                            .unwrap_or_else(|| vec![ic_cdk::api::caller()]),
-                    ),
-                    ..settings
-                })
-                .or_else(|| {
-                    Some(CanisterSettings {
-                        controllers: Some(vec![ic_cdk::api::caller()]),
-                        ..Default::default()
-                    })
-                }),
-            ..arg
+        .map(|mut arg| {
+            // Ensure controllers is set if not provided
+            if let Some(ref mut settings) = arg.settings {
+                if settings.controllers.is_none() {
+                    settings.controllers = Some(vec![ic_cdk::api::caller()]);
+                }
+            } else {
+                arg.settings = Some(CanisterSettings {
+                    controllers: Some(vec![ic_cdk::api::caller()]),
+                    ..Default::default()
+                });
+            }
+            to_internal_cmc_args(&arg)
         })
-        .unwrap_or_else(|| CmcCreateCanisterArgs {
-            settings: Some(CanisterSettings {
+        .unwrap_or_else(|| InternalCmcCreateCanisterArgs {
+            settings: Some(to_ic_canister_settings(&CanisterSettings {
                 controllers: Some(vec![ic_cdk::api::caller()]),
                 ..Default::default()
-            }),
+            })),
             subnet_selection: None,
         });
     let create_canister_result: Result<

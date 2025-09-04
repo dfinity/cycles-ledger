@@ -1,4 +1,4 @@
-use candid::{candid_method, Nat, Principal};
+use candid::{Nat, Principal};
 use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs,
     GetBlocksResult, LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
@@ -30,7 +30,6 @@ use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromErro
 use num_traits::ToPrimitive;
 
 #[init]
-#[candid_method(init)]
 fn init(ledger_args: LedgerArgs) {
     match ledger_args {
         LedgerArgs::Init(config) => {
@@ -72,37 +71,31 @@ fn post_upgrade(ledger_args: Option<LedgerArgs>) {
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_name() -> String {
     config::TOKEN_NAME.to_string()
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_symbol() -> String {
     config::TOKEN_SYMBOL.to_string()
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_decimals() -> u8 {
     config::DECIMALS
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_fee() -> Nat {
     Nat::from(config::FEE)
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_minting_account() -> Option<Account> {
     None
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
     vec![
         endpoints::SupportedStandard {
@@ -132,7 +125,6 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
     vec![
         SupportedBlockType {
@@ -159,13 +151,11 @@ fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_total_supply() -> Nat {
     Nat::from(read_state(|state| state.total_supply()))
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     use MetadataValue as MV;
 
@@ -189,13 +179,11 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
 #[update]
-#[candid_method]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available128();
     let amount = msg_cycles_accept128(cycles_available);
@@ -251,7 +239,6 @@ fn execute_transfer(
 }
 
 #[update]
-#[candid_method]
 fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     let from = Account {
         owner: ic_cdk::caller(),
@@ -271,7 +258,6 @@ fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
 }
 
 #[update]
-#[candid_method]
 fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError> {
     let spender = Account {
         owner: ic_cdk::caller(),
@@ -289,7 +275,6 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     storage::get_blocks(args)
 }
@@ -312,7 +297,6 @@ async fn execute_withdraw(
 }
 
 #[update]
-#[candid_method]
 async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
     let from = Account {
         owner: ic_cdk::caller(),
@@ -324,7 +308,6 @@ async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
 }
 
 #[update]
-#[candid_method]
 async fn withdraw_from(args: endpoints::WithdrawFromArgs) -> Result<Nat, WithdrawFromError> {
     let spender = Account {
         owner: ic_cdk::caller(),
@@ -357,7 +340,6 @@ async fn execute_create_canister(
 }
 
 #[update]
-#[candid_method]
 async fn create_canister(
     args: endpoints::CreateCanisterArgs,
 ) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterError> {
@@ -378,7 +360,6 @@ async fn create_canister(
 }
 
 #[update]
-#[candid_method]
 async fn create_canister_from(
     args: endpoints::CreateCanisterFromArgs,
 ) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterFromError> {
@@ -397,7 +378,6 @@ async fn create_canister_from(
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     let allowance = storage::allowance(&args.account, &args.spender, ic_cdk::api::time());
     let expires_at = if allowance.1 > 0 {
@@ -412,7 +392,6 @@ fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
 }
 
 #[update]
-#[candid_method]
 fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     let from = Account {
         owner: ic_cdk::api::caller(),
@@ -462,7 +441,6 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllowancesError> {
     let from_account = match arg.from_account {
         Some(from_account) => from_account,
@@ -485,7 +463,6 @@ fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllow
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
     match read_config(|config| config.index_id) {
         None => Err(Icrc106Error::IndexPrincipalNotSet),
@@ -494,7 +471,6 @@ fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
 }
 
 #[query]
-#[candid_method(query)]
 fn http_request(req: HttpRequest) -> HttpResponse {
     if req.path() == "/metrics" {
         let mut writer =
@@ -621,13 +597,11 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc3_get_tip_certificate() -> Option<DataCertificate> {
     read_state(|state| state.get_tip_certificate())
 }
 
 #[query]
-#[candid_method(query)]
 fn icrc3_get_archives(_args: GetArchivesArgs) -> Vec<GetArchivesResult> {
     vec![]
 }
@@ -636,7 +610,6 @@ fn main() {}
 
 #[cfg(feature = "testing")]
 #[query]
-#[candid_method(query)]
 fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {
@@ -649,7 +622,6 @@ fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
 
 #[cfg(feature = "testing")]
 #[query]
-#[candid_method(query)]
 fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {

@@ -27,7 +27,7 @@ use cycles_ledger::{
 };
 use cycles_ledger::{
     endpoints::{
-        CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
+        CanisterSettings, CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
     },
     storage::CMC_PRINCIPAL,
 };
@@ -37,7 +37,7 @@ use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
 use ic_cdk::api::{
     call::RejectionCode,
-    management_canister::{main::CanisterStatusResponse, provisional::CanisterSettings},
+    management_canister::main::CanisterStatusResponse,
 };
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
@@ -5737,8 +5737,6 @@ fn test_create_canister() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
-        log_visibility: None,
-        wasm_memory_limit: None,
     };
     let CreateCanisterSuccess {
         canister_id,
@@ -5802,8 +5800,6 @@ fn test_create_canister() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
-        log_visibility: None,
-        wasm_memory_limit: None,
     };
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
@@ -6451,8 +6447,6 @@ fn test_create_canister_from() {
         memory_allocation: Some(Nat::from(8_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
-        log_visibility: None,
-        wasm_memory_limit: None,
     };
     let CreateCanisterSuccess {
         canister_id,

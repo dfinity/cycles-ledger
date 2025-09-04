@@ -1,7 +1,7 @@
 use std::{fmt::Display, marker::PhantomData};
 
 use candid::{CandidType, Deserialize, Nat, Principal};
-use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
+use ic_cdk::api::call::RejectionCode;
 use icrc_ledger_types::{
     icrc::generic_value::Value,
     icrc1::{
@@ -245,6 +245,16 @@ pub struct DataCertificate {
 
     // CBOR encoded hash_tree
     pub hash_tree: serde_bytes::ByteBuf,
+}
+
+/// Custom CanisterSettings type that only includes fields relevant to cycles-ledger users
+#[derive(Default, Debug, Clone, CandidType, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CanisterSettings {
+    pub controllers: Option<Vec<Principal>>,
+    pub compute_allocation: Option<Nat>,
+    pub memory_allocation: Option<Nat>,
+    pub freezing_threshold: Option<Nat>,
+    pub reserved_cycles_limit: Option<Nat>,
 }
 
 #[derive(Default, Debug, Clone, CandidType, Serialize, Deserialize, PartialEq, Eq)]
