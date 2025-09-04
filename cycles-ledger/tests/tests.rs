@@ -29,7 +29,8 @@ use cycles_ledger::{
 };
 use cycles_ledger::{
     endpoints::{
-        CanisterSettings, CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError, CreateCanisterSuccess,
+        CanisterSettings, CmcCreateCanisterArgs, CreateCanisterArgs, CreateCanisterError,
+        CreateCanisterSuccess,
     },
     storage::CMC_PRINCIPAL,
 };
@@ -37,10 +38,7 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
-use ic_cdk::api::{
-    call::RejectionCode,
-    management_canister::main::CanisterStatusResponse,
-};
+use ic_cdk::api::{call::RejectionCode, management_canister::main::CanisterStatusResponse};
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},

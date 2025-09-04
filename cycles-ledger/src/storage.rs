@@ -2,8 +2,9 @@
 
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{
-    CanisterSettings, CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
-    CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
+    CanisterSettings, CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError,
+    CreateCanisterFromError, CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError,
+    WithdrawFromError,
 };
 use crate::logs::{P0, P1};
 use crate::memo::{encode_withdraw_memo, validate_memo};
@@ -18,7 +19,9 @@ use candid::{CandidType, Nat, Principal};
 use ic_canister_log::log;
 use ic_cdk::api::call::{call_with_payment128, RejectionCode};
 use ic_cdk::api::management_canister::main::deposit_cycles;
-use ic_cdk::api::management_canister::provisional::{CanisterIdRecord, CanisterSettings as IcCanisterSettings};
+use ic_cdk::api::management_canister::provisional::{
+    CanisterIdRecord, CanisterSettings as IcCanisterSettings,
+};
 use ic_cdk::api::set_certified_data;
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
@@ -57,16 +60,18 @@ fn to_ic_canister_settings(settings: &CanisterSettings) -> IcCanisterSettings {
     IcCanisterSettings {
         controllers: settings.controllers.clone(),
         compute_allocation: settings.compute_allocation.clone(),
-        memory_allocation: settings.memory_allocation.clone(), 
+        memory_allocation: settings.memory_allocation.clone(),
         freezing_threshold: settings.freezing_threshold.clone(),
         reserved_cycles_limit: settings.reserved_cycles_limit.clone(),
-        log_visibility: None, // Not exposed in our public API
+        log_visibility: None,    // Not exposed in our public API
         wasm_memory_limit: None, // Not exposed in our public API
     }
 }
 
 /// Convert our public CmcCreateCanisterArgs to the internal type used for CMC calls
-fn to_internal_cmc_args(args: &crate::endpoints::CmcCreateCanisterArgs) -> InternalCmcCreateCanisterArgs {
+fn to_internal_cmc_args(
+    args: &crate::endpoints::CmcCreateCanisterArgs,
+) -> InternalCmcCreateCanisterArgs {
     InternalCmcCreateCanisterArgs {
         subnet_selection: args.subnet_selection.clone(),
         settings: args.settings.as_ref().map(to_ic_canister_settings),

@@ -2,14 +2,16 @@
 
 use candid::Principal;
 use core::panic;
-use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError, CanisterSettings};
+use cycles_ledger::endpoints::{CanisterSettings, CmcCreateCanisterArgs, CmcCreateCanisterError};
 use fake_cmc::{IcpXdrConversionRateResponse, State};
 use ic_cdk::{
     api::{
         call::{
             call_with_payment128, msg_cycles_accept128, msg_cycles_available128, RejectionCode,
         },
-        management_canister::main::{CanisterIdRecord, CreateCanisterArgument, CanisterSettings as IcCanisterSettings},
+        management_canister::main::{
+            CanisterIdRecord, CanisterSettings as IcCanisterSettings, CreateCanisterArgument,
+        },
     },
     query,
 };
@@ -28,7 +30,7 @@ fn to_ic_canister_settings(settings: &CanisterSettings) -> IcCanisterSettings {
         memory_allocation: settings.memory_allocation.clone(),
         freezing_threshold: settings.freezing_threshold.clone(),
         reserved_cycles_limit: settings.reserved_cycles_limit.clone(),
-        log_visibility: None, // Not exposed in our public API
+        log_visibility: None,    // Not exposed in our public API
         wasm_memory_limit: None, // Not exposed in our public API
     }
 }

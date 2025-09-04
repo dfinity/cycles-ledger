@@ -13,9 +13,7 @@ use cycles_ledger::{
     storage::{Block, CMC_PRINCIPAL},
 };
 use depositor::endpoints::DepositArg;
-use ic_cdk::api::management_canister::{
-    main::CanisterStatusResponse,
-};
+use ic_cdk::api::management_canister::main::CanisterStatusResponse;
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
