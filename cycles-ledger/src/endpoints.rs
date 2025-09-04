@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::{fmt::Display, marker::PhantomData};
 
 use candid::{CandidType, Deserialize, Nat, Principal};

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use candid::{Nat, Principal};
 use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs,

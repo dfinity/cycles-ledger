@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use core::panic;
 use std::collections::BTreeMap;
 
@@ -12,7 +14,7 @@ use cycles_ledger::{
 };
 use depositor::endpoints::DepositArg;
 use ic_cdk::api::management_canister::{
-    main::CanisterStatusResponse, provisional::CanisterIdRecord,
+    main::CanisterStatusResponse,
 };
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{

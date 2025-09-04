@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use cycles_ledger::endpoints::DepositResult;
 use depositor::{
     endpoints::{DepositArg, InitArg},

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use crate::config::MAX_MEMO_LENGTH;
 use candid::Principal;
 use ic_cdk::api::management_canister::provisional::CanisterId;

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Display,
@@ -239,7 +241,7 @@ fn install_fake_cmc(env: &PocketIc) -> Principal {
     let nns_subnet_id = topology.get_nns().expect("NNS subnet should be available");
 
     // First try to create CMC canister with specific ID on NNS subnet
-    if let Ok(canister_id) = env.create_canister_with_id(None, None, CMC_PRINCIPAL) {
+    if let Ok(_canister_id) = env.create_canister_with_id(None, None, CMC_PRINCIPAL) {
         // If successful, we'll use this ID but note it may not be on the right subnet
         env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
         env.install_canister(

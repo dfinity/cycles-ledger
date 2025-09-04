@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{
     CanisterSettings, CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,

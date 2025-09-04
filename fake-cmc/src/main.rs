@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use candid::Principal;
 use core::panic;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError, CanisterSettings};
