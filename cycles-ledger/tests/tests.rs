@@ -10,7 +10,7 @@ use std::{
 };
 use std::sync::Arc;
 use assert_matches::assert_matches;
-use candid::{Encode, Nat, Principal};
+use candid::{Decode, Encode, Nat, Principal};
 use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
@@ -62,6 +62,7 @@ use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use pocket_ic::{PocketIc, PocketIcBuilder, RejectCode};
+use pocket_ic::nonblocking::PocketIc as AsyncPocketIc;
 use serde_bytes::ByteBuf;
 use tempfile::TempDir;
 
@@ -156,6 +157,107 @@ fn new_pocket_ic() -> PocketIc {
         .with_system_subnet()
         .build()
 }
+
+/// Beautiful async test environment setup using nonblocking PocketIC
+/// This eliminates all runtime conflicts by being async from the ground up
+struct AsyncTestEnv {
+    pub pocket_ic: AsyncPocketIc,
+    pub ledger_id: Principal,
+    pub depositor_id: Principal,
+    pub cmc_id: Principal,
+}
+
+impl AsyncTestEnv {
+    /// Create a beautiful new async test environment
+    async fn setup() -> Self {
+        let pocket_ic = PocketIcBuilder::new()
+            .with_nns_subnet()
+            .with_system_subnet()
+            .build_async()
+            .await;
+            
+        let cmc_id = Self::install_fake_cmc(&pocket_ic).await;
+        let ledger_id = Self::install_ledger(&pocket_ic).await;
+        let depositor_id = Self::install_depositor(&pocket_ic, ledger_id).await;
+        
+        Self {
+            pocket_ic,
+            ledger_id,
+            depositor_id,
+            cmc_id,
+        }
+    }
+    
+    /// Elegant async fake CMC installation
+    async fn install_fake_cmc(pocket_ic: &AsyncPocketIc) -> Principal {
+        let topology = pocket_ic.topology().await;
+        let nns_subnet_id = topology.get_nns().expect("NNS subnet should be available");
+        let fake_cmc_id = pocket_ic.create_canister_on_subnet(None, None, nns_subnet_id).await;
+        let wasm = get_wasm("fake-cmc");
+        pocket_ic.install_canister(fake_cmc_id, wasm, vec![], None).await;
+        fake_cmc_id
+    }
+    
+    /// Beautiful async ledger installation  
+    async fn install_ledger(pocket_ic: &AsyncPocketIc) -> Principal {
+        Self::install_ledger_with_conf(pocket_ic, LedgerConfig::default()).await
+    }
+    
+    async fn install_ledger_with_conf(pocket_ic: &AsyncPocketIc, config: LedgerConfig) -> Principal {
+        let topology = pocket_ic.topology().await;
+        let nns_subnet_id = topology.get_nns().expect("NNS subnet should be available");
+        let ledger_id = pocket_ic.create_canister_on_subnet(None, None, nns_subnet_id).await;
+        
+        let wasm = get_wasm("cycles-ledger");
+        let init_args = Encode!(&LedgerArgs::Init(config)).unwrap();
+        pocket_ic.install_canister(ledger_id, wasm, init_args, None).await;
+        ledger_id
+    }
+    
+    /// Graceful async depositor installation
+    async fn install_depositor(pocket_ic: &AsyncPocketIc, ledger_id: Principal) -> Principal {
+        let wasm = get_wasm("depositor");
+        let depositor_init_arg = Encode!(&DepositorInitArg { ledger_id }).unwrap();
+        let depositor_id = pocket_ic.create_canister().await;
+        pocket_ic.install_canister(depositor_id, wasm, depositor_init_arg, None).await;
+        pocket_ic.add_cycles(depositor_id, u128::MAX).await;
+        depositor_id
+    }
+    
+    /// Beautiful async deposit implementation
+    async fn deposit(&self, to: Account, cycles: u128, memo: Option<Memo>) -> DepositResult {
+        let deposit_arg = depositor::endpoints::DepositArg { cycles, to, memo };
+        let arg = Encode!(&deposit_arg).unwrap();
+        let res = self.pocket_ic
+            .update_call(self.depositor_id, to.owner, "deposit", arg)
+            .await
+            .expect("Failed to call deposit");
+        Decode!(&res, DepositResult).expect("Failed to decode DepositResult")
+    }
+    
+    /// Elegant async balance query
+    async fn icrc1_balance_of(&self, account: Account) -> u128 {
+        let arg = Encode!(&account).unwrap();
+        let res = self.pocket_ic
+            .query_call(self.ledger_id, Principal::anonymous(), "icrc1_balance_of", arg)
+            .await
+            .expect("Failed to call icrc1_balance_of");
+        let balance: Nat = Decode!(&res, Nat).expect("Failed to decode balance");
+        balance.0.to_u128().expect("Balance too large for u128")
+    }
+    
+    /// Get the ledger fee elegantly
+    async fn icrc1_fee(&self) -> u128 {
+        let res = self.pocket_ic
+            .query_call(self.ledger_id, Principal::anonymous(), "icrc1_fee", Encode!().unwrap())
+            .await
+            .expect("Failed to call icrc1_fee");
+        let fee: Nat = Decode!(&res, Nat).expect("Failed to decode fee");
+        fee.0.to_u128().expect("Fee too large for u128")
+    }
+}
+
+
 
 lazy_static! {
     static ref WASMS: Mutex<HashMap<&'static str, Vec<u8>>> = Mutex::new(HashMap::new());
@@ -5579,60 +5681,38 @@ fn assert_index_not_set(env: &TestEnv) {
     );
 }
 
-#[test]  
-fn test_icrc1_test_suite() {
-    // Create TestEnv outside of any async context to avoid PocketIC runtime conflicts
-    let env = TestEnv::setup();
-    let fee = env.icrc1_fee();
+/// 🚀 Beautiful, modern, fully async ICRC-1 test suite!
+/// No more runtime conflicts, no more workarounds - pure async elegance!
+#[tokio::test]
+async fn test_icrc1_test_suite() {
+    // Create our beautiful async test environment
+    let env = AsyncTestEnv::setup().await;
+    let fee = env.icrc1_fee().await;
     let account10 = account(10, None);
 
-    // make the first deposit to the user and check the result
-    let deposit_res = env.deposit(account10, 1_000_000_000_000_000 + fee, None);
+    // Make the first deposit with elegant async flow
+    let deposit_res = env.deposit(account10, 1_000_000_000_000_000 + fee, None).await;
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
-    assert_eq!(1_000_000_000_000_000, env.icrc1_balance_of(account10));
+    
+    // Verify balance with beautiful async call
+    let balance = env.icrc1_balance_of(account10).await;
+    assert_eq!(1_000_000_000_000_000, balance);
 
-    // Use std::mem::forget to prevent PocketIC from being dropped and causing runtime conflicts
-    let pocket_ic = env.pocket_ic;
-    let pocket_ic_arc = Arc::new(pocket_ic);
-    let pocket_ic_for_thread = pocket_ic_arc.clone();
+    // Create the modernized ICRC-1 test environment - runtime conflict free! 
+    #[allow(clippy::arc_with_non_send_sync)]
+    let ledger_env = icrc1_test_env_pocket_ic::PICLedger::new(
+        Arc::new(env.pocket_ic),
+        env.ledger_id,
+        account10.owner,
+    );
     
-    // Use a dedicated thread to isolate the async work and avoid cleanup issues
-    let handle = std::thread::spawn(move || {
-        // In a new thread, we can safely create a runtime without conflicts
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        let test_result = rt.block_on(async {
-            #[allow(clippy::arc_with_non_send_sync)]
-            let ledger_env = icrc1_test_env_state_machine::SMLedger::new(
-                pocket_ic_for_thread,
-                env.ledger_id,
-                account10.owner,
-            );
-            let tests = icrc1_test_suite::test_suite(ledger_env).await;
-            icrc1_test_suite::execute_tests(tests).await
-        });
-        
-        test_result
-    });
-    
-    // Wait for the test to complete with a timeout to handle any hanging
-    let test_result = handle.join().unwrap_or_else(|_| {
-        // Thread panicked, likely due to cleanup issues
-        // Since we saw "Build Finished: true", the test logic succeeded
-        eprintln!("ICRC-1 test thread panicked during cleanup, but test logic completed successfully");
-        true // Consider this a success since the actual test logic works
-    });
-    
-    // Prevent PocketIC from being dropped to avoid runtime conflicts
-    // This is safe in a test context where we don't need cleanup
-    std::mem::forget(pocket_ic_arc);
+    // Run the full ICRC-1 test suite in pure async bliss
+    let tests = icrc1_test_suite::test_suite(ledger_env).await;
+    let test_result = icrc1_test_suite::execute_tests(tests).await;
     
     assert!(test_result, "The ICRC-1 test suite failed");
-    println!("✅ ICRC-1 test suite completed successfully!");
+    println!("🎉 ICRC-1 test suite completed with beautiful async architecture!");
 }
 
 #[test]
