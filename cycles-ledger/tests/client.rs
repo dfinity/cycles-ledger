@@ -11,9 +11,6 @@ use cycles_ledger::{
     storage::{Block, CMC_PRINCIPAL},
 };
 use depositor::endpoints::DepositArg;
-use ic_cdk::api::management_canister::{
-    main::CanisterStatusResponse, provisional::CanisterIdRecord,
-};
 use ic_management_canister_types::CanisterStatusResult;
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
@@ -30,7 +27,6 @@ use icrc_ledger_types::{
     },
 };
 use num_traits::ToPrimitive;
-use pocket_ic::common::rest::RawEffectivePrincipal;
 use pocket_ic::PocketIc;
 use serde::Deserialize;
 
