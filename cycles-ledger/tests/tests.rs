@@ -74,7 +74,7 @@ use url::Url;
 mod client;
 mod gen;
 
-pub const CYCLES_LEDGER_PRINCIPAL: Principal =
+const CYCLES_LEDGER_PRINCIPAL: Principal =
     Principal::from_slice(&[0, 0, 0, 0, 2, 0x10, 0, 2, 1, 1]);
 
 // Like assert_eq but uses Display instead of Debug
@@ -181,12 +181,9 @@ fn get_or_start_pocket_ic_server() -> Url {
 
         let suggested_version = "9.0.2";
 
-        // not run automatically because parallel test execution screws this up
         panic!("Pocket IC server binary does not exist. Please run the following command and try again: ./download-pocket-ic.sh {suggested_version} {platform}");
     }
 
-    // We use the test driver's process ID to share the PocketIC server between multiple tests
-    // launched by the same test driver.
     let test_driver_pid = std::process::id();
     let port_file_path = std::env::temp_dir().join(format!("pocket_ic_{}.port", test_driver_pid));
 
@@ -197,15 +194,11 @@ fn get_or_start_pocket_ic_server() -> Url {
     cmd.args(["--ttl", "300"]); // Increased TTL to 5 minutes
     cmd.args(["--port-file", port_file_path.to_str().unwrap()]);
 
-    // Start the server in the background so that it doesn't receive signals such as CTRL^C
-    // from the foreground terminal.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-
-    println!("Starting PocketIC server with TTL 300s");
 
     #[allow(clippy::zombie_processes)]
     let _child = cmd.spawn().unwrap_or_else(|_| {
@@ -784,7 +777,6 @@ impl AsyncTestEnv {
         ledger_id
     }
 
-    /// Graceful async depositor installation
     async fn install_depositor(pocket_ic: &AsyncPocketIc, ledger_id: Principal) -> Principal {
         let wasm = get_wasm("depositor");
         let depositor_init_arg = Encode!(&DepositorInitArg { ledger_id }).unwrap();
@@ -807,7 +799,6 @@ impl AsyncTestEnv {
         Decode!(&res, DepositResult).expect("Failed to decode DepositResult")
     }
 
-    /// Elegant async balance query
     async fn icrc1_balance_of(&self, account: Account) -> u128 {
         let arg = Encode!(&account).unwrap();
         let res = self
