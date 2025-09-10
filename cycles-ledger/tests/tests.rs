@@ -69,6 +69,7 @@ use std::{
     time::Duration,
 };
 use tempfile::TempDir;
+use url::Url;
 
 mod client;
 mod gen;
@@ -150,10 +151,101 @@ where
     }
 }
 
+lazy_static! {
+    static ref POCKET_IC_SERVER: Arc<Mutex<Option<Url>>> = Arc::new(Mutex::new(None));
+}
+
+fn get_or_start_pocket_ic_server() -> Url {
+    let mut server_guard = POCKET_IC_SERVER.lock().unwrap();
+    
+    if let Some(server_url) = server_guard.as_ref() {
+        // Server is already running, return the URL
+        return server_url.clone();
+    }
+
+    // Need to start the server
+    const LOCALHOST: &str = "127.0.0.1";
+
+    let mut pocket_ic_server_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+
+    pocket_ic_server_path.push("pocket-ic");
+
+    if !pocket_ic_server_path.exists() {
+        #[cfg(target_os = "macos")]
+        let platform: &str = "darwin";
+        #[cfg(target_os = "linux")]
+        let platform: &str = "linux";
+
+        let suggested_version = "9.0.2";
+
+        // not run automatically because parallel test execution screws this up
+        panic!("Pocket IC server binary does not exist. Please run the following command and try again: ./download-pocket-ic.sh {suggested_version} {platform}");
+    }
+
+    // We use the test driver's process ID to share the PocketIC server between multiple tests
+    // launched by the same test driver.
+    let test_driver_pid = std::process::id();
+    let port_file_path = std::env::temp_dir().join(format!("pocket_ic_{}.port", test_driver_pid));
+
+    // Remove any existing port file
+    let _ = std::fs::remove_file(&port_file_path);
+
+    let mut cmd = Command::new(&pocket_ic_server_path);
+    cmd.args(["--ttl", "300"]); // Increased TTL to 5 minutes
+    cmd.args(["--port-file", port_file_path.to_str().unwrap()]);
+
+    // Start the server in the background so that it doesn't receive signals such as CTRL^C
+    // from the foreground terminal.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    println!("Starting PocketIC server with TTL 300s");
+
+    #[allow(clippy::zombie_processes)]
+    let _child = cmd.spawn().unwrap_or_else(|_| {
+        panic!(
+            "Failed to start PocketIC binary ({})",
+            pocket_ic_server_path.display()
+        )
+    });
+
+    println!("Started PocketIC server, waiting for port file...");
+
+    // Wait for the port file to be created and contain a valid port
+    let server_url = loop {
+        if let Ok(port_string) = std::fs::read_to_string(&port_file_path) {
+            let port_string = port_string.trim();
+            if !port_string.is_empty() {
+                if let Ok(port) = port_string.parse::<u16>() {
+                    let url = Url::parse(&format!("http://{}:{}/", LOCALHOST, port)).unwrap();
+                    println!("PocketIC server running on: {}", url);
+                    break url;
+                } else {
+                    println!("Invalid port in port file: '{}'", port_string);
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+
+    // Store the server URL for future use
+    *server_guard = Some(server_url.clone());
+    server_url
+}
+
 fn new_pocket_ic() -> PocketIc {
+    let server_url = get_or_start_pocket_ic_server();
+
     PocketIcBuilder::new()
         .with_nns_subnet()
         .with_ii_subnet()
+        .with_server_url(server_url)
         .build()
 }
 

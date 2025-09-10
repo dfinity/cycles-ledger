@@ -486,6 +486,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.63",
  "tokio",
+ "url",
 ]
 
 [[package]]
