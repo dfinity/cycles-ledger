@@ -14,6 +14,7 @@ use depositor::endpoints::DepositArg;
 use ic_cdk::api::management_canister::{
     main::CanisterStatusResponse, provisional::CanisterIdRecord,
 };
+use ic_management_canister_types::CanisterStatusResult;
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
@@ -29,6 +30,7 @@ use icrc_ledger_types::{
     },
 };
 use num_traits::ToPrimitive;
+use pocket_ic::common::rest::RawEffectivePrincipal;
 use pocket_ic::PocketIc;
 use serde::Deserialize;
 
@@ -165,14 +167,9 @@ pub fn canister_status(
     env: &PocketIc,
     canister_id: Principal,
     caller: Principal,
-) -> CanisterStatusResponse {
-    update_or_panic(
-        env,
-        Principal::management_canister(),
-        caller,
-        "canister_status",
-        CanisterIdRecord { canister_id },
-    )
+) -> CanisterStatusResult {
+    env.canister_status(canister_id, Some(caller))
+        .expect("canister_status should succeed")
 }
 
 pub fn fail_next_create_canister_with(env: &PocketIc, error: CmcCreateCanisterError) {

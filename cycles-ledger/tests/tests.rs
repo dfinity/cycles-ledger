@@ -1,12 +1,10 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt::Display,
-    path::PathBuf,
-    process::{Command, Stdio},
-    sync::{Arc, Mutex},
-    time::Duration,
+use crate::{
+    client::{
+        canister_status, create_canister, fail_next_create_canister_with, get_block,
+        icrc1_balance_of,
+    },
+    gen::IsCyclesLedger,
 };
-
 use assert_matches::assert_matches;
 use candid::{Decode, Encode, Nat, Principal};
 use client::deposit;
@@ -44,6 +42,7 @@ use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
     Certificate, HashTree, LookupResult,
 };
+use ic_management_canister_types::CanisterStatusResult;
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
@@ -64,18 +63,21 @@ use num_traits::ToPrimitive;
 use pocket_ic::nonblocking::PocketIc as AsyncPocketIc;
 use pocket_ic::{ErrorCode, PocketIc, PocketIcBuilder, RejectResponse};
 use serde_bytes::ByteBuf;
-use tempfile::TempDir;
-
-use crate::{
-    client::{
-        canister_status, create_canister, fail_next_create_canister_with, get_block,
-        icrc1_balance_of,
-    },
-    gen::IsCyclesLedger,
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt::Display,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
+    time::Duration,
 };
+use tempfile::TempDir;
 
 mod client;
 mod gen;
+
+pub const CYCLES_LEDGER_PRINCIPAL: Principal =
+    Principal::from_slice(&[0, 0, 0, 0, 2, 0x10, 0, 2, 1, 1]);
 
 // Like assert_eq but uses Display instead of Debug
 #[track_caller]
@@ -154,7 +156,7 @@ where
 fn new_pocket_ic() -> PocketIc {
     PocketIcBuilder::new()
         .with_nns_subnet()
-        .with_system_subnet()
+        .with_ii_subnet()
         .build()
 }
 
@@ -216,10 +218,17 @@ fn install_ledger(env: &PocketIc) -> Principal {
 }
 
 fn install_ledger_with_conf(env: &PocketIc, config: LedgerConfig) -> Principal {
-    let canister = env.create_canister();
+    let canister_id = env
+        .create_canister_with_id(None, None, CYCLES_LEDGER_PRINCIPAL)
+        .expect("Failed to create canister with CYCLES_LEDGER_PRINCIPAL ID");
+    assert_eq!(
+        canister_id, CYCLES_LEDGER_PRINCIPAL,
+        "Created canister ID {} does not match expected CYCLES_LEDGER_PRINCIPAL {}.",
+        canister_id, CYCLES_LEDGER_PRINCIPAL
+    );
     let init_args = Encode!(&LedgerArgs::Init(config)).unwrap();
-    env.install_canister(canister, get_wasm("cycles-ledger"), init_args, None);
-    canister
+    env.install_canister(canister_id, get_wasm("cycles-ledger"), init_args, None);
+    canister_id
 }
 
 fn install_depositor(env: &PocketIc, ledger_id: Principal) -> Principal {
@@ -231,18 +240,14 @@ fn install_depositor(env: &PocketIc, ledger_id: Principal) -> Principal {
 }
 
 fn install_fake_cmc(env: &PocketIc) -> Principal {
-    // #[derive(CandidType, Default)]
-    // struct ProvisionalCreateArg {
-    //     specified_id: Option<Principal>,
-    // }
-    // #[derive(CandidType, candid::Deserialize)]
-    // struct ProvisionalCreateResponse {
-    //     canister_id: Principal,
-    // }
     let canister_id = env
         .create_canister_with_id(None, None, CMC_PRINCIPAL)
-        .unwrap();
-    assert_eq!(canister_id, CMC_PRINCIPAL);
+        .expect("Failed to create canister with CMC_PRINCIPAL ID");
+    assert_eq!(
+        canister_id, CMC_PRINCIPAL,
+        "Created canister ID {} does not match expected CMC_PRINCIPAL_ID {}.",
+        canister_id, CMC_PRINCIPAL
+    );
     env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
     env.install_canister(
         CMC_PRINCIPAL,
@@ -331,14 +336,14 @@ impl TestEnv {
         args: CreateCanisterFromArgs,
     ) -> CreateCanisterSuccess {
         client::create_canister_from(&self.pocket_ic, self.ledger_id, caller, args.clone())
-        .unwrap_or_else(|err| {
-            panic!(
-                "Call to create_canister_from({args:?}) from caller {caller} failed with error {err:?}"
-            )
-        })
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Call to create_canister_from({args:?}) from caller {caller} failed with error {err:?}"
+                )
+            })
     }
 
-    fn canister_status(&self, caller: Principal, canister_id: Principal) -> CanisterStatusResponse {
+    fn canister_status(&self, caller: Principal, canister_id: Principal) -> CanisterStatusResult {
         client::canister_status(&self.pocket_ic, canister_id, caller)
     }
 
@@ -520,12 +525,12 @@ impl TestEnv {
             hash_tree,
         } = self.icrc3_get_tip_certificate();
         let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
-        let root_key = self.pocket_ic.root_key();
+        let root_key = self
+            .pocket_ic
+            .root_key()
+            .expect("Root key should be available");
         assert_matches!(
-            certificate.verify(
-                self.ledger_id.as_slice(),
-                &root_key.expect("should have a root key")
-            ),
+            certificate.verify(self.ledger_id.as_slice(), &root_key),
             Ok(_)
         );
 

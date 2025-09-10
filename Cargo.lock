@@ -467,6 +467,7 @@ dependencies = [
  "ic-certificate-verification",
  "ic-certification 2.5.0",
  "ic-certified-map",
+ "ic-management-canister-types",
  "ic-metrics-encoder",
  "ic-stable-structures",
  "icrc-ledger-types",

@@ -38,6 +38,7 @@ escargot = { version = "0.5.7", features = ["print"] }
 ic-cbor = "2.3.0"
 ic-certification = "2.3.0"
 ic-certificate-verification = "2.3.0"
+ic-management-canister-types = "0.3.3"
 icrc1-test-env-pocket-ic = "0.2.0"
 icrc1-test-suite = "0.2.0"
 lazy_static = "1.4.0"
