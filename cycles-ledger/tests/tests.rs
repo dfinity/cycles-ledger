@@ -2452,7 +2452,11 @@ fn test_icrc2_approve_self() {
         )
         .unwrap_err();
     assert_eq!(err.error_code, ErrorCode::CanisterCalledTrap);
-    assert!(err.reject_message.ends_with("self approval is not allowed"));
+    assert!(
+        err.reject_message.contains("self approval is not allowed"),
+        "reject_message: {}",
+        err.reject_message
+    );
     assert_eq!(env.icrc1_balance_of(from), 1_000_000_000);
     assert_eq!(env.icrc1_total_supply(), 1_000_000_000);
 }
@@ -3407,7 +3411,7 @@ fn test_icrc1_transfer_too_old(env: &TestEnv) {
     let too_old_created_at_time = Duration::from_nanos(ledger_time)
         - config::TRANSACTION_WINDOW
         - config::PERMITTED_DRIFT
-        - Duration::from_nanos(1);
+        - Duration::from_nanos(100);
 
     let account_to = account(2, None);
     let account_from = account(3, None);
@@ -3444,7 +3448,7 @@ fn test_icrc1_transfer_in_the_future(env: &TestEnv) {
     // after ledger_time + PERMITTED_DRIFT
     let ledger_time = env.nanos_since_epoch_u64();
     let in_the_future_created_at_time =
-        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(100);
 
     let account_to = account(2, None);
     let account_from = account(3, None);
@@ -3466,10 +3470,23 @@ fn test_icrc1_transfer_in_the_future(env: &TestEnv) {
         created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
         memo: None,
     };
-    assert_eq!(
-        Err(TransferError::CreatedInFuture { ledger_time }),
-        env.icrc1_transfer(account_from.owner, args),
-    );
+    let result = env.icrc1_transfer(account_from.owner, args);
+    match result {
+        Err(TransferError::CreatedInFuture {
+            ledger_time: actual_ledger_time,
+        }) => {
+            // PocketIC advances time by a few nanoseconds during processing
+            let time_diff = actual_ledger_time.abs_diff(ledger_time);
+            assert!(
+                time_diff <= 10,
+                "Time difference too large: {} vs {}, diff: {}",
+                actual_ledger_time,
+                ledger_time,
+                time_diff
+            );
+        }
+        other => panic!("Expected CreatedInFuture error, got: {:?}", other),
+    }
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
     assert_eq!(total_supply, env.icrc1_total_supply());
@@ -3520,7 +3537,7 @@ fn test_icrc1_transfer_insufficient_funds_with_params(
             // Amount is 1 cycle more than what account_from can transfer
             amount: Nat::from(amount),
             fee: set_fee.then_some(Nat::from(fee)),
-            created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+            created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64() + 1000),
             memo: set_memo.then_some(Memo::from(vec![2; 32])),
         };
         assert_eq!(
@@ -3587,14 +3604,15 @@ fn test_icrc1_transfer_duplicate_with_params(
 
     // Try different valid non-optional created_at_time
     for created_at_time in [
-        // 1 nanosecond before being too old
-        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT,
-        // 1 nanosecond before ledger_time
-        ledger_time - Duration::from_nanos(1),
-        // 1 nanosecond after ledger_time
-        ledger_time + Duration::from_nanos(1),
-        // 1 nanosecond before being in the future
-        ledger_time + config::PERMITTED_DRIFT,
+        // A few nanoseconds before being too old (accounting for PocketIC time advancement)
+        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT
+            + Duration::from_nanos(10),
+        // A few nanoseconds before ledger_time
+        ledger_time - Duration::from_nanos(10),
+        // A few nanoseconds after ledger_time
+        ledger_time + Duration::from_nanos(10),
+        // A few nanoseconds before being in the future
+        ledger_time + config::PERMITTED_DRIFT - Duration::from_nanos(10),
     ] {
         // Deposit so that account_from has enough fee to make one
         // or two transfers. Note that in case account_from has
@@ -3901,7 +3919,7 @@ fn test_icrc2_approve_too_old(env: &TestEnv) {
     let too_old_created_at_time = Duration::from_nanos(ledger_time)
         - config::TRANSACTION_WINDOW
         - config::PERMITTED_DRIFT
-        - Duration::from_nanos(1);
+        - Duration::from_nanos(100);
 
     assert_icrc2_approve_failure(
         env,
@@ -3924,22 +3942,56 @@ fn test_icrc2_approve_in_the_future(env: &TestEnv) {
     // after ledger_time + PERMITTED_DRIFT
     let ledger_time = env.nanos_since_epoch_u64();
     let in_the_future_created_at_time =
-        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(100);
 
-    assert_icrc2_approve_failure(
-        env,
-        |_, _| ApproveError::CreatedInFuture { ledger_time },
-        |account_from, account_spender| ApproveArgs {
-            from_subaccount: account_from.subaccount,
-            spender: account_spender,
-            amount: Nat::from(0u8),
-            fee: None,
-            created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
-            memo: None,
-            expected_allowance: None,
-            expires_at: None,
-        },
+    let account_spender = account(2, None);
+    let account_from = account(3, None);
+
+    // deposit enough funds to account_from such that the transaction
+    // would be accepted if created_at_time was correct
+    let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
+
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(0u8),
+        fee: None,
+        created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
+        memo: None,
+        expected_allowance: None,
+        expires_at: None,
+    };
+
+    let result = env.icrc2_approve(account_from.owner, args);
+    match result {
+        Err(ApproveError::CreatedInFuture {
+            ledger_time: actual_ledger_time,
+        }) => {
+            // PocketIC advances time by a few nanoseconds during processing
+            let time_diff = actual_ledger_time.abs_diff(ledger_time);
+            assert!(
+                time_diff <= 10,
+                "Time difference too large: {} vs {}, diff: {}",
+                actual_ledger_time,
+                ledger_time,
+                time_diff
+            );
+        }
+        other => panic!("Expected CreatedInFuture error, got: {:?}", other),
+    }
+
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
     );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
 }
 
 fn test_icrc2_approve_allowance_changed(env: &TestEnv) {
@@ -3974,20 +4026,54 @@ fn test_icrc2_approve_expired(env: &TestEnv) {
     let ledger_time = env.nanos_since_epoch_u64();
     // anything before or equals to ledger_time should fail.
     for expires_at in [0, ledger_time - 1, ledger_time] {
-        assert_icrc2_approve_failure(
-            env,
-            |_, _| ApproveError::Expired { ledger_time },
-            |account_from, account_spender| ApproveArgs {
-                from_subaccount: account_from.subaccount,
-                spender: account_spender,
-                amount: Nat::from(1u8),
-                expected_allowance: None,
-                expires_at: Some(expires_at),
-                fee: None,
-                memo: None,
-                created_at_time: None,
-            },
-        )
+        let account_spender = account(2, None);
+        let account_from = account(3, None);
+
+        // deposit enough funds to account_from such that the transaction
+        // would be accepted if expires_at was correct
+        let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
+
+        let account_spender_balance = env.icrc1_balance_of(account_spender);
+        let account_from_balance = env.icrc1_balance_of(account_from);
+        let total_supply = env.icrc1_total_supply();
+        let blocks = env.get_all_blocks();
+
+        let args = ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(1u8),
+            expected_allowance: None,
+            expires_at: Some(expires_at),
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        };
+
+        let result = env.icrc2_approve(account_from.owner, args);
+        match result {
+            Err(ApproveError::Expired {
+                ledger_time: actual_ledger_time,
+            }) => {
+                // PocketIC advances time by a few nanoseconds during processing
+                let time_diff = actual_ledger_time.abs_diff(ledger_time);
+                assert!(
+                    time_diff <= 10,
+                    "Time difference too large: {} vs {}, diff: {}",
+                    actual_ledger_time,
+                    ledger_time,
+                    time_diff
+                );
+            }
+            other => panic!("Expected Expired error, got: {:?}", other),
+        }
+
+        assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+        assert_eq!(
+            account_spender_balance,
+            env.icrc1_balance_of(account_spender)
+        );
+        assert_eq!(total_supply, env.icrc1_total_supply());
+        assert_vec_display_eq(blocks, env.get_all_blocks());
     }
 }
 
@@ -4072,10 +4158,10 @@ fn test_icrc2_approve_insufficient_funds_with_params(
         spender: account_spender,
         amount: Nat::from(1u8),
         fee: set_fee.then_some(Nat::from(fee)),
-        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64() + 100),
         memo: set_memo.then_some(Memo::from(vec![2; 32])),
         expected_allowance: set_expected_allowance.then_some(current_allowance),
-        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1),
+        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1000),
     };
     assert_eq!(
         Err(ApproveError::InsufficientFunds {
@@ -4140,10 +4226,10 @@ fn test_icrc2_approve_duplicate_with_params(
         spender: account_spender,
         amount: Nat::from(1u8),
         fee: set_fee.then_some(Nat::from(fee)),
-        created_at_time: Some(env.nanos_since_epoch_u64()),
+        created_at_time: Some(env.nanos_since_epoch_u64() + 100),
         memo: set_memo.then_some(Memo::from(vec![2; 32])),
         expected_allowance: set_expected_allowance.then_some(current_allowance),
-        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1),
+        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1000),
     };
     let approve_res = env.icrc2_approve_or_trap(account_from.owner, args.clone());
 
@@ -4446,7 +4532,7 @@ fn test_icrc2_transfer_from_in_the_future(env: &TestEnv) {
     // after ledger_time + PERMITTED_DRIFT
     let ledger_time = env.nanos_since_epoch_u64();
     let in_the_future_created_at_time =
-        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(100);
 
     let account_to = account(2, None);
     let account_from = account(3, None);
@@ -4483,10 +4569,23 @@ fn test_icrc2_transfer_from_in_the_future(env: &TestEnv) {
         created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
         memo: None,
     };
-    assert_eq!(
-        Err(TransferFromError::CreatedInFuture { ledger_time }),
-        env.icrc2_transfer_from(account_spender.owner, args),
-    );
+    let result = env.icrc2_transfer_from(account_spender.owner, args);
+    match result {
+        Err(TransferFromError::CreatedInFuture {
+            ledger_time: actual_ledger_time,
+        }) => {
+            // PocketIC advances time by a few nanoseconds during processing
+            let time_diff = actual_ledger_time.abs_diff(ledger_time);
+            assert!(
+                time_diff <= 10,
+                "Time difference too large: {} vs {}, diff: {}",
+                actual_ledger_time,
+                ledger_time,
+                time_diff
+            );
+        }
+        other => panic!("Expected CreatedInFuture error, got: {:?}", other),
+    }
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
     assert_eq!(
@@ -4552,7 +4651,7 @@ fn test_icrc2_transfer_from_insufficient_funds_with_params(
         // Amount is 1 cycle more than what account_from can transfer
         amount: Nat::from(1u8),
         fee: set_fee.then_some(Nat::from(fee)),
-        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64() + 100),
         memo: set_memo.then_some(Memo::from(vec![2; 32])),
     };
     assert_eq!(
@@ -4614,7 +4713,16 @@ fn test_icrc2_transfer_from_approval_expired(env: &TestEnv) {
         memo: None,
     };
     // As soon as time >= expires_at the allowance no longer exists
-    assert_eq!(expires_at, env.nanos_since_epoch_u64());
+    // Allow for small time drift due to PocketIC's automatic advancement
+    let current_time = env.nanos_since_epoch_u64();
+    let time_diff = current_time.abs_diff(expires_at);
+    assert!(
+        time_diff <= 10,
+        "Time difference too large: {} vs {}, diff: {}",
+        current_time,
+        expires_at,
+        time_diff
+    );
     assert_eq!(
         Err(expired_approval()),
         env.icrc2_transfer_from(account_spender.owner, args)
@@ -4696,14 +4804,15 @@ fn test_icrc2_transfer_from_duplicate_with_params(
 
     // Try different valid non-optional created_at_time
     for created_at_time in [
-        // 1 nanosecond before being too old
-        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT,
-        // 1 nanosecond before ledger_time
-        ledger_time - Duration::from_nanos(1),
-        // 1 nanosecond after ledger_time
-        ledger_time + Duration::from_nanos(1),
-        // 1 nanosecond before being in the future
-        ledger_time + config::PERMITTED_DRIFT,
+        // A few nanoseconds before being too old (accounting for PocketIC time advancement)
+        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT
+            + Duration::from_nanos(10),
+        // A few nanoseconds before ledger_time
+        ledger_time - Duration::from_nanos(10),
+        // A few nanoseconds after ledger_time
+        ledger_time + Duration::from_nanos(10),
+        // A few nanoseconds before being in the future
+        ledger_time + config::PERMITTED_DRIFT - Duration::from_nanos(10),
     ] {
         let amount_to_deposit = if has_fee_for_second_transfer {
             4 * fee
