@@ -32,7 +32,7 @@ jobs:
         run: |
           rustup show
 
-      - name: Cache StateMachine
+      - name: Cache PocketIC
         uses: actions/cache@v4
         with:
           path: pocket-ic

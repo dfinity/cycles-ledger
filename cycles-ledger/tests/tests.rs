@@ -157,7 +157,7 @@ lazy_static! {
 
 fn get_or_start_pocket_ic_server() -> Url {
     let mut server_guard = POCKET_IC_SERVER.lock().unwrap();
-    
+
     if let Some(server_url) = server_guard.as_ref() {
         // Server is already running, return the URL
         return server_url.clone();
