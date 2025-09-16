@@ -191,7 +191,7 @@ fn get_or_start_pocket_ic_server() -> Url {
     let _ = std::fs::remove_file(&port_file_path);
 
     let mut cmd = Command::new(&pocket_ic_server_path);
-    cmd.args(["--ttl", "300"]); // Increased TTL to 5 minutes
+    cmd.args(["--ttl", "300"]); // May need to wait a long time until WASMs are compiled and the first request arrives
     cmd.args(["--port-file", port_file_path.to_str().unwrap()]);
 
     #[cfg(unix)]
