@@ -808,6 +808,7 @@ impl AsyncTestEnv {
     async fn setup() -> Self {
         let pocket_ic = PocketIcBuilder::new()
             .with_nns_subnet()
+            .with_ii_subnet()
             .with_system_subnet()
             .build_async()
             .await;
