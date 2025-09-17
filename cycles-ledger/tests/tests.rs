@@ -6,7 +6,7 @@ use crate::{
     gen::IsCyclesLedger,
 };
 use assert_matches::assert_matches;
-use candid::{Decode, Encode, Nat, Principal};
+use candid::{CandidType, Decode, Encode, Nat, Principal};
 use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
@@ -59,6 +59,7 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use pocket_ic::nonblocking::PocketIc as AsyncPocketIc;
 use pocket_ic::{ErrorCode, PocketIc, PocketIcBuilder, RejectResponse};
+use serde::Deserialize;
 use serde_bytes::ByteBuf;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -682,20 +683,25 @@ impl TestEnv {
     }
 
     fn install_index(&mut self, index_wasm: Vec<u8>) {
-        let canister = self.state_machine.create_canister(None);
+        let topology = self.pocket_ic.topology();
+        let ii_subnet_id = topology.get_ii().expect("II subnet should be available");
+        let index_id = self
+            .pocket_ic
+            .create_canister_on_subnet(None, None, ii_subnet_id);
+
         let index_arg: Option<IndexArg> = Some(IndexArg::Init(InitArg {
             ledger_id: self.ledger_id,
             retrieve_blocks_from_ledger_interval_seconds: None,
         }));
         let init_args = Encode!(&index_arg).unwrap();
-        self.state_machine
-            .install_canister(canister, index_wasm, init_args, None);
-        self.index_id = Some(canister);
+        self.pocket_ic
+            .install_canister(index_id, index_wasm, init_args, None);
+        self.index_id = Some(index_id);
     }
 
     fn index_synced_blocks_or_trap(&self) -> u64 {
         let arg = Encode!(&()).unwrap();
-        match self.state_machine.query_call(
+        match self.pocket_ic.query_call(
             self.index_id.unwrap(),
             Principal::anonymous(),
             "status",
@@ -704,10 +710,7 @@ impl TestEnv {
             Err(err) => {
                 panic!("status query failed with error {err}");
             }
-            Ok(WasmResult::Reject(err)) => {
-                panic!("status query rejected with error {err}");
-            }
-            Ok(WasmResult::Reply(res)) => Decode!(&res, Status)
+            Ok(res) => Decode!(&res, Status)
                 .expect("error decoding response to status query")
                 .num_blocks_synced
                 .0
@@ -718,7 +721,7 @@ impl TestEnv {
 
     fn index_icrc1_balance_of(&self, account: Account) -> u128 {
         icrc1_balance_of(
-            &self.state_machine,
+            &self.pocket_ic,
             self.index_id.expect("index canister not installed"),
             account,
         )
@@ -726,7 +729,7 @@ impl TestEnv {
 
     fn upgrade_index(&mut self, index_wasm: Vec<u8>) {
         let upgrade_args = Encode!(&Vec::<u8>::new()).unwrap();
-        self.state_machine
+        self.pocket_ic
             .upgrade_canister(self.index_id.unwrap(), index_wasm, upgrade_args, None)
             .expect("error upgrading index canister");
     }
@@ -841,9 +844,9 @@ impl AsyncTestEnv {
         config: LedgerConfig,
     ) -> Principal {
         let topology = pocket_ic.topology().await;
-        let nns_subnet_id = topology.get_nns().expect("NNS subnet should be available");
+        let ii_subnet_id = topology.get_ii().expect("II subnet should be available");
         let ledger_id = pocket_ic
-            .create_canister_on_subnet(None, None, nns_subnet_id)
+            .create_canister_on_subnet(None, None, ii_subnet_id)
             .await;
 
         let wasm = get_wasm("cycles-ledger");
@@ -7680,6 +7683,7 @@ fn test_init_with_initial_balances() {
 }
 
 mod index {
+    use std::path::Path;
     use super::*;
 
     fn latest_index_wasm() -> Vec<u8> {
