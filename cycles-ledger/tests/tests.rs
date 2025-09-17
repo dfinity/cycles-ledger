@@ -7683,8 +7683,8 @@ fn test_init_with_initial_balances() {
 }
 
 mod index {
-    use std::path::Path;
     use super::*;
+    use std::path::Path;
 
     fn latest_index_wasm() -> Vec<u8> {
         maybe_download_index_wasms();
