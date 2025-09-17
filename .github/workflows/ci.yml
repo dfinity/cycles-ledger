@@ -1,12 +1,12 @@
 name: Check and Test
-on: [pull_request]
+on: [ pull_request ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ic-commit: [ 072b2a6586c409efa88f2244d658307ff3a645d8 ]
+        pocket-ic-version: [ 9.0.2 ]
 
     steps:
       - uses: actions/checkout@v2
@@ -32,14 +32,14 @@ jobs:
         run: |
           rustup show
 
-      - name: Cache StateMachine
+      - name: Cache PocketIC
         uses: actions/cache@v4
         with:
-          path: ic-test-state-machine
-          key: ${{ matrix.ic-commit }}-statemachine-binary
+          path: pocket-ic
+          key: ${{ matrix.pocket-ic-version }}-pocket-ic-binary
 
-      - name: Download StateMachine binary
-        run: ./download-state-machine.sh ${{ matrix.ic-commit }} linux
+      - name: Download PocketIC binary
+        run: ./download-pocket-ic.sh ${{ matrix.pocket-ic-version }} linux
 
       - name: Check Format
         run: cargo fmt --all -- --check
