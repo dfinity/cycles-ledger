@@ -4,7 +4,7 @@
 
 ## [Unreleased] - ReleaseDate
 
-## [1.0.6] - 2025-09-01
+## [1.0.6] - 2025-09-18
 * Add support for `initial_balances` in `InitArgs`. When specifying initial balances it is up to the installer to ensure that the cycles ledger has sufficient cycles available to spend these cycles.
 * Allow the anonymous principal to receive, approve, and transfer tokens.
 * Added support for [ICRC-106](https://github.com/dfinity/ICRC-1/blob/7f9b4739d9b3ec2cf549bf468e3a1731c31eecbf/standards/ICRC-106/ICRC-106.md)
