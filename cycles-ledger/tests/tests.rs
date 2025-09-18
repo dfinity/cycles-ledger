@@ -1,14 +1,12 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt::Display,
-    path::PathBuf,
-    process::{Command, Stdio},
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+use crate::{
+    client::{
+        canister_status, create_canister, fail_next_create_canister_with, get_block,
+        icrc1_balance_of,
+    },
+    gen::IsCyclesLedger,
 };
-
 use assert_matches::assert_matches;
-use candid::{CandidType, Decode, Encode, Nat, Principal};
+use candid::{Decode, Encode, Nat, Principal};
 use client::deposit;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
@@ -35,16 +33,13 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
-use ic_cdk::api::{
-    call::RejectionCode,
-    management_canister::{main::CanisterStatusResponse, provisional::CanisterSettings},
-};
+use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
     Certificate, HashTree, LookupResult,
 };
-use ic_test_state_machine_client::{CallError, ErrorCode, StateMachine, WasmResult};
+use ic_management_canister_types::CanisterStatusResult;
 use icrc_ledger_types::icrc106::errors::Icrc106Error;
 use icrc_ledger_types::{
     icrc::generic_metadata_value::MetadataValue,
@@ -62,19 +57,25 @@ use icrc_ledger_types::{
 use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
+use pocket_ic::nonblocking::PocketIc as AsyncPocketIc;
+use pocket_ic::{ErrorCode, PocketIc, PocketIcBuilder, RejectResponse};
 use serde_bytes::ByteBuf;
-use tempfile::TempDir;
-
-use crate::{
-    client::{
-        canister_status, create_canister, fail_next_create_canister_with, get_block,
-        icrc1_balance_of,
-    },
-    gen::IsCyclesLedger,
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt::Display,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
+    time::Duration,
 };
+use tempfile::TempDir;
+use url::Url;
 
 mod client;
 mod gen;
+
+const CYCLES_LEDGER_PRINCIPAL: Principal =
+    Principal::from_slice(&[0, 0, 0, 0, 2, 0x10, 0, 2, 1, 1]);
 
 // Like assert_eq but uses Display instead of Debug
 #[track_caller]
@@ -150,25 +151,95 @@ where
     }
 }
 
-fn new_state_machine() -> StateMachine {
-    let mut state_machine_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+lazy_static! {
+    static ref POCKET_IC_SERVER: Arc<Mutex<Option<Url>>> = Arc::new(Mutex::new(None));
+}
+
+fn get_or_start_pocket_ic_server() -> Url {
+    let mut server_guard = POCKET_IC_SERVER.lock().unwrap();
+
+    if let Some(server_url) = server_guard.as_ref() {
+        // Server is already running, return the URL
+        return server_url.clone();
+    }
+
+    // Need to start the server
+    const LOCALHOST: &str = "127.0.0.1";
+
+    let mut pocket_ic_server_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .to_path_buf();
 
-    state_machine_path.push("ic-test-state-machine");
+    pocket_ic_server_path.push("pocket-ic");
 
-    if !state_machine_path.exists() {
+    if !pocket_ic_server_path.exists() {
         #[cfg(target_os = "macos")]
         let platform: &str = "darwin";
         #[cfg(target_os = "linux")]
         let platform: &str = "linux";
-        let suggested_ic_commit = "072b2a6586c409efa88f2244d658307ff3a645d8";
 
-        // not run automatically because parallel test execution screws this up
-        panic!("state machine binary does not exist. Please run the following command and try again: ./download-state-machine.sh {suggested_ic_commit} {platform}");
+        let suggested_version = "9.0.2";
+
+        panic!("Pocket IC server binary does not exist. Please run the following command and try again: ./download-pocket-ic.sh {suggested_version} {platform}");
     }
-    StateMachine::new(state_machine_path.to_str().unwrap(), false)
+
+    let test_driver_pid = std::process::id();
+    let port_file_path = std::env::temp_dir().join(format!("pocket_ic_{}.port", test_driver_pid));
+
+    // Remove any existing port file
+    let _ = std::fs::remove_file(&port_file_path);
+
+    let mut cmd = Command::new(&pocket_ic_server_path);
+    cmd.args(["--ttl", "300"]); // May need to wait a long time until WASMs are compiled and the first request arrives
+    cmd.args(["--port-file", port_file_path.to_str().unwrap()]);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    #[allow(clippy::zombie_processes)]
+    let _child = cmd.spawn().unwrap_or_else(|_| {
+        panic!(
+            "Failed to start PocketIC binary ({})",
+            pocket_ic_server_path.display()
+        )
+    });
+
+    println!("Started PocketIC server, waiting for port file...");
+
+    // Wait for the port file to be created and contain a valid port
+    let server_url = loop {
+        if let Ok(port_string) = std::fs::read_to_string(&port_file_path) {
+            let port_string = port_string.trim();
+            if !port_string.is_empty() {
+                if let Ok(port) = port_string.parse::<u16>() {
+                    let url = Url::parse(&format!("http://{}:{}/", LOCALHOST, port)).unwrap();
+                    println!("PocketIC server running on: {}", url);
+                    break url;
+                } else {
+                    println!("Invalid port in port file: '{}'", port_string);
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+
+    // Store the server URL for future use
+    *server_guard = Some(server_url.clone());
+    server_url
+}
+
+fn new_pocket_ic() -> PocketIc {
+    let server_url = get_or_start_pocket_ic_server();
+
+    PocketIcBuilder::new()
+        .with_nns_subnet()
+        .with_ii_subnet()
+        .with_server_url(server_url)
+        .build()
 }
 
 lazy_static! {
@@ -224,50 +295,41 @@ fn build_wasm(name: &str) -> Vec<u8> {
     }
 }
 
-fn install_ledger(env: &StateMachine) -> Principal {
+fn install_ledger(env: &PocketIc) -> Principal {
     install_ledger_with_conf(env, LedgerConfig::default())
 }
 
-fn install_ledger_with_conf(env: &StateMachine, config: LedgerConfig) -> Principal {
-    let canister = env.create_canister(None);
+fn install_ledger_with_conf(env: &PocketIc, config: LedgerConfig) -> Principal {
+    let canister_id = env
+        .create_canister_with_id(None, None, CYCLES_LEDGER_PRINCIPAL)
+        .expect("Failed to create canister with CYCLES_LEDGER_PRINCIPAL ID");
+    assert_eq!(
+        canister_id, CYCLES_LEDGER_PRINCIPAL,
+        "Created canister ID {} does not match expected CYCLES_LEDGER_PRINCIPAL {}.",
+        canister_id, CYCLES_LEDGER_PRINCIPAL
+    );
     let init_args = Encode!(&LedgerArgs::Init(config)).unwrap();
-    env.install_canister(canister, get_wasm("cycles-ledger"), init_args, None);
-    canister
+    env.install_canister(canister_id, get_wasm("cycles-ledger"), init_args, None);
+    canister_id
 }
 
-fn install_depositor(env: &StateMachine, ledger_id: Principal) -> Principal {
+fn install_depositor(env: &PocketIc, ledger_id: Principal) -> Principal {
     let depositor_init_arg = Encode!(&DepositorInitArg { ledger_id }).unwrap();
-    let canister = env.create_canister(None);
+    let canister = env.create_canister();
     env.install_canister(canister, get_wasm("depositor"), depositor_init_arg, None);
     env.add_cycles(canister, u128::MAX);
     canister
 }
 
-fn install_fake_cmc(env: &StateMachine) -> Principal {
-    #[derive(CandidType, Default)]
-    struct ProvisionalCreateArg {
-        specified_id: Option<Principal>,
-    }
-    #[derive(CandidType, candid::Deserialize)]
-    struct ProvisionalCreateResponse {
-        canister_id: Principal,
-    }
-    let WasmResult::Reply(response) = env
-        .update_call(
-            Principal::from_text("aaaaa-aa").unwrap(),
-            Principal::anonymous(),
-            "provisional_create_canister_with_cycles",
-            Encode!(&ProvisionalCreateArg {
-                specified_id: Some(CMC_PRINCIPAL),
-            })
-            .unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("Failed to create CMC")
-    };
-    let response = Decode!(&response, ProvisionalCreateResponse).unwrap();
-    assert_eq!(response.canister_id, CMC_PRINCIPAL);
+fn install_fake_cmc(env: &PocketIc) -> Principal {
+    let canister_id = env
+        .create_canister_with_id(None, None, CMC_PRINCIPAL)
+        .expect("Failed to create canister with CMC_PRINCIPAL ID");
+    assert_eq!(
+        canister_id, CMC_PRINCIPAL,
+        "Created canister ID {} does not match expected CMC_PRINCIPAL_ID {}.",
+        canister_id, CMC_PRINCIPAL
+    );
     env.add_cycles(CMC_PRINCIPAL, u128::MAX / 2);
     env.install_canister(
         CMC_PRINCIPAL,
@@ -291,7 +353,7 @@ pub fn account(owner: u64, subaccount: Option<u64>) -> Account {
 }
 
 struct TestEnv {
-    pub state_machine: StateMachine,
+    pub pocket_ic: PocketIc,
     pub ledger_id: Principal,
     pub depositor_id: Principal,
     #[allow(dead_code)]
@@ -300,12 +362,12 @@ struct TestEnv {
 
 impl TestEnv {
     fn setup() -> Self {
-        let state_machine = new_state_machine();
-        let cmc_id = install_fake_cmc(&state_machine);
-        let ledger_id = install_ledger(&state_machine);
-        let depositor_id = install_depositor(&state_machine, ledger_id);
+        let pocket_ic = new_pocket_ic();
+        let cmc_id = install_fake_cmc(&pocket_ic);
+        let ledger_id = install_ledger(&pocket_ic);
+        let depositor_id = install_depositor(&pocket_ic, ledger_id);
         Self {
-            state_machine,
+            pocket_ic,
             ledger_id,
             depositor_id,
             cmc_id,
@@ -313,24 +375,24 @@ impl TestEnv {
     }
 
     fn setup_with_ledger_conf(conf: LedgerConfig) -> Self {
-        let state_machine = new_state_machine();
-        let cmc_id = install_fake_cmc(&state_machine);
-        let ledger_id = install_ledger_with_conf(&state_machine, conf);
-        let depositor_id = install_depositor(&state_machine, ledger_id);
+        let pocket_ic = new_pocket_ic();
+        let cmc_id = install_fake_cmc(&pocket_ic);
+        let ledger_id = install_ledger_with_conf(&pocket_ic, conf);
+        let depositor_id = install_depositor(&pocket_ic, ledger_id);
         Self {
-            state_machine,
+            pocket_ic,
             ledger_id,
             depositor_id,
             cmc_id,
         }
     }
     fn fail_next_create_canister_with(&self, error: CmcCreateCanisterError) {
-        client::fail_next_create_canister_with(&self.state_machine, error)
+        client::fail_next_create_canister_with(&self.pocket_ic, error)
     }
 
-    fn upgrade_ledger(&self, args: Option<UpgradeArgs>) -> Result<(), CallError> {
+    fn upgrade_ledger(&self, args: Option<UpgradeArgs>) -> Result<(), RejectResponse> {
         let arg = Encode!(&Some(LedgerArgs::Upgrade(args))).unwrap();
-        self.state_machine
+        self.pocket_ic
             .upgrade_canister(self.ledger_id, get_wasm("cycles-ledger"), arg, None)
     }
 
@@ -339,7 +401,7 @@ impl TestEnv {
         caller: Principal,
         args: CreateCanisterArgs,
     ) -> Result<CreateCanisterSuccess, CreateCanisterError> {
-        client::create_canister(&self.state_machine, self.ledger_id, caller, args)
+        client::create_canister(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn create_canister_from(
@@ -347,7 +409,7 @@ impl TestEnv {
         caller: Principal,
         args: CreateCanisterFromArgs,
     ) -> Result<CreateCanisterSuccess, CreateCanisterFromError> {
-        client::create_canister_from(&self.state_machine, self.ledger_id, caller, args)
+        client::create_canister_from(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn create_canister_from_or_trap(
@@ -355,20 +417,20 @@ impl TestEnv {
         caller: Principal,
         args: CreateCanisterFromArgs,
     ) -> CreateCanisterSuccess {
-        client::create_canister_from(&self.state_machine, self.ledger_id, caller, args.clone())
-        .unwrap_or_else(|err| {
-            panic!(
-                "Call to create_canister_from({args:?}) from caller {caller} failed with error {err:?}"
-            )
-        })
+        client::create_canister_from(&self.pocket_ic, self.ledger_id, caller, args.clone())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Call to create_canister_from({args:?}) from caller {caller} failed with error {err:?}"
+                )
+            })
     }
 
-    fn canister_status(&self, caller: Principal, canister_id: Principal) -> CanisterStatusResponse {
-        client::canister_status(&self.state_machine, canister_id, caller)
+    fn canister_status(&self, caller: Principal, canister_id: Principal) -> CanisterStatusResult {
+        client::canister_status(&self.pocket_ic, canister_id, caller)
     }
 
     fn deposit(&self, to: Account, amount: u128, memo: Option<Memo>) -> DepositResult {
-        client::deposit(&self.state_machine, self.depositor_id, to, amount, memo)
+        client::deposit(&self.pocket_ic, self.depositor_id, to, amount, memo)
     }
 
     fn get_all_blocks(&self) -> Vec<Block> {
@@ -398,7 +460,7 @@ impl TestEnv {
     }
 
     fn get_block(&self, block_index: Nat) -> Block {
-        client::get_block(&self.state_machine, self.ledger_id, block_index)
+        client::get_block(&self.pocket_ic, self.ledger_id, block_index)
     }
 
     fn get_block_hash(&self, block_index: Nat) -> [u8; 32] {
@@ -410,23 +472,23 @@ impl TestEnv {
     }
 
     fn icrc1_balance_of(&self, account: Account) -> u128 {
-        client::icrc1_balance_of(&self.state_machine, self.ledger_id, account)
+        client::icrc1_balance_of(&self.pocket_ic, self.ledger_id, account)
     }
 
     fn icrc1_fee(&self) -> u128 {
-        client::icrc1_fee(&self.state_machine, self.ledger_id)
+        client::icrc1_fee(&self.pocket_ic, self.ledger_id)
     }
 
     fn icrc1_metadata(&self) -> Vec<(String, MetadataValue)> {
-        client::icrc1_metadata(&self.state_machine, self.ledger_id)
+        client::icrc1_metadata(&self.pocket_ic, self.ledger_id)
     }
 
     fn icrc1_total_supply(&self) -> u128 {
-        client::icrc1_total_supply(&self.state_machine, self.ledger_id)
+        client::icrc1_total_supply(&self.pocket_ic, self.ledger_id)
     }
 
     fn icrc1_transfer(&self, caller: Principal, args: TransferArgs) -> Result<Nat, TransferError> {
-        client::icrc1_transfer(&self.state_machine, self.ledger_id, caller, args)
+        client::icrc1_transfer(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn icrc1_transfer_or_trap(&self, caller: Principal, args: TransferArgs) -> Nat {
@@ -439,11 +501,11 @@ impl TestEnv {
     }
 
     fn icrc2_allowance(&self, from: Account, spender: Account) -> Allowance {
-        client::icrc2_allowance(&self.state_machine, self.ledger_id, from, spender)
+        client::icrc2_allowance(&self.pocket_ic, self.ledger_id, from, spender)
     }
 
     fn icrc2_approve(&self, caller: Principal, args: ApproveArgs) -> Result<Nat, ApproveError> {
-        client::icrc2_approve(&self.state_machine, self.ledger_id, caller, args)
+        client::icrc2_approve(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn icrc2_approve_or_trap(&self, caller: Principal, args: ApproveArgs) -> Nat {
@@ -457,12 +519,12 @@ impl TestEnv {
         caller: Principal,
         args: GetAllowancesArgs,
     ) -> Allowances {
-        client::icrc103_get_allowances(&self.state_machine, self.ledger_id, caller, args)
+        client::icrc103_get_allowances(&self.pocket_ic, self.ledger_id, caller, args)
             .expect("failed to list allowances")
     }
 
     fn icrc106_index_principal(&self) -> Result<Principal, Icrc106Error> {
-        client::icrc106_get_index_principal(&self.state_machine, self.ledger_id)
+        client::icrc106_get_index_principal(&self.pocket_ic, self.ledger_id)
     }
 
     fn icrc2_transfer_from(
@@ -470,7 +532,7 @@ impl TestEnv {
         caller: Principal,
         args: TransferFromArgs,
     ) -> Result<Nat, TransferFromError> {
-        client::icrc2_transfer_from(&self.state_machine, self.ledger_id, caller, args)
+        client::icrc2_transfer_from(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn icrc2_transfer_from_or_trap(&self, caller: Principal, args: TransferFromArgs) -> Nat {
@@ -480,19 +542,15 @@ impl TestEnv {
     }
 
     fn icrc3_get_blocks<N: Into<Nat>>(&self, start_lengths: Vec<(N, N)>) -> GetBlocksResult {
-        client::icrc3_get_blocks(&self.state_machine, self.ledger_id, start_lengths)
+        client::icrc3_get_blocks(&self.pocket_ic, self.ledger_id, start_lengths)
     }
 
     fn icrc3_get_tip_certificate(&self) -> DataCertificate {
-        client::get_tip_certificate(&self.state_machine, self.ledger_id)
+        client::get_tip_certificate(&self.pocket_ic, self.ledger_id)
     }
 
     fn nanos_since_epoch(&self) -> u128 {
-        self.state_machine
-            .time()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        self.pocket_ic.get_time().as_nanos_since_unix_epoch() as u128
     }
 
     fn nanos_since_epoch_u64(&self) -> u64 {
@@ -503,12 +561,12 @@ impl TestEnv {
     }
 
     fn advance_time(&self, duration: Duration) {
-        self.state_machine.advance_time(duration);
-        self.state_machine.tick();
+        self.pocket_ic.advance_time(duration);
+        self.pocket_ic.tick();
     }
 
     fn withdraw(&self, caller: Principal, args: WithdrawArgs) -> Result<Nat, WithdrawError> {
-        client::withdraw(&self.state_machine, self.ledger_id, caller, args)
+        client::withdraw(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn withdraw_or_trap(&self, caller: Principal, args: WithdrawArgs) -> Nat {
@@ -522,7 +580,7 @@ impl TestEnv {
         caller: Principal,
         args: WithdrawFromArgs,
     ) -> Result<Nat, WithdrawFromError> {
-        client::withdraw_from(&self.state_machine, self.ledger_id, caller, args)
+        client::withdraw_from(&self.pocket_ic, self.ledger_id, caller, args)
     }
 
     fn withdraw_from_or_trap(&self, caller: Principal, args: WithdrawFromArgs) -> Nat {
@@ -533,11 +591,11 @@ impl TestEnv {
     }
 
     fn transaction_hashes(&self) -> BTreeMap<[u8; 32], u64> {
-        client::transaction_hashes(&self.state_machine, self.ledger_id)
+        client::transaction_hashes(&self.pocket_ic, self.ledger_id)
     }
 
     fn transaction_timestamps(&self) -> BTreeMap<(u64, u64), ()> {
-        client::transaction_timestamps(&self.state_machine, self.ledger_id)
+        client::transaction_timestamps(&self.pocket_ic, self.ledger_id)
     }
 
     // Validate that the given [response_certificate], [last_block_index], and [last_block_hash]
@@ -549,7 +607,10 @@ impl TestEnv {
             hash_tree,
         } = self.icrc3_get_tip_certificate();
         let certificate = Certificate::from_cbor(certificate.as_slice()).unwrap();
-        let root_key = self.state_machine.root_key();
+        let root_key = self
+            .pocket_ic
+            .root_key()
+            .expect("Root key should be available");
         assert_matches!(
             certificate.verify(self.ledger_id.as_slice(), &root_key),
             Ok(_)
@@ -655,6 +716,121 @@ impl IsCyclesLedger for TestEnv {
     }
 }
 
+struct AsyncTestEnv {
+    pub pocket_ic: AsyncPocketIc,
+    pub ledger_id: Principal,
+    pub depositor_id: Principal,
+    #[allow(dead_code)]
+    pub cmc_id: Principal,
+}
+
+impl AsyncTestEnv {
+    async fn setup() -> Self {
+        let pocket_ic = PocketIcBuilder::new()
+            .with_nns_subnet()
+            .with_system_subnet()
+            .build_async()
+            .await;
+        let cmc_id = Self::install_fake_cmc(&pocket_ic).await;
+        let ledger_id = Self::install_ledger(&pocket_ic).await;
+        let depositor_id = Self::install_depositor(&pocket_ic, ledger_id).await;
+        Self {
+            pocket_ic,
+            ledger_id,
+            depositor_id,
+            cmc_id,
+        }
+    }
+
+    async fn install_fake_cmc(pocket_ic: &AsyncPocketIc) -> Principal {
+        let topology = pocket_ic.topology().await;
+        let nns_subnet_id = topology.get_nns().expect("NNS subnet should be available");
+        let fake_cmc_id = pocket_ic
+            .create_canister_on_subnet(None, None, nns_subnet_id)
+            .await;
+        let wasm = get_wasm("fake-cmc");
+        pocket_ic
+            .install_canister(fake_cmc_id, wasm, vec![], None)
+            .await;
+        fake_cmc_id
+    }
+
+    async fn install_ledger(pocket_ic: &AsyncPocketIc) -> Principal {
+        Self::install_ledger_with_conf(pocket_ic, LedgerConfig::default()).await
+    }
+
+    async fn install_ledger_with_conf(
+        pocket_ic: &AsyncPocketIc,
+        config: LedgerConfig,
+    ) -> Principal {
+        let topology = pocket_ic.topology().await;
+        let nns_subnet_id = topology.get_nns().expect("NNS subnet should be available");
+        let ledger_id = pocket_ic
+            .create_canister_on_subnet(None, None, nns_subnet_id)
+            .await;
+
+        let wasm = get_wasm("cycles-ledger");
+        let init_args = Encode!(&LedgerArgs::Init(config)).unwrap();
+        pocket_ic
+            .install_canister(ledger_id, wasm, init_args, None)
+            .await;
+        ledger_id
+    }
+
+    async fn install_depositor(pocket_ic: &AsyncPocketIc, ledger_id: Principal) -> Principal {
+        let wasm = get_wasm("depositor");
+        let depositor_init_arg = Encode!(&DepositorInitArg { ledger_id }).unwrap();
+        let depositor_id = pocket_ic.create_canister().await;
+        pocket_ic
+            .install_canister(depositor_id, wasm, depositor_init_arg, None)
+            .await;
+        pocket_ic.add_cycles(depositor_id, u128::MAX).await;
+        depositor_id
+    }
+
+    async fn deposit(&self, to: Account, cycles: u128, memo: Option<Memo>) -> DepositResult {
+        let deposit_arg = depositor::endpoints::DepositArg { cycles, to, memo };
+        let arg = Encode!(&deposit_arg).unwrap();
+        let res = self
+            .pocket_ic
+            .update_call(self.depositor_id, to.owner, "deposit", arg)
+            .await
+            .expect("Failed to call deposit");
+        Decode!(&res, DepositResult).expect("Failed to decode DepositResult")
+    }
+
+    async fn icrc1_balance_of(&self, account: Account) -> u128 {
+        let arg = Encode!(&account).unwrap();
+        let res = self
+            .pocket_ic
+            .query_call(
+                self.ledger_id,
+                Principal::anonymous(),
+                "icrc1_balance_of",
+                arg,
+            )
+            .await
+            .expect("Failed to call icrc1_balance_of");
+        let balance: Nat = Decode!(&res, Nat).expect("Failed to decode balance");
+        balance.0.to_u128().expect("Balance too large for u128")
+    }
+
+    async fn icrc1_fee(&self) -> u128 {
+        let res = self
+            .pocket_ic
+            .query_call(
+                self.ledger_id,
+                Principal::anonymous(),
+                "icrc1_fee",
+                Encode!().unwrap(),
+            )
+            .await
+            .expect("Failed to call icrc1_fee");
+        let fee: Nat = Decode!(&res, Nat).expect("Failed to decode fee");
+        fee.0.to_u128().expect("Fee too large for u128")
+    }
+}
+
 #[test]
 fn test_deposit_flow() {
     let env = TestEnv::setup();
@@ -688,7 +864,7 @@ fn test_deposit_flow() {
             // 1.2.1 effective fee of mint blocks is 0.
             effective_fee: Some(0),
             // 1.2.2 timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: block0.timestamp,
             transaction: Transaction {
                 // 1.2.3 transaction.created_at_time is not set.
                 created_at_time: None,
@@ -730,7 +906,7 @@ fn test_deposit_flow() {
             // 2.2.1 effective fee of mint blocks is 0.
             effective_fee: Some(0),
             // 2.2.2 timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: block1.timestamp,
             transaction: Transaction {
                 // 2.2.3 transaction.created_at_time is not set.
                 created_at_time: None,
@@ -782,7 +958,7 @@ fn test_withdraw_flow() {
     let account1_2 = account(1, Some(2));
     let account1_3 = account(1, Some(3));
     let account1_4 = account(1, Some(4));
-    let withdraw_receiver = env.state_machine.create_canister(None);
+    let withdraw_receiver = env.pocket_ic.create_canister();
 
     // make deposits to the user and check the result
     let deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
@@ -796,7 +972,7 @@ fn test_withdraw_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // withdraw cycles from main account
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 500_000_000_u128;
     let withdraw_idx = env.withdraw_or_trap(
         account1.owner,
@@ -809,7 +985,7 @@ fn test_withdraw_flow() {
     );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc1_balance_of(account1),
@@ -819,8 +995,9 @@ fn test_withdraw_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -829,7 +1006,7 @@ fn test_withdraw_flow() {
             // other Ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -848,7 +1025,7 @@ fn test_withdraw_flow() {
     );
 
     // withdraw cycles from subaccount
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 100_000_000_u128;
     let withdraw_idx = env
         .withdraw(
@@ -863,7 +1040,7 @@ fn test_withdraw_flow() {
         .unwrap();
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc1_balance_of(account1_1),
@@ -873,8 +1050,9 @@ fn test_withdraw_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -883,7 +1061,7 @@ fn test_withdraw_flow() {
             // other Ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -903,7 +1081,7 @@ fn test_withdraw_flow() {
 
     // withdraw cycles from subaccount with created_at_time set
     let now = env.nanos_since_epoch_u64();
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 300_000_000_u128;
     let withdraw_idx = env
         .withdraw(
@@ -918,7 +1096,7 @@ fn test_withdraw_flow() {
         .unwrap();
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc1_balance_of(account1_3),
@@ -928,8 +1106,9 @@ fn test_withdraw_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -938,7 +1117,7 @@ fn test_withdraw_flow() {
             // other Ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was set to now.
                 created_at_time: Some(now),
@@ -965,7 +1144,7 @@ fn test_withdraw_duplicate() {
     let env = TestEnv::setup();
     let fee = env.icrc1_fee();
     let account1 = account(1, None);
-    let withdraw_receiver = env.state_machine.create_canister(None);
+    let withdraw_receiver = env.pocket_ic.create_canister();
 
     // make deposits to the user and check the result
     let deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
@@ -974,7 +1153,7 @@ fn test_withdraw_duplicate() {
 
     let now = env.nanos_since_epoch_u64();
     // withdraw cycles from main account
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 900_000_000_u128;
     let withdraw_idx = env.withdraw_or_trap(
         account1.owner,
@@ -987,7 +1166,7 @@ fn test_withdraw_duplicate() {
     );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc1_balance_of(account1),
@@ -1102,11 +1281,9 @@ fn test_withdraw_fails() {
 
     // withdraw cycles to deleted canister
     let balance_before_attempt = env.icrc1_balance_of(account1);
-    let deleted_canister = env.state_machine.create_canister(None);
-    env.state_machine
-        .stop_canister(deleted_canister, None)
-        .unwrap();
-    env.state_machine
+    let deleted_canister = env.pocket_ic.create_canister();
+    env.pocket_ic.stop_canister(deleted_canister, None).unwrap();
+    env.pocket_ic
         .delete_canister(deleted_canister, None)
         .unwrap();
     let withdraw_result = env
@@ -1142,12 +1319,13 @@ fn test_withdraw_fails() {
     // Therefore we expect two new blocks, a burn of amount + fee
     // and a mint of amount.
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(encode_withdraw_memo(&deleted_canister)),
@@ -1160,12 +1338,13 @@ fn test_withdraw_fails() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len()) + 1u8);
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
@@ -1248,7 +1427,7 @@ fn test_withdraw_from_flow() {
     let account1_4 = account(1, Some(4));
     let withdrawer1 = account(102, None);
     let withdrawer1_1 = account(102, Some(1));
-    let withdraw_receiver = env.state_machine.create_canister(None);
+    let withdraw_receiver = env.pocket_ic.create_canister();
 
     // make deposits to the user and check the result
     let deposit_res = env.deposit(account1, 1_000_000_000 + fee, None);
@@ -1262,7 +1441,7 @@ fn test_withdraw_from_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // withdraw cycles from main account
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 500_000_000_u128;
     env.icrc2_approve_or_trap(
         account1.owner,
@@ -1289,7 +1468,7 @@ fn test_withdraw_from_flow() {
     );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc2_allowance(account1, withdrawer1),
@@ -1306,8 +1485,9 @@ fn test_withdraw_from_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -1316,7 +1496,7 @@ fn test_withdraw_from_flow() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -1335,7 +1515,7 @@ fn test_withdraw_from_flow() {
     );
 
     // withdraw cycles from subaccount
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 100_000_000_u128;
     env.icrc2_approve_or_trap(
         account1_1.owner,
@@ -1362,7 +1542,7 @@ fn test_withdraw_from_flow() {
     );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc2_allowance(account1_1, withdrawer1),
@@ -1379,8 +1559,9 @@ fn test_withdraw_from_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -1389,7 +1570,7 @@ fn test_withdraw_from_flow() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -1409,7 +1590,7 @@ fn test_withdraw_from_flow() {
 
     // withdraw cycles from subaccount with created_at_time set
     let now = env.nanos_since_epoch_u64();
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 300_000_000_u128;
     env.icrc2_approve_or_trap(
         account1_3.owner,
@@ -1436,7 +1617,7 @@ fn test_withdraw_from_flow() {
     );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc2_allowance(account1_1, withdrawer1),
@@ -1453,8 +1634,9 @@ fn test_withdraw_from_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -1463,7 +1645,7 @@ fn test_withdraw_from_flow() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was set to now.
                 created_at_time: Some(now),
@@ -1482,7 +1664,7 @@ fn test_withdraw_from_flow() {
     );
 
     // withdraw cycles using spender subaccount
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(withdraw_receiver);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(withdraw_receiver);
     let withdraw_amount = 500_000_000_u128;
     env.icrc2_approve_or_trap(
         account1_4.owner,
@@ -1509,7 +1691,7 @@ fn test_withdraw_from_flow() {
     );
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(withdraw_receiver)
+        env.pocket_ic.cycle_balance(withdraw_receiver)
     );
     assert_eq!(
         env.icrc2_allowance(account1_4, withdrawer1_1),
@@ -1526,8 +1708,9 @@ fn test_withdraw_from_flow() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
 
     // check that the burn block created is correct
+    let actual_block = env.get_block(withdraw_idx.clone());
     assert_display_eq(
-        &env.get_block(withdraw_idx.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(withdraw_idx - 1u8).hash()),
@@ -1536,7 +1719,7 @@ fn test_withdraw_from_flow() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -1747,11 +1930,9 @@ fn test_withdraw_from_fails() {
     let allowance_before_attempt = env.icrc2_allowance(account1_2, withdrawer1);
     let balance_before_attempt = env.icrc1_balance_of(account1_2);
     let blocks = env.icrc3_get_blocks(vec![(u64::MIN, u64::MAX)]).blocks;
-    let deleted_canister = env.state_machine.create_canister(None);
-    env.state_machine
-        .stop_canister(deleted_canister, None)
-        .unwrap();
-    env.state_machine
+    let deleted_canister = env.pocket_ic.create_canister();
+    env.pocket_ic.stop_canister(deleted_canister, None).unwrap();
+    env.pocket_ic
         .delete_canister(deleted_canister, None)
         .unwrap();
     let withdraw_result = env
@@ -1792,12 +1973,13 @@ fn test_withdraw_from_fails() {
     // Therefore we expect three new blocks, a burn of amount + fee,
     // a mint of amount, and an approve of amount - fee.
     assert_eq!(blocks.len() + 3, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(encode_withdraw_memo(&deleted_canister)),
@@ -1810,12 +1992,13 @@ fn test_withdraw_from_fails() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len()) + 1u8);
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
@@ -1828,12 +2011,13 @@ fn test_withdraw_from_fails() {
         }
         .to_value(),
     };
+    let actual_approve_refund_block = env.get_block(Nat::from(blocks.len()) + 2u8);
     let approve_refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 2u8,
         block: Block {
             phash: Some(refund_block.block.hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_approve_refund_block.timestamp,
             transaction: Transaction {
                 operation: Operation::Approve {
                     from: account1_2,
@@ -1910,12 +2094,13 @@ fn test_withdraw_from_fails() {
     // Refunding the approval is not worth it because it would cost more than the approval amount.
     // Therefore we expect two new blocks, a burn of amount + fee and a mint of amount.
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(encode_withdraw_memo(&deleted_canister)),
@@ -1928,12 +2113,13 @@ fn test_withdraw_from_fails() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len()) + 1u8);
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
@@ -2007,12 +2193,13 @@ fn test_withdraw_from_fails() {
     // Refunding the approval is not possible because it would cost more than the account can pay for.
     // Therefore we expect two new blocks, a burn of amount + fee and a mint of amount.
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(encode_withdraw_memo(&deleted_canister)),
@@ -2025,12 +2212,13 @@ fn test_withdraw_from_fails() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len()) + 1u8);
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
@@ -2050,7 +2238,7 @@ fn test_withdraw_from_fails() {
     assert_vec_display_eq(blocks, env.get_all_blocks_with_ids());
 
     // duplicate
-    let withdraw_receiver_balance = env.state_machine.cycle_balance(env.depositor_id);
+    let withdraw_receiver_balance = env.pocket_ic.cycle_balance(env.depositor_id);
     let withdraw_amount = 200_000_000_u128;
     let created_at_time = env.nanos_since_epoch_u64();
     env.icrc2_approve_or_trap(
@@ -2091,7 +2279,7 @@ fn test_withdraw_from_fails() {
         .unwrap_err();
     assert_eq!(
         withdraw_receiver_balance + withdraw_amount,
-        env.state_machine.cycle_balance(env.depositor_id)
+        env.pocket_ic.cycle_balance(env.depositor_id)
     );
     assert_eq!(env.get_all_blocks().len(), blocks.len() + 1);
     assert_eq!(
@@ -2139,12 +2327,13 @@ fn test_withdraw_from_fails() {
     // Therefore we expect three new blocks, a burn of amount + fee,
     // a mint of amount, and an approve of amount - fee.
     assert_eq!(blocks.len() + 3, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(encode_withdraw_memo(&deleted_canister)),
@@ -2157,12 +2346,13 @@ fn test_withdraw_from_fails() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len()) + 1u8);
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 1u8,
         block: Block {
             phash: Some(burn_block.block.hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
@@ -2175,12 +2365,13 @@ fn test_withdraw_from_fails() {
         }
         .to_value(),
     };
+    let actual_approve_refund_block = env.get_block(Nat::from(blocks.len()) + 2u8);
     let approve_refund_block = BlockWithId {
         id: Nat::from(blocks.len()) + 2u8,
         block: Block {
             phash: Some(refund_block.block.hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_approve_refund_block.timestamp,
             transaction: Transaction {
                 operation: Operation::Approve {
                     from: account1_6,
@@ -2253,12 +2444,13 @@ fn test_withdraw_from_fails() {
     // Refunding the approval is not possible because it would cost more than the account can pay for.
     // Therefore we expect two new blocks, a burn of amount + fee and a mint of amount.
     assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(encode_withdraw_memo(&deleted_canister)),
@@ -2334,7 +2526,7 @@ fn test_icrc2_approve_self() {
         created_at_time: None,
     };
     let err = env
-        .state_machine
+        .pocket_ic
         .update_call(
             env.ledger_id,
             from.owner,
@@ -2342,8 +2534,12 @@ fn test_icrc2_approve_self() {
             Encode!(&args).unwrap(),
         )
         .unwrap_err();
-    assert_eq!(err.code, ErrorCode::CanisterCalledTrap);
-    assert!(err.description.ends_with("self approval is not allowed"));
+    assert_eq!(err.error_code, ErrorCode::CanisterCalledTrap);
+    assert!(
+        err.reject_message.contains("self approval is not allowed"),
+        "reject_message: {}",
+        err.reject_message
+    );
     assert_eq!(env.icrc1_balance_of(from), 1_000_000_000);
     assert_eq!(env.icrc1_total_supply(), 1_000_000_000);
 }
@@ -2490,9 +2686,8 @@ fn test_approval_expiring() {
     assert_eq!(allowance.expires_at, Some(expiration_3h));
 
     // Test expired approval pruning, advance time 2 hours.
-    env.state_machine
-        .advance_time(Duration::from_secs(2 * 3600));
-    env.state_machine.tick();
+    env.pocket_ic.advance_time(Duration::from_secs(2 * 3600));
+    env.pocket_ic.tick();
 
     // Add additional approval to trigger expired approval pruning
     env.icrc2_approve_or_trap(
@@ -3181,7 +3376,7 @@ fn test_icrc1_transfer() {
     // Test icrc1_transfer with created_at_time set.
     test_icrc1_transfer_ok_with_created_at_time(&env);
     // Move time forward to change the transaction created_at_time
-    env.state_machine.advance_time(Duration::from_secs(1));
+    env.pocket_ic.advance_time(Duration::from_secs(1));
     // Submit again transactions. created_at_time has changed which
     // means no deduplication should happen
     test_icrc1_transfer_ok_with_created_at_time(&env);
@@ -3299,7 +3494,7 @@ fn test_icrc1_transfer_too_old(env: &TestEnv) {
     let too_old_created_at_time = Duration::from_nanos(ledger_time)
         - config::TRANSACTION_WINDOW
         - config::PERMITTED_DRIFT
-        - Duration::from_nanos(1);
+        - Duration::from_nanos(100);
 
     let account_to = account(2, None);
     let account_from = account(3, None);
@@ -3336,7 +3531,7 @@ fn test_icrc1_transfer_in_the_future(env: &TestEnv) {
     // after ledger_time + PERMITTED_DRIFT
     let ledger_time = env.nanos_since_epoch_u64();
     let in_the_future_created_at_time =
-        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(100);
 
     let account_to = account(2, None);
     let account_from = account(3, None);
@@ -3358,10 +3553,23 @@ fn test_icrc1_transfer_in_the_future(env: &TestEnv) {
         created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
         memo: None,
     };
-    assert_eq!(
-        Err(TransferError::CreatedInFuture { ledger_time }),
-        env.icrc1_transfer(account_from.owner, args),
-    );
+    let result = env.icrc1_transfer(account_from.owner, args);
+    match result {
+        Err(TransferError::CreatedInFuture {
+            ledger_time: actual_ledger_time,
+        }) => {
+            // PocketIC advances time by a few nanoseconds during processing
+            let time_diff = actual_ledger_time.abs_diff(ledger_time);
+            assert!(
+                time_diff <= 10,
+                "Time difference too large: {} vs {}, diff: {}",
+                actual_ledger_time,
+                ledger_time,
+                time_diff
+            );
+        }
+        other => panic!("Expected CreatedInFuture error, got: {:?}", other),
+    }
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
     assert_eq!(total_supply, env.icrc1_total_supply());
@@ -3412,7 +3620,7 @@ fn test_icrc1_transfer_insufficient_funds_with_params(
             // Amount is 1 cycle more than what account_from can transfer
             amount: Nat::from(amount),
             fee: set_fee.then_some(Nat::from(fee)),
-            created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+            created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64() + 1000),
             memo: set_memo.then_some(Memo::from(vec![2; 32])),
         };
         assert_eq!(
@@ -3479,14 +3687,15 @@ fn test_icrc1_transfer_duplicate_with_params(
 
     // Try different valid non-optional created_at_time
     for created_at_time in [
-        // 1 nanosecond before being too old
-        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT,
-        // 1 nanosecond before ledger_time
-        ledger_time - Duration::from_nanos(1),
-        // 1 nanosecond after ledger_time
-        ledger_time + Duration::from_nanos(1),
-        // 1 nanosecond before being in the future
-        ledger_time + config::PERMITTED_DRIFT,
+        // A few nanoseconds before being too old (accounting for PocketIC time advancement)
+        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT
+            + Duration::from_nanos(10),
+        // A few nanoseconds before ledger_time
+        ledger_time - Duration::from_nanos(10),
+        // A few nanoseconds after ledger_time
+        ledger_time + Duration::from_nanos(10),
+        // A few nanoseconds before being in the future
+        ledger_time + config::PERMITTED_DRIFT - Duration::from_nanos(10),
     ] {
         // Deposit so that account_from has enough fee to make one
         // or two transfers. Note that in case account_from has
@@ -3539,7 +3748,7 @@ fn test_icrc1_transfer_duplicate(env: &TestEnv) {
     test_icrc1_transfer_duplicate_with_params(env, SetFee, SetMemo, false);
     // Change the ledger time to avoid duplicates between the first
     // four tests and the next four tests.
-    env.state_machine.advance_time(Duration::from_nanos(1));
+    env.pocket_ic.advance_time(Duration::from_nanos(1));
     test_icrc1_transfer_duplicate_with_params(env, DontSetFee, DontSetMemo, true);
     test_icrc1_transfer_duplicate_with_params(env, SetFee, DontSetMemo, true);
     test_icrc1_transfer_duplicate_with_params(env, DontSetFee, SetMemo, true);
@@ -3793,7 +4002,7 @@ fn test_icrc2_approve_too_old(env: &TestEnv) {
     let too_old_created_at_time = Duration::from_nanos(ledger_time)
         - config::TRANSACTION_WINDOW
         - config::PERMITTED_DRIFT
-        - Duration::from_nanos(1);
+        - Duration::from_nanos(100);
 
     assert_icrc2_approve_failure(
         env,
@@ -3816,22 +4025,56 @@ fn test_icrc2_approve_in_the_future(env: &TestEnv) {
     // after ledger_time + PERMITTED_DRIFT
     let ledger_time = env.nanos_since_epoch_u64();
     let in_the_future_created_at_time =
-        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(100);
 
-    assert_icrc2_approve_failure(
-        env,
-        |_, _| ApproveError::CreatedInFuture { ledger_time },
-        |account_from, account_spender| ApproveArgs {
-            from_subaccount: account_from.subaccount,
-            spender: account_spender,
-            amount: Nat::from(0u8),
-            fee: None,
-            created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
-            memo: None,
-            expected_allowance: None,
-            expires_at: None,
-        },
+    let account_spender = account(2, None);
+    let account_from = account(3, None);
+
+    // deposit enough funds to account_from such that the transaction
+    // would be accepted if created_at_time was correct
+    let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
+
+    let account_spender_balance = env.icrc1_balance_of(account_spender);
+    let account_from_balance = env.icrc1_balance_of(account_from);
+    let total_supply = env.icrc1_total_supply();
+    let blocks = env.get_all_blocks();
+
+    let args = ApproveArgs {
+        from_subaccount: account_from.subaccount,
+        spender: account_spender,
+        amount: Nat::from(0u8),
+        fee: None,
+        created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
+        memo: None,
+        expected_allowance: None,
+        expires_at: None,
+    };
+
+    let result = env.icrc2_approve(account_from.owner, args);
+    match result {
+        Err(ApproveError::CreatedInFuture {
+            ledger_time: actual_ledger_time,
+        }) => {
+            // PocketIC advances time by a few nanoseconds during processing
+            let time_diff = actual_ledger_time.abs_diff(ledger_time);
+            assert!(
+                time_diff <= 10,
+                "Time difference too large: {} vs {}, diff: {}",
+                actual_ledger_time,
+                ledger_time,
+                time_diff
+            );
+        }
+        other => panic!("Expected CreatedInFuture error, got: {:?}", other),
+    }
+
+    assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+    assert_eq!(
+        account_spender_balance,
+        env.icrc1_balance_of(account_spender)
     );
+    assert_eq!(total_supply, env.icrc1_total_supply());
+    assert_vec_display_eq(blocks, env.get_all_blocks());
 }
 
 fn test_icrc2_approve_allowance_changed(env: &TestEnv) {
@@ -3866,20 +4109,54 @@ fn test_icrc2_approve_expired(env: &TestEnv) {
     let ledger_time = env.nanos_since_epoch_u64();
     // anything before or equals to ledger_time should fail.
     for expires_at in [0, ledger_time - 1, ledger_time] {
-        assert_icrc2_approve_failure(
-            env,
-            |_, _| ApproveError::Expired { ledger_time },
-            |account_from, account_spender| ApproveArgs {
-                from_subaccount: account_from.subaccount,
-                spender: account_spender,
-                amount: Nat::from(1u8),
-                expected_allowance: None,
-                expires_at: Some(expires_at),
-                fee: None,
-                memo: None,
-                created_at_time: None,
-            },
-        )
+        let account_spender = account(2, None);
+        let account_from = account(3, None);
+
+        // deposit enough funds to account_from such that the transaction
+        // would be accepted if expires_at was correct
+        let _deposit_index = env.deposit(account_from, 2 * env.icrc1_fee(), None);
+
+        let account_spender_balance = env.icrc1_balance_of(account_spender);
+        let account_from_balance = env.icrc1_balance_of(account_from);
+        let total_supply = env.icrc1_total_supply();
+        let blocks = env.get_all_blocks();
+
+        let args = ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(1u8),
+            expected_allowance: None,
+            expires_at: Some(expires_at),
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        };
+
+        let result = env.icrc2_approve(account_from.owner, args);
+        match result {
+            Err(ApproveError::Expired {
+                ledger_time: actual_ledger_time,
+            }) => {
+                // PocketIC advances time by a few nanoseconds during processing
+                let time_diff = actual_ledger_time.abs_diff(ledger_time);
+                assert!(
+                    time_diff <= 10,
+                    "Time difference too large: {} vs {}, diff: {}",
+                    actual_ledger_time,
+                    ledger_time,
+                    time_diff
+                );
+            }
+            other => panic!("Expected Expired error, got: {:?}", other),
+        }
+
+        assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
+        assert_eq!(
+            account_spender_balance,
+            env.icrc1_balance_of(account_spender)
+        );
+        assert_eq!(total_supply, env.icrc1_total_supply());
+        assert_vec_display_eq(blocks, env.get_all_blocks());
     }
 }
 
@@ -3964,10 +4241,10 @@ fn test_icrc2_approve_insufficient_funds_with_params(
         spender: account_spender,
         amount: Nat::from(1u8),
         fee: set_fee.then_some(Nat::from(fee)),
-        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64() + 100),
         memo: set_memo.then_some(Memo::from(vec![2; 32])),
         expected_allowance: set_expected_allowance.then_some(current_allowance),
-        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1),
+        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1000),
     };
     assert_eq!(
         Err(ApproveError::InsufficientFunds {
@@ -4032,10 +4309,10 @@ fn test_icrc2_approve_duplicate_with_params(
         spender: account_spender,
         amount: Nat::from(1u8),
         fee: set_fee.then_some(Nat::from(fee)),
-        created_at_time: Some(env.nanos_since_epoch_u64()),
+        created_at_time: Some(env.nanos_since_epoch_u64() + 100),
         memo: set_memo.then_some(Memo::from(vec![2; 32])),
         expected_allowance: set_expected_allowance.then_some(current_allowance),
-        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1),
+        expires_at: set_expires_at.then_some(env.nanos_since_epoch_u64() + 1000),
     };
     let approve_res = env.icrc2_approve_or_trap(account_from.owner, args.clone());
 
@@ -4093,7 +4370,7 @@ fn test_icrc2_approve() {
     // Test with created_at_time set.
     test_icrc2_approve_ok_with_created_at_time(&env);
     // Move time forward to change the transaction created_at_time
-    env.state_machine.advance_time(Duration::from_secs(1));
+    env.pocket_ic.advance_time(Duration::from_secs(1));
     // Submit again transactions. created_at_time has changed which
     // means no deduplication should happen
     test_icrc2_approve_ok_with_created_at_time(&env);
@@ -4338,7 +4615,7 @@ fn test_icrc2_transfer_from_in_the_future(env: &TestEnv) {
     // after ledger_time + PERMITTED_DRIFT
     let ledger_time = env.nanos_since_epoch_u64();
     let in_the_future_created_at_time =
-        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(1);
+        Duration::from_nanos(ledger_time) + config::PERMITTED_DRIFT + Duration::from_nanos(100);
 
     let account_to = account(2, None);
     let account_from = account(3, None);
@@ -4375,10 +4652,23 @@ fn test_icrc2_transfer_from_in_the_future(env: &TestEnv) {
         created_at_time: Some(in_the_future_created_at_time.as_nanos() as u64),
         memo: None,
     };
-    assert_eq!(
-        Err(TransferFromError::CreatedInFuture { ledger_time }),
-        env.icrc2_transfer_from(account_spender.owner, args),
-    );
+    let result = env.icrc2_transfer_from(account_spender.owner, args);
+    match result {
+        Err(TransferFromError::CreatedInFuture {
+            ledger_time: actual_ledger_time,
+        }) => {
+            // PocketIC advances time by a few nanoseconds during processing
+            let time_diff = actual_ledger_time.abs_diff(ledger_time);
+            assert!(
+                time_diff <= 10,
+                "Time difference too large: {} vs {}, diff: {}",
+                actual_ledger_time,
+                ledger_time,
+                time_diff
+            );
+        }
+        other => panic!("Expected CreatedInFuture error, got: {:?}", other),
+    }
     assert_eq!(account_from_balance, env.icrc1_balance_of(account_from));
     assert_eq!(account_to_balance, env.icrc1_balance_of(account_to));
     assert_eq!(
@@ -4444,7 +4734,7 @@ fn test_icrc2_transfer_from_insufficient_funds_with_params(
         // Amount is 1 cycle more than what account_from can transfer
         amount: Nat::from(1u8),
         fee: set_fee.then_some(Nat::from(fee)),
-        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64()),
+        created_at_time: set_created_at_time.then_some(env.nanos_since_epoch_u64() + 100),
         memo: set_memo.then_some(Memo::from(vec![2; 32])),
     };
     assert_eq!(
@@ -4506,7 +4796,16 @@ fn test_icrc2_transfer_from_approval_expired(env: &TestEnv) {
         memo: None,
     };
     // As soon as time >= expires_at the allowance no longer exists
-    assert_eq!(expires_at, env.nanos_since_epoch_u64());
+    // Allow for small time drift due to PocketIC's automatic advancement
+    let current_time = env.nanos_since_epoch_u64();
+    let time_diff = current_time.abs_diff(expires_at);
+    assert!(
+        time_diff <= 10,
+        "Time difference too large: {} vs {}, diff: {}",
+        current_time,
+        expires_at,
+        time_diff
+    );
     assert_eq!(
         Err(expired_approval()),
         env.icrc2_transfer_from(account_spender.owner, args)
@@ -4588,14 +4887,15 @@ fn test_icrc2_transfer_from_duplicate_with_params(
 
     // Try different valid non-optional created_at_time
     for created_at_time in [
-        // 1 nanosecond before being too old
-        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT,
-        // 1 nanosecond before ledger_time
-        ledger_time - Duration::from_nanos(1),
-        // 1 nanosecond after ledger_time
-        ledger_time + Duration::from_nanos(1),
-        // 1 nanosecond before being in the future
-        ledger_time + config::PERMITTED_DRIFT,
+        // A few nanoseconds before being too old (accounting for PocketIC time advancement)
+        ledger_time - config::TRANSACTION_WINDOW - config::PERMITTED_DRIFT
+            + Duration::from_nanos(10),
+        // A few nanoseconds before ledger_time
+        ledger_time - Duration::from_nanos(10),
+        // A few nanoseconds after ledger_time
+        ledger_time + Duration::from_nanos(10),
+        // A few nanoseconds before being in the future
+        ledger_time + config::PERMITTED_DRIFT - Duration::from_nanos(10),
     ] {
         let amount_to_deposit = if has_fee_for_second_transfer {
             4 * fee
@@ -4676,7 +4976,7 @@ fn test_icrc2_transfer_from_duplicate(env: &TestEnv) {
     test_icrc2_transfer_from_duplicate_with_params(env, SetFee, SetMemo, false);
     // Change the ledger time to avoid duplicates between the first
     // four tests and the next four tests.
-    env.state_machine.advance_time(Duration::from_nanos(1));
+    env.pocket_ic.advance_time(Duration::from_nanos(1));
     test_icrc2_transfer_from_duplicate_with_params(env, DontSetFee, DontSetMemo, true);
     test_icrc2_transfer_from_duplicate_with_params(env, SetFee, DontSetMemo, true);
     test_icrc2_transfer_from_duplicate_with_params(env, DontSetFee, SetMemo, true);
@@ -4694,7 +4994,7 @@ fn test_icrc2_transfer_from() {
     // Test icrc1_transfer with created_at_time set.
     test_icrc2_transfer_from_ok_with_created_at_time(&env);
     // Move time forward to change the transaction created_at_time
-    env.state_machine.advance_time(Duration::from_secs(1));
+    env.pocket_ic.advance_time(Duration::from_secs(1));
     // Submit again transactions. created_at_time has changed which
     // means no deduplication should happen
     test_icrc2_transfer_from_ok_with_created_at_time(&env);
@@ -4736,7 +5036,7 @@ fn test_icrc2_transfer_fails_if_approve_smaller_than_amount_plus_fee() {
         Block {
             phash: Some(env.get_block_hash(deposit_res.block_index)),
             effective_fee: None,
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: block.timestamp,
             transaction: Transaction {
                 operation: Operation::Approve {
                     from: account1,
@@ -4801,7 +5101,7 @@ fn test_deduplication() {
         Block {
             phash: Some(env.get_block_hash(deposit_res.block_index)),
             effective_fee: None,
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: block.timestamp,
             transaction: Transaction {
                 operation: Operation::Approve {
                     from: account1,
@@ -4946,11 +5246,11 @@ fn test_pruning_transactions() {
     check_tx_timestamps(2, (time, block_index), (time, transfer_idx_3));
 
     // Advance time to move the Transaction window
-    env.state_machine.advance_time(Duration::from_nanos(
+    env.pocket_ic.advance_time(Duration::from_nanos(
         config::TRANSACTION_WINDOW.as_nanos() as u64
             + config::PERMITTED_DRIFT.as_nanos() as u64 * 2,
     ));
-    env.state_machine.tick();
+    env.pocket_ic.tick();
     let time = env.nanos_since_epoch_u64();
     // Create another transaction to trigger pruning
     let block_index = env
@@ -5361,7 +5661,7 @@ fn test_set_max_blocks_per_request_in_upgrade() {
         change_index_id: None,
     }))))
     .unwrap();
-    env.state_machine
+    env.pocket_ic
         .upgrade_canister(env.ledger_id, get_wasm("cycles-ledger"), arg, None)
         .unwrap();
 
@@ -5443,19 +5743,21 @@ fn assert_index_not_set(env: &TestEnv) {
 
 #[tokio::test]
 async fn test_icrc1_test_suite() {
-    let env = TestEnv::setup();
-    let fee = env.icrc1_fee();
+    let env = AsyncTestEnv::setup().await;
+    let fee = env.icrc1_fee().await;
     let account10 = account(10, None);
 
     // make the first deposit to the user and check the result
-    let deposit_res = env.deposit(account10, 1_000_000_000_000_000 + fee, None);
+    let deposit_res = env
+        .deposit(account10, 1_000_000_000_000_000 + fee, None)
+        .await;
     assert_eq!(deposit_res.block_index, Nat::from(0_u128));
     assert_eq!(deposit_res.balance, 1_000_000_000_000_000_u128);
-    assert_eq!(1_000_000_000_000_000, env.icrc1_balance_of(account10));
+    assert_eq!(1_000_000_000_000_000, env.icrc1_balance_of(account10).await);
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let ledger_env = icrc1_test_env_state_machine::SMLedger::new(
-        Arc::new(env.state_machine),
+    let ledger_env = icrc1_test_env_pocket_ic::PICLedger::new(
+        Arc::new(env.pocket_ic),
         env.ledger_id,
         account10.owner,
     );
@@ -5471,7 +5773,7 @@ fn test_upgrade_preserves_state() {
     use proptest::test_runner::TestRunner;
 
     let mut env = TestEnv::setup();
-    let depositor_cycles = env.state_machine.cycle_balance(env.depositor_id);
+    let depositor_cycles = env.pocket_ic.cycle_balance(env.depositor_id);
     let mut expected_state = CyclesLedgerInMemory::new(depositor_cycles);
 
     // generate a list of calls for the cycles ledger
@@ -5492,7 +5794,7 @@ fn test_upgrade_preserves_state() {
             .execute(&call)
             .expect("Unable to perform call on in-memory state");
         env.execute(&call)
-            .expect("Unable to perform call on StateMachine");
+            .expect("Unable to perform call on PocketIC");
 
         // check that the state is consistent with `expected_state`
         check_ledger_state(&env, &expected_state);
@@ -5540,7 +5842,7 @@ fn check_ledger_state(env: &TestEnv, expected_state: &CyclesLedgerInMemory) {
 fn test_create_canister() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
     const CREATE_CANISTER_CYCLES_MINUS_FEE: u128 = 1_000_000_000_000 - FEE;
-    let env = new_state_machine();
+    let env = new_pocket_ic();
     install_fake_cmc(&env);
     let ledger_id = install_ledger(&env);
     let depositor_id = install_depositor(&env, ledger_id);
@@ -5585,7 +5887,7 @@ fn test_create_canister() {
         expected_balance,
         icrc1_balance_of(&env, ledger_id, account10_0)
     );
-    // no canister creation fee on system subnet (where the StateMachine is by default)
+    // no canister creation fee on system subnet
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
     assert_eq!(vec![account10_0.owner], status.settings.controllers);
 
@@ -5904,7 +6206,7 @@ fn test_create_canister() {
     // duplicate creation request returns the same canister twice
     let arg = CreateCanisterArgs {
         from_subaccount: account10_0.subaccount,
-        created_at_time: Some(env.time().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64),
+        created_at_time: Some(env.get_time().as_nanos_since_unix_epoch()),
         amount: CREATE_CANISTER_CYCLES.into(),
         creation_args: None,
     };
@@ -5944,7 +6246,7 @@ fn test_create_canister() {
 #[test]
 fn test_create_canister_duplicate() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
-    let env = new_state_machine();
+    let env = new_pocket_ic();
     install_fake_cmc(&env);
     let ledger_id = install_ledger(&env);
     let depositor_id = install_depositor(&env, ledger_id);
@@ -5969,11 +6271,7 @@ fn test_create_canister_duplicate() {
         icrc1_balance_of(&env, ledger_id, account10_0)
     );
 
-    let now = env
-        .time()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
+    let now = env.get_time().as_nanos_since_unix_epoch();
     // successful create
     let canister = create_canister(
         &env,
@@ -5994,7 +6292,7 @@ fn test_create_canister_duplicate() {
         expected_balance,
         icrc1_balance_of(&env, ledger_id, account10_0)
     );
-    // no canister creation fee on system subnet (where the StateMachine is by default)
+    // no canister creation fee on system subnet
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
     assert_eq!(vec![account10_0.owner], status.settings.controllers);
 
@@ -6036,7 +6334,7 @@ fn test_create_canister_fail() {
     // 2. the user has been charged the full amount
     // 3. only one block was created
     fail_next_create_canister_with(
-        &env.state_machine,
+        &env.pocket_ic,
         cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
             refund_amount: 0,
             create_error: "Error while creating".to_string(),
@@ -6069,12 +6367,13 @@ fn test_create_canister_fail() {
     expected_total_supply -= amount + fee;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(fee),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
@@ -6097,7 +6396,7 @@ fn test_create_canister_fail() {
     let balance_before_attempt = env.icrc1_balance_of(account1);
     let amount = 1_000_000_000_000_000u128;
     fail_next_create_canister_with(
-        &env.state_machine,
+        &env.pocket_ic,
         cycles_ledger::endpoints::CmcCreateCanisterError::Refunded {
             refund_amount: amount,
             create_error: "Error while creating".to_string(),
@@ -6129,12 +6428,13 @@ fn test_create_canister_fail() {
     expected_total_supply -= 2 * fee;
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(fee),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
@@ -6147,12 +6447,13 @@ fn test_create_canister_fail() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len() + 1));
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 1),
         block: Block {
             phash: Some(burn_block.block.clone().hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
@@ -6232,13 +6533,14 @@ fn test_create_canister_from() {
         env.icrc2_allowance(account1, withdrawer1).allowance
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
-    // no canister creation fee on system subnet (where the StateMachine is by default)
+    // no canister creation fee on system subnet
     assert_eq!(CREATE_CANISTER_CYCLES, status.cycles);
     // If `CanisterSettings` do not specify a controller, the caller should still control the resulting canister
     assert_eq!(vec![withdrawer1.owner], status.settings.controllers);
     // check that the burn block created is correct
+    let actual_block = env.get_block(block_id.clone());
     assert_display_eq(
-        &env.get_block(block_id.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(block_id - 1u8).hash()),
@@ -6247,7 +6549,7 @@ fn test_create_canister_from() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -6321,8 +6623,9 @@ fn test_create_canister_from() {
         canister_settings.reserved_cycles_limit.unwrap()
     );
     // check that the burn block created is correct
+    let actual_block = env.get_block(block_id.clone());
     assert_display_eq(
-        &env.get_block(block_id.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(block_id - 1u8).hash()),
@@ -6331,7 +6634,7 @@ fn test_create_canister_from() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -6386,8 +6689,9 @@ fn test_create_canister_from() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     // check that the burn block created is correct
+    let actual_block = env.get_block(block_id.clone());
     assert_display_eq(
-        &env.get_block(block_id.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(block_id - 1u8).hash()),
@@ -6396,7 +6700,7 @@ fn test_create_canister_from() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -6452,8 +6756,9 @@ fn test_create_canister_from() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     // check that the burn block created is correct
+    let actual_block = env.get_block(block_id.clone());
     assert_display_eq(
-        &env.get_block(block_id.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(block_id - 1u8).hash()),
@@ -6462,7 +6767,7 @@ fn test_create_canister_from() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was set.
                 created_at_time,
@@ -6517,8 +6822,9 @@ fn test_create_canister_from() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     // check that the burn block created is correct
+    let actual_block = env.get_block(block_id.clone());
     assert_display_eq(
-        &env.get_block(block_id.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(block_id - 1u8).hash()),
@@ -6527,7 +6833,7 @@ fn test_create_canister_from() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was not set.
                 created_at_time: None,
@@ -6674,12 +6980,13 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
@@ -6752,12 +7059,13 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 2, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
@@ -6770,12 +7078,13 @@ fn test_create_canister_from_fail() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len() + 1));
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 1),
         block: Block {
             phash: Some(burn_block.block.clone().hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
@@ -6852,12 +7161,13 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 3, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
@@ -6870,12 +7180,13 @@ fn test_create_canister_from_fail() {
         }
         .to_value(),
     };
+    let actual_refund_block = env.get_block(Nat::from(blocks.len() + 1));
     let refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 1),
         block: Block {
             phash: Some(burn_block.block.clone().hash()),
             effective_fee: Some(0),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_refund_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(REFUND_MEMO))),
@@ -6888,12 +7199,13 @@ fn test_create_canister_from_fail() {
         }
         .to_value(),
     };
+    let actual_approval_refund_block = env.get_block(Nat::from(blocks.len() + 2));
     let approval_refund_block = BlockWithId {
         id: Nat::from(blocks.len() + 2),
         block: Block {
             phash: Some(refund_block.block.hash()),
             effective_fee: Some(env.icrc1_fee()),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_approval_refund_block.timestamp,
             transaction: Transaction {
                 operation: Operation::Approve {
                     from: account1_4,
@@ -6966,8 +7278,9 @@ fn test_create_canister_from_fail() {
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 1, env.number_of_blocks());
     // check that the burn block created is correct
+    let actual_block = env.get_block(block_id.clone());
     assert_display_eq(
-        &env.get_block(block_id.clone()),
+        &actual_block,
         &Block {
             // The new block parent hash is the hash of the last deposit.
             phash: Some(env.get_block(block_id - 1u8).hash()),
@@ -6976,7 +7289,7 @@ fn test_create_canister_from_fail() {
             // other ledgers because the operation transfers cycles.
             effective_fee: Some(env.icrc1_fee()),
             // The timestamp is set by the ledger.
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_block.timestamp,
             transaction: Transaction {
                 // The created_at_time was set.
                 created_at_time,
@@ -7049,10 +7362,11 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 3, env.number_of_blocks());
+    let actual_approval_refund_block = env.get_block(Nat::from(blocks.len() + 2));
     let approval_refund_block = Block {
         phash: Some(env.get_block(Nat::from(blocks.len() + 1)).hash()),
         effective_fee: Some(env.icrc1_fee()),
-        timestamp: env.nanos_since_epoch_u64(),
+        timestamp: actual_approval_refund_block.timestamp,
         transaction: Transaction {
             operation: Operation::Approve {
                 from: account1_6,
@@ -7066,10 +7380,7 @@ fn test_create_canister_from_fail() {
             memo: Some(Memo(ByteBuf::from(PENALIZE_MEMO))),
         },
     };
-    assert_eq!(
-        approval_refund_block,
-        env.get_block(Nat::from(blocks.len() + 2))
-    );
+    assert_eq!(approval_refund_block, actual_approval_refund_block);
 
     // refund fails
     env.icrc2_approve_or_trap(
@@ -7127,12 +7438,13 @@ fn test_create_canister_from_fail() {
     );
     assert_eq!(env.icrc1_total_supply(), expected_total_supply);
     assert_eq!(blocks.len() + 1, env.number_of_blocks());
+    let actual_burn_block = env.get_block(Nat::from(blocks.len()));
     let burn_block = BlockWithId {
         id: Nat::from(blocks.len()),
         block: Block {
             phash: Some(env.get_block(Nat::from(blocks.len()) - 1u8).hash()),
             effective_fee: Some(FEE),
-            timestamp: env.nanos_since_epoch_u64(),
+            timestamp: actual_burn_block.timestamp,
             transaction: Transaction {
                 created_at_time: None,
                 memo: Some(Memo::from(ByteBuf::from(CREATE_CANISTER_MEMO))),
@@ -7265,7 +7577,7 @@ fn test_init_with_initial_balances() {
     assert_eq!(env.icrc1_balance_of(account1), 1_000_000_000);
     assert_eq!(env.icrc1_balance_of(account2), 2_000_000_000);
     assert_eq!(env.icrc1_balance_of(account3), 3_000_000_000);
-    let block0 = get_block(&env.state_machine, env.ledger_id, Nat::from(0u8));
+    let block0 = get_block(&env.pocket_ic, env.ledger_id, Nat::from(0u8));
     if let Operation::Mint { to, amount, .. } = block0.transaction.operation {
         assert_eq!(to, account1);
         assert_eq!(amount, 1_000_000_000);
@@ -7273,7 +7585,7 @@ fn test_init_with_initial_balances() {
         panic!("Expected Mint operation for block 0");
     }
 
-    let block1 = get_block(&env.state_machine, env.ledger_id, Nat::from(1u8));
+    let block1 = get_block(&env.pocket_ic, env.ledger_id, Nat::from(1u8));
     if let Operation::Mint { to, amount, .. } = block1.transaction.operation {
         assert_eq!(to, account2);
         assert_eq!(amount, 2_000_000_000);
@@ -7281,7 +7593,7 @@ fn test_init_with_initial_balances() {
         panic!("Expected Mint operation for block 1");
     }
 
-    let block2 = get_block(&env.state_machine, env.ledger_id, Nat::from(2u8));
+    let block2 = get_block(&env.pocket_ic, env.ledger_id, Nat::from(2u8));
     if let Operation::Mint { to, amount, .. } = block2.transaction.operation {
         assert_eq!(to, account3);
         assert_eq!(amount, 3_000_000_000);
