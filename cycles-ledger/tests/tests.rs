@@ -7711,8 +7711,8 @@ mod index {
         target_filename: "mainnet-ic-icrc1-index-ng-u256.wasm.gz",
     };
     const LATEST_INDEX_WASM: IndexWasm = IndexWasm {
-        url: "https://github.com/dfinity/ic/releases/download/ledger-suite-icrc-2025-09-01/ic-icrc1-index-ng-u256.wasm.gz",
-        expected_sha256: "b39d419cdd290515cf4c16a6878c8bb1a25697ee4d4678c895475e3322ed7d64",
+        url: "https://github.com/dfinity/ic/releases/download/ledger-suite-icrc-2025-06-19/ic-icrc1-index-ng-u256.wasm.gz",
+        expected_sha256: "6c406b9dc332f3dc58b823518ab2b2c481467307ad9e540122f17bd9b926c123",
         target_filename: "latest-ic-icrc1-index-ng-u256.wasm.gz",
     };
 
