@@ -22,3 +22,6 @@ cycles-ledger.wasm.gz
 
 # Ignore pocket-ic binary
 pocket-ic
+
+# Directory for (downloaded) test fixtures
+test_fixtures/
