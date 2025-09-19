@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "cycles-ledger"
-version = "1.0.0"
+version = "1.0.6"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -534,7 +534,7 @@ checksum = "e8566979429cf69b49a5c740c60791108e86440e8be149bbea4fe54d2c32d6e2"
 
 [[package]]
 name = "depositor"
-version = "1.0.0"
+version = "1.0.6"
 dependencies = [
  "candid",
  "candid_parser",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "fake-cmc"
-version = "1.0.0"
+version = "1.0.6"
 dependencies = [
  "candid",
  "candid_parser",
