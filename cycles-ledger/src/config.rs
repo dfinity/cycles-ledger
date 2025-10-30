@@ -19,12 +19,13 @@ pub const TRANSACTION_PRUNE_LIMIT: usize = 100_000;
 pub const APPROVE_PRUNE_LIMIT: usize = 100;
 pub const REMOTE_FUTURE: u64 = u64::MAX;
 pub const MAX_TAKE_ALLOWANCES: u64 = 500;
+/// The maximum number of blocks returned by the `icrc3_get_blocks` endpoint for allowlisted callers
+pub const MAX_ALLOWLISTED_BLOCKS_PER_REQUEST: u64 = 2000;
 
 #[derive(CandidType, Deserialize, Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Config {
-    /// The maximum number of blocks
-    /// returned by the [icrc3_get_blocks]
-    /// endpoint
+    /// The maximum number of blocks returned by the [icrc3_get_blocks] endpoint for callers not
+    /// on the allowlist.
     pub max_blocks_per_request: u64,
 
     /// The principal of the index canister

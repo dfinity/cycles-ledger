@@ -1,4 +1,4 @@
-use crate::config::{Config, REMOTE_FUTURE};
+use crate::config::{Config, MAX_ALLOWLISTED_BLOCKS_PER_REQUEST, REMOTE_FUTURE};
 use crate::endpoints::{
     CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
     CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
@@ -2378,7 +2378,10 @@ fn prune_transactions(now: u64, s: &mut State, limit: usize) {
 
 pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     let log_length = read_state(|state| state.blocks.len());
-    let max_length = read_state(|state| state.config.get().max_blocks_per_request);
+    let max_length: u64 = match is_on_get_blocks_allowlist(ic_cdk::api::caller()) {
+        true => MAX_ALLOWLISTED_BLOCKS_PER_REQUEST,
+        false => read_state(|state| state.config.get().max_blocks_per_request),
+    };
     let mut blocks = Vec::new();
     for GetBlocksArg { start, length } in args {
         let remaining_length = max_length.saturating_sub(blocks.len() as u64);
@@ -2414,6 +2417,19 @@ pub fn get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
         blocks,
         archived_blocks: vec![],
     }
+}
+
+/// Returns true if the caller is on the allowlist for retrieving blocks, i.e., it qualifies for a
+/// potentially higher limit on the number of blocks that can be returned in response to a single
+/// call.
+fn is_on_get_blocks_allowlist(caller: Principal) -> bool {
+    // Current, only the index canister is on the allowlist.
+    if let Some(index) = read_config(|config| config.index_id) {
+        if caller == index {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn get_allowances(

@@ -8,6 +8,8 @@ use crate::{
 use assert_matches::assert_matches;
 use candid::{CandidType, Decode, Encode, Nat, Principal};
 use client::deposit;
+use cycles_ledger::config::MAX_ALLOWLISTED_BLOCKS_PER_REQUEST;
+use cycles_ledger::endpoints::GetBlocksArg;
 use cycles_ledger::{
     config::{self, Config as LedgerConfig, FEE, MAX_MEMO_LENGTH},
     endpoints::{
@@ -5719,6 +5721,55 @@ fn test_get_blocks_max_length() {
 
     let res = env.icrc3_get_blocks(vec![(0, u64::MAX), (2, u64::MAX)]);
     assert_eq!(MAX_BLOCKS_PER_REQUEST, res.blocks.len() as u64);
+}
+
+#[test]
+fn test_get_blocks_allowlist_max_length() {
+    const MAX_BLOCKS_PER_REQUEST: u64 = 2;
+    let index_principal = Principal::from_slice(&[42]);
+    let mut initial_balances = vec![];
+    for i in 0..(MAX_ALLOWLISTED_BLOCKS_PER_REQUEST + 100) {
+        initial_balances.push((account(i, None), 10_000_000_000u128));
+    }
+    let env = TestEnv::setup_with_ledger_conf(LedgerConfig {
+        max_blocks_per_request: MAX_BLOCKS_PER_REQUEST,
+        // The index is allowlisted and can retrieve more than MAX_BLOCKS_PER_REQUEST per request.
+        index_id: Some(index_principal),
+        initial_balances: Some(initial_balances),
+    });
+
+    let res = env.icrc3_get_blocks(vec![(0, u64::MAX)]);
+    assert_eq!(MAX_BLOCKS_PER_REQUEST, res.blocks.len() as u64);
+
+    let res = env.icrc3_get_blocks(vec![(3, u64::MAX)]);
+    assert_eq!(MAX_BLOCKS_PER_REQUEST, res.blocks.len() as u64);
+
+    let get_blocks_allowlisted_len = |start: u64, length: u64| {
+        Decode!(
+            &env.pocket_ic
+                .query_call(
+                    env.ledger_id,
+                    index_principal,
+                    "icrc3_get_blocks",
+                    Encode!(&vec![GetBlocksArg {
+                        start: start.into(),
+                        length: length.into(),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap(),
+            GetBlocksResult
+        )
+        .unwrap()
+        .blocks
+        .len() as u64
+    };
+
+    let num_received_blocks = get_blocks_allowlisted_len(0, u64::MAX);
+    assert_eq!(MAX_ALLOWLISTED_BLOCKS_PER_REQUEST, num_received_blocks);
+
+    let num_received_blocks = get_blocks_allowlisted_len(3, u64::MAX);
+    assert_eq!(MAX_ALLOWLISTED_BLOCKS_PER_REQUEST, num_received_blocks);
 }
 
 #[test]
