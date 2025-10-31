@@ -733,6 +733,17 @@ impl TestEnv {
             .upgrade_canister(self.index_id.unwrap(), index_wasm, upgrade_args, None)
             .expect("error upgrading index canister");
     }
+
+    fn reinstall_index(&mut self, index_wasm: Vec<u8>) {
+        let index_arg: Option<IndexArg> = Some(IndexArg::Init(InitArg {
+            ledger_id: self.ledger_id,
+            retrieve_blocks_from_ledger_interval_seconds: None,
+        }));
+        let init_args = Encode!(&index_arg).unwrap();
+        self.pocket_ic
+            .reinstall_canister(self.index_id.unwrap(), index_wasm, init_args, None)
+            .expect("should successfully reinstall the index canister");
+    }
 }
 
 impl IsCyclesLedger for TestEnv {
@@ -7685,7 +7696,13 @@ fn test_init_with_initial_balances() {
 
 mod index {
     use super::*;
+    use std::collections::btree_map::Entry;
     use std::path::Path;
+
+    const DEPOSIT_AMOUNT_ACCOUNT_1: u128 = 2_000_000_000;
+    const DEPOSIT_AMOUNT_ACCOUNT_2: u128 = 3_000_000_000;
+    const TRANSFER_AMOUNT: u128 = 1_000_000_000;
+    const WITHDRAW_AMOUNT: u128 = 1_000_000_000;
 
     fn latest_index_wasm() -> Vec<u8> {
         maybe_download_index_wasms();
@@ -7697,6 +7714,170 @@ mod index {
         maybe_download_index_wasms();
         let wasm_path = downloaded_wasm_path(&MAINNET_INDEX_WASM);
         std::fs::read(wasm_path).unwrap()
+    }
+
+    struct BalancesVerifier {
+        fee: u128,
+        expected_log_length: u64,
+        expected_ledger_balances: BTreeMap<Account, u128>,
+        expected_index_balances: BTreeMap<Account, u128>,
+    }
+
+    impl BalancesVerifier {
+        fn new(fee: u128) -> Self {
+            Self {
+                fee,
+                expected_log_length: 0,
+                expected_ledger_balances: Default::default(),
+                expected_index_balances: Default::default(),
+            }
+        }
+
+        fn new_with_existing_state(
+            fee: u128,
+            expected_log_length: u64,
+            existing_ledger_balances: BTreeMap<Account, u128>,
+            existing_index_balances: BTreeMap<Account, u128>,
+        ) -> Self {
+            Self {
+                fee,
+                expected_log_length,
+                expected_ledger_balances: existing_ledger_balances,
+                expected_index_balances: existing_index_balances,
+            }
+        }
+
+        fn record_deposit(&mut self, env: &TestEnv, account: Account, amount: u128) {
+            let amount_after_fee = amount - self.fee;
+            let ledger_balance = self.expected_ledger_balances.entry(account).or_insert(0);
+            *ledger_balance += amount_after_fee;
+
+            let index_balance = self.expected_index_balances.entry(account).or_insert(0);
+            *index_balance += amount_after_fee;
+
+            self.expected_log_length += 1;
+            self.sync_and_verify_index(env);
+        }
+
+        fn record_withdrawal(
+            &mut self,
+            env: &TestEnv,
+            account: Account,
+            amount: u128,
+            index_version: IndexVersion,
+        ) {
+            let amount_after_fee = amount + self.fee;
+            let ledger_balance = self.expected_ledger_balances.entry(account);
+            match ledger_balance {
+                Entry::Vacant(_) => {
+                    panic!("Attempting to withdraw from account {} that has no balance recorded in the ledger.", account)
+                }
+                Entry::Occupied(mut ledger_balance) => {
+                    *ledger_balance.get_mut() -= amount_after_fee;
+                }
+            }
+
+            let index_balance = self.expected_index_balances.entry(account);
+            match index_balance {
+                Entry::Vacant(_) => {
+                    panic!("Attempting to withdraw from account {} that has no balance recorded in the index.", account)
+                }
+                Entry::Occupied(mut index_balance) => {
+                    match index_version {
+                        IndexVersion::Old => {
+                            // Old index does not account for burn fees.
+                            *index_balance.get_mut() -= amount;
+                        }
+                        IndexVersion::Current => {
+                            *index_balance.get_mut() -= amount_after_fee;
+                        }
+                    }
+                }
+            }
+
+            self.expected_log_length += 1;
+            self.sync_and_verify_index(env);
+        }
+
+        fn record_transfer(&mut self, env: &TestEnv, from: Account, to: Account, amount: u128) {
+            let amount_with_fee = amount + self.fee;
+            let from_balance = self.expected_ledger_balances.entry(from).or_insert(0);
+            *from_balance -= amount_with_fee;
+
+            let to_balance = self.expected_ledger_balances.entry(to).or_insert(0);
+            *to_balance += amount;
+
+            let from_index_balance = self.expected_index_balances.entry(from).or_insert(0);
+            *from_index_balance -= amount_with_fee;
+
+            let to_index_balance = self.expected_index_balances.entry(to).or_insert(0);
+            *to_index_balance += amount;
+
+            self.expected_log_length += 1;
+            self.sync_and_verify_index(env);
+        }
+
+        fn sync_and_verify_index(&self, env: &TestEnv) {
+            let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
+            let log_length = get_blocks_res.log_length;
+            assert_eq!(
+                log_length, self.expected_log_length,
+                "expected log length of {} but got {}",
+                self.expected_log_length, log_length
+            );
+            assert_eq!(
+                get_blocks_res.archived_blocks.len(),
+                0,
+                "expected no archived blocks but got {}",
+                get_blocks_res.archived_blocks.len()
+            );
+
+            const MAX_ATTEMPTS: u8 = 100;
+            const SYNC_STEP_SECONDS: Duration = Duration::from_secs(1);
+
+            let mut num_blocks_synced = u64::MAX;
+            for _i in 0..MAX_ATTEMPTS {
+                env.advance_time(SYNC_STEP_SECONDS);
+                num_blocks_synced = env.index_synced_blocks_or_trap();
+                if num_blocks_synced == log_length {
+                    break;
+                }
+            }
+            if num_blocks_synced != log_length {
+                panic!(
+                    "The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}",
+                    num_blocks_synced,
+                    log_length
+                );
+            }
+
+            for (account, expected_ledger_balance) in self.expected_ledger_balances.iter() {
+                let ledger_balance = env.icrc1_balance_of(*account);
+                let index_balance = env.index_icrc1_balance_of(*account);
+
+                assert_eq!(
+                    ledger_balance, *expected_ledger_balance,
+                    "The balance of account {} in the ledger ({}) does not match the expected balance ({}).",
+                    account, ledger_balance, expected_ledger_balance
+                );
+                let expected_index_balance = self
+                    .expected_index_balances
+                    .get(account)
+                    .expect("Ledger balance exists for account {} but index balance does not");
+                assert_eq!(
+                    index_balance, *expected_index_balance,
+                    "The balance of account {} in the index ({}) does not match the expected balance ({}).",
+                    account, index_balance, expected_index_balance
+                );
+            }
+        }
+    }
+
+    enum IndexVersion {
+        /// The old index that does not take burn and mint fees into account.
+        Old,
+        /// The current index that takes burn and mint fees into account.
+        Current,
     }
 
     struct IndexWasm {
@@ -7711,8 +7892,8 @@ mod index {
         target_filename: "mainnet-ic-icrc1-index-ng-u256.wasm.gz",
     };
     const LATEST_INDEX_WASM: IndexWasm = IndexWasm {
-        url: "https://github.com/dfinity/ic/releases/download/ledger-suite-icrc-2025-06-19/ic-icrc1-index-ng-u256.wasm.gz",
-        expected_sha256: "6c406b9dc332f3dc58b823518ab2b2c481467307ad9e540122f17bd9b926c123",
+        url: "https://github.com/dfinity/ic/releases/download/ledger-suite-icrc-2025-10-27/ic-icrc1-index-ng-u256.wasm.gz",
+        expected_sha256: "8df72887ab235f4533ee613b1bc7293ec8d62c866525b1425934cf992ef894a7",
         target_filename: "latest-ic-icrc1-index-ng-u256.wasm.gz",
     };
 
@@ -7777,118 +7958,121 @@ mod index {
         }
     }
 
-    #[test]
-    fn test_index_sync_and_upgrade_test() {
-        const DEPOSIT_AMOUNT_ACCOUNT_1: u128 = 2_000_000_000;
-        const DEPOSIT_AMOUNT_ACCOUNT_2: u128 = 3_000_000_000;
-        const TRANSFER_AMOUNT: u128 = 1_000_000_000;
-        const WITHDRAW_AMOUNT: u128 = 1_000_000_000;
+    fn perform_transactions(
+        env: &mut TestEnv,
+        account1: Account,
+        account2: Account,
+        fee: u128,
+        balances_verifier: &mut BalancesVerifier,
+        index_version: IndexVersion,
+    ) {
+        env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee, None);
+        balances_verifier.record_deposit(env, account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee);
 
+        env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee, None);
+        balances_verifier.record_deposit(env, account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee);
+
+        let _block_index = env
+            .icrc1_transfer(
+                account1.owner,
+                TransferArgs {
+                    from_subaccount: None,
+                    to: account2,
+                    fee: None,
+                    created_at_time: None,
+                    memo: None,
+                    amount: Nat::from(TRANSFER_AMOUNT),
+                },
+            )
+            .unwrap();
+        balances_verifier.record_transfer(env, account1, account2, TRANSFER_AMOUNT);
+
+        let _withdraw_res = env
+            .withdraw(
+                account2.owner,
+                WithdrawArgs {
+                    from_subaccount: account2.subaccount,
+                    to: env.depositor_id,
+                    created_at_time: None,
+                    amount: Nat::from(WITHDRAW_AMOUNT),
+                },
+            )
+            .unwrap();
+        balances_verifier.record_withdrawal(env, account2, WITHDRAW_AMOUNT, index_version);
+    }
+
+    #[test]
+    fn test_index_sync_and_upgrade() {
         let mut env = TestEnv::setup();
         env.install_index(mainnet_index_wasm());
 
         let fee = env.icrc1_fee();
         let account1 = account(1, None);
         let account2 = account(2, None);
-        let mut expected_balance_account_1 = 0;
-        let mut expected_balance_account_2 = 0;
-        let mut expected_log_length = 0u128;
-        let mut expected_burn_fees = 0u128;
+        let mut balances_verifier = BalancesVerifier::new(fee);
 
-        let mut perform_transactions = |env: &mut TestEnv| {
-            env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee, None);
-            expected_balance_account_1 += DEPOSIT_AMOUNT_ACCOUNT_1;
-
-            env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee, None);
-            expected_balance_account_2 += DEPOSIT_AMOUNT_ACCOUNT_2;
-
-            let _block_index = env
-                .icrc1_transfer(
-                    account1.owner,
-                    TransferArgs {
-                        from_subaccount: None,
-                        to: account2,
-                        fee: None,
-                        created_at_time: None,
-                        memo: None,
-                        amount: Nat::from(TRANSFER_AMOUNT),
-                    },
-                )
-                .unwrap();
-            // No fee collector is set for the cycles ledger, so we do not check that balance.
-            expected_balance_account_1 -= TRANSFER_AMOUNT + fee;
-            expected_balance_account_2 += TRANSFER_AMOUNT;
-
-            let _withdraw_res = env
-                .withdraw(
-                    account2.owner,
-                    WithdrawArgs {
-                        from_subaccount: account2.subaccount,
-                        to: env.depositor_id,
-                        created_at_time: None,
-                        amount: Nat::from(WITHDRAW_AMOUNT),
-                    },
-                )
-                .unwrap();
-            expected_balance_account_2 -= WITHDRAW_AMOUNT + fee;
-
-            let get_blocks_res = env.icrc3_get_blocks(vec![(0u64, 10u64)]);
-            let log_length = get_blocks_res.log_length;
-            expected_log_length += 4; // deposit, deposit, transfer, withdraw
-            assert_eq!(log_length, expected_log_length);
-            assert_eq!(get_blocks_res.archived_blocks.len(), 0);
-
-            const MAX_ATTEMPTS: u8 = 100;
-            const SYNC_STEP_SECONDS: Duration = Duration::from_secs(1);
-
-            let mut num_blocks_synced = u64::MAX;
-            for _i in 0..MAX_ATTEMPTS {
-                env.advance_time(SYNC_STEP_SECONDS);
-                num_blocks_synced = env.index_synced_blocks_or_trap();
-                if num_blocks_synced == log_length {
-                    break;
-                }
-            }
-            if num_blocks_synced != log_length {
-                panic!(
-                    "The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}",
-                    num_blocks_synced,
-                    log_length
-                );
-            }
-
-            for (account, expected_balance) in [
-                (account1, expected_balance_account_1),
-                (account2, expected_balance_account_2),
-            ] {
-                let ledger_balance = env.icrc1_balance_of(account);
-                let index_balance = env.index_icrc1_balance_of(account);
-
-                assert_eq!(
-                    ledger_balance, expected_balance,
-                    "The balance of account {} in the ledger ({}) does not match the expected balance ({}).",
-                    account, ledger_balance, expected_balance
-                );
-                // FIXME(FI-1818): Due to the fact that the index canister currently does not take into
-                //  account fees in burn blocks (generated from the `withdraw` endpoint), the expected
-                //  balance for account2 is higher in the index than in the ledger.
-                let mut expected_index_balance = expected_balance;
-                if account == account2 {
-                    expected_burn_fees += fee;
-                    expected_index_balance += expected_burn_fees;
-                }
-                assert_eq!(
-                    index_balance, expected_index_balance,
-                    "The balance of account {} in the index ({}) does not match the expected balance ({}).",
-                    account, index_balance, expected_index_balance
-                );
-            }
-        };
-
-        perform_transactions(&mut env);
+        perform_transactions(
+            &mut env,
+            account1,
+            account2,
+            fee,
+            &mut balances_verifier,
+            IndexVersion::Old,
+        );
 
         env.upgrade_index(latest_index_wasm());
 
-        perform_transactions(&mut env);
+        balances_verifier.sync_and_verify_index(&env);
+
+        perform_transactions(
+            &mut env,
+            account1,
+            account2,
+            fee,
+            &mut balances_verifier,
+            IndexVersion::Current,
+        );
+    }
+
+    #[test]
+    fn test_index_sync_and_reinstall() {
+        let mut env = TestEnv::setup();
+        env.install_index(mainnet_index_wasm());
+
+        let fee = env.icrc1_fee();
+        let account1 = account(1, None);
+        let account2 = account(2, None);
+        let mut balances_verifier = BalancesVerifier::new(fee);
+
+        perform_transactions(
+            &mut env,
+            account1,
+            account2,
+            fee,
+            &mut balances_verifier,
+            IndexVersion::Old,
+        );
+
+        // With the latest index that takes burn and mint fees into account, the expected balances
+        // of the ledger and index should be identical after reinstall.
+        env.reinstall_index(latest_index_wasm());
+
+        let mut reinstalled_balances_verifier = BalancesVerifier::new_with_existing_state(
+            fee,
+            balances_verifier.expected_log_length,
+            balances_verifier.expected_ledger_balances.clone(),
+            balances_verifier.expected_ledger_balances.clone(),
+        );
+
+        reinstalled_balances_verifier.sync_and_verify_index(&env);
+
+        perform_transactions(
+            &mut env,
+            account1,
+            account2,
+            fee,
+            &mut reinstalled_balances_verifier,
+            IndexVersion::Current,
+        );
     }
 }
