@@ -7868,7 +7868,7 @@ mod index {
             }
             if num_blocks_synced != log_length {
                 panic!(
-                    "The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}",
+                    "The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the ledger chain length is {}",
                     num_blocks_synced,
                     log_length
                 );
