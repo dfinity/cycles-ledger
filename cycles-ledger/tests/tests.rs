@@ -7985,15 +7985,14 @@ mod index {
         env: &mut TestEnv,
         account1: Account,
         account2: Account,
-        fee: u128,
         balances_verifier: &mut BalancesVerifier,
         index_version: IndexVersion,
     ) {
-        env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee, None);
-        balances_verifier.record_deposit(env, account1, DEPOSIT_AMOUNT_ACCOUNT_1 + fee);
+        env.deposit(account1, DEPOSIT_AMOUNT_ACCOUNT_1, None);
+        balances_verifier.record_deposit(env, account1, DEPOSIT_AMOUNT_ACCOUNT_1);
 
-        env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee, None);
-        balances_verifier.record_deposit(env, account2, DEPOSIT_AMOUNT_ACCOUNT_2 + fee);
+        env.deposit(account2, DEPOSIT_AMOUNT_ACCOUNT_2, None);
+        balances_verifier.record_deposit(env, account2, DEPOSIT_AMOUNT_ACCOUNT_2);
 
         let _block_index = env
             .icrc1_transfer(
@@ -8038,7 +8037,6 @@ mod index {
             &mut env,
             account1,
             account2,
-            fee,
             &mut balances_verifier,
             IndexVersion::Old,
         );
@@ -8051,7 +8049,6 @@ mod index {
             &mut env,
             account1,
             account2,
-            fee,
             &mut balances_verifier,
             IndexVersion::Current,
         );
@@ -8071,7 +8068,6 @@ mod index {
             &mut env,
             account1,
             account2,
-            fee,
             &mut balances_verifier,
             IndexVersion::Old,
         );
@@ -8093,7 +8089,6 @@ mod index {
             &mut env,
             account1,
             account2,
-            fee,
             &mut reinstalled_balances_verifier,
             IndexVersion::Current,
         );
