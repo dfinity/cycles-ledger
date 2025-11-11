@@ -7696,7 +7696,6 @@ fn test_init_with_initial_balances() {
 
 mod index {
     use super::*;
-    use std::collections::btree_map::Entry;
     use std::path::Path;
 
     const DEPOSIT_AMOUNT_ACCOUNT_1: u128 = 2_000_000_000;
@@ -7747,13 +7746,58 @@ mod index {
             }
         }
 
-        fn record_deposit(&mut self, env: &TestEnv, account: Account, amount: u128) {
-            let amount_after_fee = amount - self.fee;
-            let ledger_balance = self.expected_ledger_balances.entry(account).or_insert(0);
-            *ledger_balance += amount_after_fee;
+        #[track_caller]
+        fn add_to_account(balances: &mut BTreeMap<Account, u128>, account: Account, amount: u128) {
+            let balance = *balances.get(&account).unwrap_or(&0u128);
+            let updated_balance = balance.checked_add(amount).unwrap_or_else(|| {
+                panic!("overflow adding amount {} to balance {}", amount, balance)
+            });
+            balances.insert(account, updated_balance);
+        }
 
-            let index_balance = self.expected_index_balances.entry(account).or_insert(0);
-            *index_balance += amount_after_fee;
+        #[track_caller]
+        fn subtract_from_account(
+            balances: &mut BTreeMap<Account, u128>,
+            account: Account,
+            amount: u128,
+        ) {
+            let balance = *balances
+                .get(&account)
+                .unwrap_or_else(|| panic!("account {} has no balance, cannot subtract", account));
+            let updated_balance = balance.checked_sub(amount).unwrap_or_else(|| {
+                panic!(
+                    "underflow subtracting amount {} from balance {}",
+                    amount, balance
+                )
+            });
+            balances.insert(account, updated_balance);
+        }
+
+        fn add_to_index_account(&mut self, account: Account, amount: u128) {
+            Self::add_to_account(&mut self.expected_index_balances, account, amount);
+        }
+
+        fn add_to_ledger_account(&mut self, account: Account, amount: u128) {
+            Self::add_to_account(&mut self.expected_ledger_balances, account, amount);
+        }
+
+        fn subtract_from_index_account(&mut self, account: Account, amount: u128) {
+            Self::subtract_from_account(&mut self.expected_index_balances, account, amount);
+        }
+
+        fn subtract_from_ledger_account(&mut self, account: Account, amount: u128) {
+            Self::subtract_from_account(&mut self.expected_ledger_balances, account, amount);
+        }
+
+        fn record_deposit(&mut self, env: &TestEnv, account: Account, amount: u128) {
+            let amount_after_fee = amount.checked_sub(self.fee).unwrap_or_else(|| {
+                panic!(
+                    "underflow trying to subtract fee {} from amount {}",
+                    self.fee, amount
+                )
+            });
+            self.add_to_ledger_account(account, amount_after_fee);
+            self.add_to_index_account(account, amount_after_fee);
 
             self.expected_log_length += 1;
             self.sync_and_verify_index(env);
@@ -7766,34 +7810,19 @@ mod index {
             amount: u128,
             index_version: IndexVersion,
         ) {
-            let amount_after_fee = amount + self.fee;
-            let ledger_balance = self.expected_ledger_balances.entry(account);
-            match ledger_balance {
-                Entry::Vacant(_) => {
-                    panic!("Attempting to withdraw from account {} that has no balance recorded in the ledger.", account)
+            let amount_after_fee = amount
+                .checked_add(self.fee)
+                .expect("overflow while adding amount and fee");
+            self.subtract_from_ledger_account(account, amount_after_fee);
+            match index_version {
+                IndexVersion::Old => {
+                    // Old index does not account for burn fees.
+                    self.subtract_from_index_account(account, amount);
                 }
-                Entry::Occupied(mut ledger_balance) => {
-                    *ledger_balance.get_mut() -= amount_after_fee;
+                IndexVersion::Current => {
+                    self.subtract_from_index_account(account, amount_after_fee);
                 }
-            }
-
-            let index_balance = self.expected_index_balances.entry(account);
-            match index_balance {
-                Entry::Vacant(_) => {
-                    panic!("Attempting to withdraw from account {} that has no balance recorded in the index.", account)
-                }
-                Entry::Occupied(mut index_balance) => {
-                    match index_version {
-                        IndexVersion::Old => {
-                            // Old index does not account for burn fees.
-                            *index_balance.get_mut() -= amount;
-                        }
-                        IndexVersion::Current => {
-                            *index_balance.get_mut() -= amount_after_fee;
-                        }
-                    }
-                }
-            }
+            };
 
             self.expected_log_length += 1;
             self.sync_and_verify_index(env);
@@ -7801,17 +7830,11 @@ mod index {
 
         fn record_transfer(&mut self, env: &TestEnv, from: Account, to: Account, amount: u128) {
             let amount_with_fee = amount + self.fee;
-            let from_balance = self.expected_ledger_balances.entry(from).or_insert(0);
-            *from_balance -= amount_with_fee;
+            self.subtract_from_ledger_account(from, amount_with_fee);
+            self.add_to_ledger_account(to, amount);
 
-            let to_balance = self.expected_ledger_balances.entry(to).or_insert(0);
-            *to_balance += amount;
-
-            let from_index_balance = self.expected_index_balances.entry(from).or_insert(0);
-            *from_index_balance -= amount_with_fee;
-
-            let to_index_balance = self.expected_index_balances.entry(to).or_insert(0);
-            *to_index_balance += amount;
+            self.subtract_from_index_account(from, amount_with_fee);
+            self.add_to_index_account(to, amount);
 
             self.expected_log_length += 1;
             self.sync_and_verify_index(env);
