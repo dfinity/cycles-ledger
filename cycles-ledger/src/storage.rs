@@ -1828,19 +1828,8 @@ pub async fn withdraw(
 
     // 3. if 2. fails then mint cycles
     if let Err(err) = deposit_cycles_result {
-        let rejection_code = match &err {
-            ic_cdk::call::Error::InsufficientLiquidCycleBalance(_) => RejectionCode::SysTransient,
-            ic_cdk::call::Error::CallPerformFailed(_) => RejectionCode::SysTransient,
-            ic_cdk::call::Error::CallRejected(reject) => reject
-                .reject_code()
-                .map(|c| c.into())
-                .unwrap_or(RejectionCode::Unknown),
-            ic_cdk::call::Error::CandidDecodeFailed(_) => RejectionCode::CanisterError,
-        };
-        let rejection_reason = match err {
-            ic_cdk::call::Error::CallRejected(reject) => reject.reject_message().to_string(),
-            _ => err.to_string(),
-        };
+        let (rejection_code, rejection_reason) = call_error_to_reject(err);
+
         // subtract the fee to pay for the reimburse block
         let amount_to_reimburse = amount.saturating_sub(config::FEE);
         if amount_to_reimburse.is_zero() {
@@ -2046,16 +2035,7 @@ pub async fn create_canister(
             },
         },
         Err(call_error) => {
-            let (rejection_code, rejection_reason) = match call_error {
-                ic_cdk::call::Error::CallRejected(rejected) => {
-                    let code = rejected
-                        .reject_code()
-                        .map(|c| c.into())
-                        .unwrap_or(RejectionCode::Unknown);
-                    (code, rejected.reject_message().to_string())
-                }
-                other => (RejectionCode::CanisterError, other.to_string()),
-            };
+            let (rejection_code, rejection_reason) = call_error_to_reject(call_error);
             Err((rejection_code, amount, rejection_reason))
         }
     };
@@ -2494,6 +2474,25 @@ pub fn get_allowances(
         }
     });
     result
+}
+
+fn call_error_to_reject(err: ic_cdk::call::Error) -> (RejectionCode, String) {
+    match err {
+        ic_cdk::call::Error::InsufficientLiquidCycleBalance(_) => {
+            (RejectionCode::SysTransient, err.to_string())
+        }
+        ic_cdk::call::Error::CallPerformFailed(_) => (RejectionCode::SysTransient, err.to_string()),
+        ic_cdk::call::Error::CallRejected(reject) => (
+            reject
+                .reject_code()
+                .map(|c| c.into())
+                .unwrap_or(RejectionCode::Unknown),
+            reject.reject_message().to_string(),
+        ),
+        ic_cdk::call::Error::CandidDecodeFailed(_) => {
+            (RejectionCode::CanisterError, err.to_string())
+        }
+    }
 }
 
 #[cfg(test)]
