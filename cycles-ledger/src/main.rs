@@ -14,7 +14,7 @@ use cycles_ledger::{
 };
 use ic_canister_log::export as export_logs;
 use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
-use ic_cdk::api::call::{msg_cycles_accept128, msg_cycles_available128};
+use ic_cdk::api::{msg_cycles_accept, msg_cycles_available};
 use ic_cdk_macros::{init, post_upgrade, query, update};
 use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue;
 use icrc_ledger_types::icrc1::account::Account;
@@ -71,38 +71,38 @@ fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     }
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_name() -> String {
     config::TOKEN_NAME.to_string()
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_symbol() -> String {
     config::TOKEN_SYMBOL.to_string()
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_decimals() -> u8 {
     config::DECIMALS
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_fee() -> Nat {
     Nat::from(config::FEE)
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_minting_account() -> Option<Account> {
     None
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
     vec![
         endpoints::SupportedStandard {
@@ -131,8 +131,8 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
     ]
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
     vec![
         SupportedBlockType {
@@ -158,14 +158,14 @@ fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
     ]
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_total_supply() -> Nat {
     Nat::from(read_state(|state| state.total_supply()))
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     use MetadataValue as MV;
 
@@ -188,21 +188,21 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     metadata
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
-#[update]
 #[candid_method]
+#[update]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
-    let cycles_available = msg_cycles_available128();
-    let amount = msg_cycles_accept128(cycles_available);
+    let cycles_available = msg_cycles_available();
+    let amount = msg_cycles_accept(cycles_available);
 
     match storage::deposit(arg.to, amount, arg.memo, ic_cdk::api::time()) {
         Ok(res) => res,
-        Err(err) => ic_cdk::trap(&err.to_string()),
+        Err(err) => ic_cdk::trap(err.to_string()),
     }
 }
 
@@ -250,11 +250,11 @@ fn execute_transfer(
     Ok(block_index)
 }
 
-#[update]
 #[candid_method]
+#[update]
 fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     let from = Account {
-        owner: ic_cdk::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.from_subaccount,
     };
 
@@ -270,11 +270,11 @@ fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     .map_err(transfer_from_error_to_transfer_error)
 }
 
-#[update]
 #[candid_method]
+#[update]
 fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError> {
     let spender = Account {
-        owner: ic_cdk::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.spender_subaccount,
     };
     execute_transfer(
@@ -288,8 +288,8 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
     )
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     storage::get_blocks(args)
 }
@@ -311,11 +311,11 @@ async fn execute_withdraw(
     storage::withdraw(from, to, spender, amount, now, created_at_time).await
 }
 
-#[update]
 #[candid_method]
+#[update]
 async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
     let from = Account {
-        owner: ic_cdk::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.from_subaccount,
     };
     execute_withdraw(from, args.to, None, args.amount, args.created_at_time)
@@ -323,11 +323,11 @@ async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
         .map_err(withdraw_from_error_to_withdraw_error)
 }
 
-#[update]
 #[candid_method]
+#[update]
 async fn withdraw_from(args: endpoints::WithdrawFromArgs) -> Result<Nat, WithdrawFromError> {
     let spender = Account {
-        owner: ic_cdk::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.spender_subaccount,
     };
     execute_withdraw(
@@ -356,13 +356,13 @@ async fn execute_create_canister(
     storage::create_canister(from, spender, amount, now, created_at_time, creation_args).await
 }
 
-#[update]
 #[candid_method]
+#[update]
 async fn create_canister(
     args: endpoints::CreateCanisterArgs,
 ) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterError> {
     let from = Account {
-        owner: ic_cdk::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.from_subaccount,
     };
 
@@ -377,13 +377,13 @@ async fn create_canister(
     .map_err(create_canister_from_error_to_create_canister_error)
 }
 
-#[update]
 #[candid_method]
+#[update]
 async fn create_canister_from(
     args: endpoints::CreateCanisterFromArgs,
 ) -> Result<endpoints::CreateCanisterSuccess, endpoints::CreateCanisterFromError> {
     let spender = Account {
-        owner: ic_cdk::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.spender_subaccount,
     };
     execute_create_canister(
@@ -396,8 +396,8 @@ async fn create_canister_from(
     .await
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     let allowance = storage::allowance(&args.account, &args.spender, ic_cdk::api::time());
     let expires_at = if allowance.1 > 0 {
@@ -411,11 +411,11 @@ fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     }
 }
 
-#[update]
 #[candid_method]
+#[update]
 fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     let from = Account {
-        owner: ic_cdk::api::caller(),
+        owner: ic_cdk::api::msg_caller(),
         subaccount: args.from_subaccount,
     };
 
@@ -461,13 +461,13 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     Ok(block_index)
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllowancesError> {
     let from_account = match arg.from_account {
         Some(from_account) => from_account,
         None => Account {
-            owner: ic_cdk::api::caller(),
+            owner: ic_cdk::api::msg_caller(),
             subaccount: None,
         },
     };
@@ -484,8 +484,8 @@ fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllow
     ))
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
     match read_config(|config| config.index_id) {
         None => Err(Icrc106Error::IndexPrincipalNotSet),
@@ -493,8 +493,8 @@ fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
     }
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn http_request(req: HttpRequest) -> HttpResponse {
     if req.path() == "/metrics" {
         let mut writer =
@@ -597,16 +597,16 @@ pub fn encode_state_metrics(
 pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
     w.encode_gauge(
         "cycles_ledger_stable_memory_pages",
-        ic_cdk::api::stable::stable_size() as f64,
+        ic_cdk::stable::stable_size() as f64,
         "Size of the stable memory allocated by this canister measured in 64K Wasm pages.",
     )?;
     w.encode_gauge(
         "cycles_ledger_stable_memory_bytes",
-        (ic_cdk::api::stable::stable_size() * 64 * 1024) as f64,
+        (ic_cdk::stable::stable_size() * 64 * 1024) as f64,
         "Size of the stable memory allocated by this canister.",
     )?;
 
-    let cycle_balance = ic_cdk::api::canister_balance128() as f64;
+    let cycle_balance = ic_cdk::api::canister_cycle_balance() as f64;
     w.encode_gauge(
         "cycles_ledger_cycle_balance",
         cycle_balance,
@@ -620,14 +620,14 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
     Ok(())
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc3_get_tip_certificate() -> Option<DataCertificate> {
     read_state(|state| state.get_tip_certificate())
 }
 
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn icrc3_get_archives(_args: GetArchivesArgs) -> Vec<GetArchivesResult> {
     vec![]
 }
@@ -635,8 +635,8 @@ fn icrc3_get_archives(_args: GetArchivesArgs) -> Vec<GetArchivesResult> {
 fn main() {}
 
 #[cfg(feature = "testing")]
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {
@@ -648,8 +648,8 @@ fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
 }
 
 #[cfg(feature = "testing")]
+#[candid_method]
 #[query]
-#[candid_method(query)]
 fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
     let mut res = std::collections::BTreeMap::new();
     read_state(|state| {

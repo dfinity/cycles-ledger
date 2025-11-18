@@ -48,7 +48,7 @@ impl Default for Config {
 }
 
 impl Storable for Config {
-    fn to_bytes(&self) -> Cow<[u8]> {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut bytes = vec![];
         ciborium::into_writer(self, &mut bytes).expect("Unable to serialize the config as CBOR");
         Cow::Owned(bytes)

@@ -13,7 +13,8 @@ use cycles_ledger::{
     endpoints::{
         BlockWithId, ChangeIndexId, CmcCreateCanisterError, CreateCanisterFromArgs,
         CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
-        UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs, WithdrawFromError,
+        RejectionCode, UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs,
+        WithdrawFromError,
     },
     memo::encode_withdraw_memo,
     storage::{
@@ -33,7 +34,7 @@ use depositor::endpoints::InitArg as DepositorInitArg;
 use escargot::CargoBuild;
 use gen::{CyclesLedgerCall, CyclesLedgerInMemory};
 use ic_cbor::CertificateToCbor;
-use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
+use ic_cdk::management_canister::{CanisterSettings, EnvironmentVariable, LogVisibility};
 use ic_certificate_verification::VerifyCertificate;
 use ic_certification::{
     hash_tree::{HashTreeNode, SubtreeLookupResult},
@@ -77,6 +78,7 @@ mod gen;
 
 const CYCLES_LEDGER_PRINCIPAL: Principal =
     Principal::from_slice(&[0, 0, 0, 0, 2, 0x10, 0, 2, 1, 1]);
+const CERT_EXPIRY_OFFSET: u128 = 5 * 60 * 1000000000; // 5 minutes in nanoseconds
 
 // Like assert_eq but uses Display instead of Debug
 #[track_caller]
@@ -180,9 +182,14 @@ fn get_or_start_pocket_ic_server() -> Url {
         #[cfg(target_os = "linux")]
         let platform: &str = "linux";
 
+        #[cfg(target_arch = "x86_64")]
+        let arch: &str = "x86_64";
+        #[cfg(target_arch = "aarch64")]
+        let arch: &str = "arm64";
+
         let suggested_version = "9.0.2";
 
-        panic!("Pocket IC server binary does not exist. Please run the following command and try again: ./download-pocket-ic.sh {suggested_version} {platform}");
+        panic!("Pocket IC server binary does not exist. Please run the following command and try again: ./download-pocket-ic.sh {suggested_version} {platform} {arch}");
     }
 
     let test_driver_pid = std::process::id();
@@ -257,7 +264,7 @@ fn get_wasm(name: &'static str) -> Vec<u8> {
 }
 
 fn build_wasm(name: &str) -> Vec<u8> {
-    if name == "cycles-ledger" {
+    if false {
         let tmp_dir = TempDir::with_prefix("cycles-ledger-tmp-dir").unwrap();
         let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let cargo_manifest_dir = PathBuf::from(cargo_manifest_dir);
@@ -640,7 +647,12 @@ impl TestEnv {
             .root_key()
             .expect("Root key should be available");
         assert_matches!(
-            certificate.verify(self.ledger_id.as_slice(), &root_key),
+            certificate.verify(
+                self.ledger_id.as_slice(),
+                &root_key,
+                &(self.pocket_ic.get_time().as_nanos_since_unix_epoch() as u128),
+                &CERT_EXPIRY_OFFSET
+            ),
             Ok(_)
         );
 
@@ -5986,9 +5998,16 @@ fn test_create_canister() {
     let canister_settings = CanisterSettings {
         controllers: Some(vec![account10_0.owner, Principal::anonymous()]),
         compute_allocation: Some(Nat::from(7_u128)),
-        memory_allocation: Some(Nat::from(8_u128)),
+        memory_allocation: Some(Nat::from(888_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        log_visibility: Some(LogVisibility::Public),
+        wasm_memory_limit: Some(Nat::from(1024 * 1024 * 1024_u128)),
+        wasm_memory_threshold: Some(Nat::from(1024 * 1024 * 1024_u128)),
+        environment_variables: Some(vec![EnvironmentVariable {
+            name: "TEST".to_string(),
+            value: "test".to_string(),
+        }]),
     };
     let CreateCanisterSuccess {
         canister_id,
@@ -6036,6 +6055,14 @@ fn test_create_canister() {
         status.settings.reserved_cycles_limit,
         canister_settings.reserved_cycles_limit.unwrap()
     );
+    assert_eq!(
+        status.settings.wasm_memory_limit,
+        canister_settings.wasm_memory_limit.unwrap()
+    );
+    assert_eq!(
+        status.settings.wasm_memory_threshold,
+        canister_settings.wasm_memory_threshold.unwrap()
+    );
     assert_matches!(
         get_block(&env, ledger_id, block_id).transaction.operation,
         Operation::Burn {
@@ -6049,9 +6076,16 @@ fn test_create_canister() {
     let canister_settings = CanisterSettings {
         controllers: None,
         compute_allocation: Some(Nat::from(7_u128)),
-        memory_allocation: Some(Nat::from(8_u128)),
+        memory_allocation: Some(Nat::from(888_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        log_visibility: Some(LogVisibility::Public),
+        wasm_memory_limit: Some(Nat::from(1024 * 1024 * 1024_u128)),
+        wasm_memory_threshold: Some(Nat::from(1024 * 1024 * 1024_u128)),
+        environment_variables: Some(vec![EnvironmentVariable {
+            name: "TEST".to_string(),
+            value: "test".to_string(),
+        }]),
     };
     let CreateCanisterSuccess { canister_id, .. } = create_canister(
         &env,
@@ -6662,9 +6696,16 @@ fn test_create_canister_from() {
     let canister_settings = CanisterSettings {
         controllers: Some(vec![account1.owner, Principal::anonymous()]),
         compute_allocation: Some(Nat::from(7_u128)),
-        memory_allocation: Some(Nat::from(8_u128)),
+        memory_allocation: Some(Nat::from(888_u128)),
         freezing_threshold: Some(Nat::from(9_u128)),
         reserved_cycles_limit: Some(Nat::from(10_u128)),
+        log_visibility: Some(LogVisibility::Public),
+        wasm_memory_limit: Some(Nat::from(1024 * 1024 * 1024_u128)),
+        wasm_memory_threshold: Some(Nat::from(1024 * 1024 * 1024_u128)),
+        environment_variables: Some(vec![EnvironmentVariable {
+            name: "TEST".to_string(),
+            value: "test".to_string(),
+        }]),
     };
     let CreateCanisterSuccess {
         canister_id,
@@ -6713,6 +6754,14 @@ fn test_create_canister_from() {
     assert_eq!(
         status.settings.reserved_cycles_limit,
         canister_settings.reserved_cycles_limit.unwrap()
+    );
+    assert_eq!(
+        status.settings.wasm_memory_limit,
+        canister_settings.wasm_memory_limit.unwrap()
+    );
+    assert_eq!(
+        status.settings.wasm_memory_threshold,
+        canister_settings.wasm_memory_threshold.unwrap()
     );
     // check that the burn block created is correct
     let actual_block = env.get_block(block_id.clone());

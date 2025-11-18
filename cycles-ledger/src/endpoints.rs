@@ -1,7 +1,7 @@
 use std::{fmt::Display, marker::PhantomData};
 
 use candid::{CandidType, Deserialize, Nat, Principal};
-use ic_cdk::api::{call::RejectionCode, management_canister::provisional::CanisterSettings};
+use ic_cdk::management_canister::CanisterSettings;
 use icrc_ledger_types::{
     icrc::generic_value::Value,
     icrc1::{
@@ -389,4 +389,28 @@ pub struct GetArchivesResult {
     pub canister_id: Principal,
     pub start: Nat,
     pub end: Nat,
+}
+
+#[derive(Deserialize, Serialize, CandidType, Clone, Debug, PartialEq, Eq)]
+pub enum RejectionCode {
+    NoError,
+    CanisterError,
+    SysTransient,
+    DestinationInvalid,
+    Unknown,
+    SysFatal,
+    CanisterReject,
+}
+
+impl From<ic_cdk::call::RejectCode> for RejectionCode {
+    fn from(value: ic_cdk::call::RejectCode) -> Self {
+        match value {
+            ic_cdk::call::RejectCode::SysFatal => RejectionCode::SysFatal,
+            ic_cdk::call::RejectCode::SysTransient => RejectionCode::SysTransient,
+            ic_cdk::call::RejectCode::DestinationInvalid => RejectionCode::DestinationInvalid,
+            ic_cdk::call::RejectCode::CanisterReject => RejectionCode::CanisterReject,
+            ic_cdk::call::RejectCode::CanisterError => RejectionCode::CanisterError,
+            ic_cdk::call::RejectCode::SysUnknown => RejectionCode::Unknown,
+        }
+    }
 }

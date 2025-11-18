@@ -12,7 +12,7 @@
 FROM --platform=linux/amd64 ubuntu:24.04 as builder
 SHELL ["bash", "-c"]
 
-ARG rust_version=1.85.0
+ARG rust_version=1.91.1
 
 ENV TZ=UTC
 

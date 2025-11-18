@@ -1,6 +1,6 @@
 use crate::config::MAX_MEMO_LENGTH;
 use candid::Principal;
-use ic_cdk::api::management_canister::provisional::CanisterId;
+use ic_cdk::management_canister::CanisterId;
 use icrc_ledger_types::icrc1::transfer::Memo;
 use minicbor::{Decode, Encode, Encoder};
 

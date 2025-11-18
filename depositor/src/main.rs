@@ -4,7 +4,7 @@ use depositor::{
     endpoints::{DepositArg, InitArg},
     Config,
 };
-use ic_cdk::api::call::call_with_payment128;
+use ic_cdk::call::Call;
 use ic_cdk_macros::{init, update};
 use std::cell::RefCell;
 
@@ -28,8 +28,8 @@ fn init(arg: InitArg) {
     });
 }
 
-#[update]
 #[candid_method]
+#[update]
 async fn deposit(arg: DepositArg) -> DepositResult {
     let ledger_id = with_config(|config| config.ledger_id);
     let cycles = arg.cycles;
@@ -37,9 +37,13 @@ async fn deposit(arg: DepositArg) -> DepositResult {
         to: arg.to,
         memo: arg.memo,
     };
-    let (result,): (DepositResult,) = call_with_payment128(ledger_id, "deposit", (arg,), cycles)
+    let result: DepositResult = Call::unbounded_wait(ledger_id, "deposit")
+        .with_arg(arg)
+        .with_cycles(cycles)
         .await
-        .expect("Unable to call deposit");
+        .expect("Unable to call deposit")
+        .candid()
+        .expect("Unable to decode deposit result");
     result
 }
 
