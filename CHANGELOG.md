@@ -4,6 +4,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+* Add support for canister settings `wasm_memory_limit`, `wasm_memory_threshold`, `log_visibility`, and `environment_variables`.
+
 ## [1.0.6] - 2025-09-19
 * Add support for `initial_balances` in `InitArgs`. When specifying initial balances it is up to the installer to ensure that the cycles ledger has sufficient cycles available to spend these cycles.
 * Allow the anonymous principal to receive, approve, and transfer tokens.
