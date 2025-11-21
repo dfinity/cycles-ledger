@@ -1,16 +1,21 @@
-use candid::{candid_method, Principal};
+use candid::Principal;
 use core::panic;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
 use fake_cmc::{IcpXdrConversionRateResponse, State};
 use ic_cdk::{
-    api::{
-        call::{msg_cycles_accept128, msg_cycles_available128},
-        management_canister::main::CreateCanisterArgument,
-    },
+    api::{canister_version, msg_cycles_accept, msg_cycles_available},
+    call::Call,
+    management_canister::CreateCanisterResult,
     query,
 };
 use ic_cdk_macros::update;
 use std::cell::RefCell;
+
+#[derive(candid::CandidType, candid::Deserialize)]
+struct CreateCanisterArgsComplete {
+    settings: Option<ic_cdk::management_canister::CanisterSettings>,
+    sender_canister_version: Option<u64>,
+}
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
@@ -18,10 +23,9 @@ thread_local! {
 
 fn main() {}
 
-#[candid_method]
 #[update]
 async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCreateCanisterError> {
-    let cycles = msg_cycles_available128();
+    let cycles = msg_cycles_available();
     if cycles < 100_000_000_000 {
         return Err(CmcCreateCanisterError::Refunded {
             refund_amount: cycles,
@@ -38,30 +42,38 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     if let Some(error) = next_error {
         match error {
             CmcCreateCanisterError::Refunded { refund_amount, .. } => {
-                msg_cycles_accept128(cycles - refund_amount);
+                msg_cycles_accept(cycles - refund_amount);
             }
             CmcCreateCanisterError::RefundFailed { .. } => {
-                let _ = msg_cycles_accept128(cycles);
+                let _ = msg_cycles_accept(cycles);
             }
         };
         return Err(error);
     };
-    ic_cdk::api::call::msg_cycles_accept128(cycles);
+    msg_cycles_accept(cycles);
 
     // "Canister <id> is already installed" happens because the canister id counter doesn't take into account that a canister with that id
     // was already created using `provisional_create_canister_with_id`. Simply loop to try the next canister id.
     loop {
-        match ic_cdk::api::management_canister::main::create_canister(
-            CreateCanisterArgument {
-                settings: arg.settings.clone(),
-            },
-            cycles,
-        )
-        .await
+        let complete_arg = CreateCanisterArgsComplete {
+            settings: arg.settings.clone(),
+            sender_canister_version: Some(canister_version()),
+        };
+
+        match Call::unbounded_wait(Principal::management_canister(), "create_canister")
+            .with_arg(&complete_arg)
+            .with_cycles(cycles)
+            .await
         {
-            Ok((record,)) => return Ok(record.canister_id),
+            Ok(result) => {
+                let record: CreateCanisterResult = result
+                    .candid()
+                    .expect("Failed to decode create_canister result");
+                return Ok(record.canister_id);
+            }
             Err(error) => {
-                if !error.1.contains("canister id already exists") {
+                ic_cdk::api::debug_print(error.to_string());
+                if !error.to_string().contains("canister id already exists") {
                     panic!("create_canister failed: {:?}", error)
                 }
             }
@@ -69,19 +81,16 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     }
 }
 
-#[candid_method]
 #[update]
 fn fail_next_create_canister_with(error: CmcCreateCanisterError) {
     STATE.with(|s| s.borrow_mut().fail_next_create_canister_with = Some(error))
 }
 
-#[candid_method]
 #[query]
 fn get_icp_xdr_conversion_rate() -> IcpXdrConversionRateResponse {
     Default::default()
 }
 
-#[candid_method]
 #[query]
 fn last_create_canister_args() -> CmcCreateCanisterArgs {
     STATE.with(|s| {

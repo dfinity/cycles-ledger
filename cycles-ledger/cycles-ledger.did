@@ -221,12 +221,27 @@ type CmcCreateCanisterArgs = record {
   subnet_selection : opt SubnetSelection;
 };
 
+type EnvironmentVariable = record {
+  name : text;
+  value : text;
+};
+
+type LogVisibility = variant {
+  controllers;
+  public;
+  allowed_viewers : vec principal;
+};
+
 type CanisterSettings = record {
   controllers : opt vec principal;
   compute_allocation : opt nat;
   memory_allocation : opt nat;
   freezing_threshold : opt nat;
   reserved_cycles_limit : opt nat;
+  wasm_memory_limit : opt nat;
+  wasm_memory_threshold : opt nat;
+  log_visibility : opt LogVisibility;
+  environment_variables : opt vec EnvironmentVariable;
 };
 
 type SubnetSelection = variant {

@@ -39,7 +39,7 @@ jobs:
           key: ${{ matrix.pocket-ic-version }}-pocket-ic-binary
 
       - name: Download PocketIC binary
-        run: ./download-pocket-ic.sh ${{ matrix.pocket-ic-version }} linux
+        run: ./download-pocket-ic.sh ${{ matrix.pocket-ic-version }} linux x86_64
 
       - name: Check Format
         run: cargo fmt --all -- --check

@@ -1,7 +1,8 @@
 use crate::config::{Config, REMOTE_FUTURE};
 use crate::endpoints::{
     CmcCreateCanisterArgs, CmcCreateCanisterError, CreateCanisterError, CreateCanisterFromError,
-    CreateCanisterSuccess, DataCertificate, DepositResult, WithdrawError, WithdrawFromError,
+    CreateCanisterSuccess, DataCertificate, DepositResult, RejectionCode, WithdrawError,
+    WithdrawFromError,
 };
 use crate::logs::{P0, P1};
 use crate::memo::{encode_withdraw_memo, validate_memo};
@@ -14,10 +15,9 @@ use crate::{
 use anyhow::{anyhow, bail, Context};
 use candid::{Nat, Principal};
 use ic_canister_log::log;
-use ic_cdk::api::call::{call_with_payment128, RejectionCode};
-use ic_cdk::api::management_canister::main::deposit_cycles;
-use ic_cdk::api::management_canister::provisional::{CanisterIdRecord, CanisterSettings};
-use ic_cdk::api::set_certified_data;
+use ic_cdk::api::certified_data_set;
+use ic_cdk::call::Call;
+use ic_cdk::management_canister::{deposit_cycles, CanisterSettings, DepositCyclesArgs};
 use ic_certified_map::{AsHashTree, RbTree};
 use ic_stable_structures::{
     cell::Cell as StableCell,
@@ -675,7 +675,7 @@ impl State {
         // Change the certified data to point to the new block at the end of the list of blocks
         let block_idx = self.blocks.len() - 1;
         populate_last_block_hash_and_hash_tree(&mut self.cache.hash_tree, block_idx, hash);
-        set_certified_data(&self.root_hash());
+        certified_data_set(self.root_hash());
 
         if let Some(ts) = created_at_time {
             // Add block index to the list of transactions and set the hash as its key
@@ -810,7 +810,7 @@ impl<T> Storable for Cbor<T>
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
-    fn to_bytes(&self) -> Cow<[u8]> {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
         let mut buf = vec![];
         ciborium::ser::into_writer(&self.0, &mut buf).unwrap();
         Cow::Owned(buf)
@@ -911,7 +911,7 @@ pub fn mint(to: Account, amount: u128, memo: Option<Memo>, now: u64) -> anyhow::
         // If this happens then log an error and panic so that
         // the state is reset to a valid one.
         let err = err.context(format!("Unable to credit {to} to {amount}"));
-        ic_cdk::trap(&format!("{err:#}"));
+        ic_cdk::trap(format!("{err:#}"));
     }
 
     Ok(block_index)
@@ -1009,19 +1009,19 @@ pub fn transfer(
             if let Err(err) =
                 mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
-                ic_cdk::trap(&format!("Unable to perform transfer {transaction}: {err}"));
+                ic_cdk::trap(format!("Unable to perform transfer {transaction}: {err}"));
             }
         }
     }
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
         let err = err.context(format!("Unable to perform transfer {transaction}"));
-        ic_cdk::trap(&format!("{err:#}"));
+        ic_cdk::trap(format!("{err:#}"));
     };
 
     if let Err(err) = mutate_state(|state| state.credit(&to, amount)) {
         let err = err.context(format!("Unable to perform transfer {transaction}"));
-        ic_cdk::trap(&format!("{err:#}"));
+        ic_cdk::trap(format!("{err:#}"));
     };
 
     Ok(Nat::from(block_index))
@@ -1108,7 +1108,7 @@ pub fn approve(
 
     if let Err(err) = mutate_state(|state| state.debit(&from, crate::config::FEE)) {
         let err = err.context(format!("Unable to approve {transaction}"));
-        ic_cdk::trap(&format!("{err:#}"));
+        ic_cdk::trap(format!("{err:#}"));
     }
 
     Ok(Nat::from(block_index))
@@ -1472,7 +1472,7 @@ impl From<UseAllowanceError> for TransferFromError {
 
         match value {
             CannotDeduceZero => transfer_from::cannot_transfer_from_zero(),
-            ExpiredApproval { .. } => transfer_from::expired_approval(),
+            ExpiredApproval => transfer_from::expired_approval(),
             InsufficientAllowance { allowance } => Self::InsufficientAllowance {
                 allowance: allowance.into(),
             },
@@ -1486,7 +1486,7 @@ impl From<UseAllowanceError> for WithdrawFromError {
 
         match value {
             CannotDeduceZero => ic_cdk::trap("CannotDeduceZero should not happen for withdraw"),
-            ExpiredApproval { .. } => Self::InsufficientAllowance {
+            ExpiredApproval => Self::InsufficientAllowance {
                 allowance: Nat::from(0_u8),
             },
             InsufficientAllowance { allowance } => Self::InsufficientAllowance {
@@ -1504,7 +1504,7 @@ impl From<UseAllowanceError> for CreateCanisterFromError {
             CannotDeduceZero => {
                 ic_cdk::trap("CannotDeduceZero should not happen for create_canister")
             }
-            ExpiredApproval { .. } => Self::InsufficientAllowance {
+            ExpiredApproval => Self::InsufficientAllowance {
                 allowance: Nat::from(0_u8),
             },
             InsufficientAllowance { allowance } => Self::InsufficientAllowance {
@@ -1695,7 +1695,7 @@ pub fn penalize(from: &Account, now: u64) -> Option<(BlockIndex, Hash)> {
 
         if let Err(err) = s.debit(from, crate::config::FEE) {
             let err = err.context(format!("Unable to penalize account {:?}", from));
-            ic_cdk::trap(&format!("{err:#}"))
+            ic_cdk::trap(format!("{err:#}"))
         }
         let phash = s.last_block_hash();
         let block_hash = s.emit_block(Block {
@@ -1809,24 +1809,27 @@ pub async fn withdraw(
             {
                 let err =
                     anyhow!(err).context(format!("Unable to perform withdraw: {:?}", transaction));
-                ic_cdk::trap(&format!("{err:#}"));
+                ic_cdk::trap(format!("{err:#}"));
             };
         }
     }
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
         let err = err.context(format!("Unable to perform withdraw: {:?}", transaction));
-        ic_cdk::trap(&format!("{err:#}"))
+        ic_cdk::trap(format!("{err:#}"))
     };
 
     prune(now);
 
     // 2. call deposit_cycles on the management canister
-    let deposit_cycles_result = deposit_cycles(CanisterIdRecord { canister_id: to }, amount).await;
+    let deposit_cycles_result =
+        deposit_cycles(&DepositCyclesArgs { canister_id: to }, amount).await;
     let now = ic_cdk::api::time();
 
     // 3. if 2. fails then mint cycles
-    if let Err((rejection_code, rejection_reason)) = deposit_cycles_result {
+    if let Err(err) = deposit_cycles_result {
+        let (rejection_code, rejection_reason) = call_error_to_reject(err);
+
         // subtract the fee to pay for the reimburse block
         let amount_to_reimburse = amount.saturating_sub(config::FEE);
         if amount_to_reimburse.is_zero() {
@@ -1865,7 +1868,7 @@ pub async fn withdraw(
                             Err(err) => {
                                 // this is a critical error that should not
                                 // happen because approving should never fail.
-                                ic_cdk::trap(&format!("Unable to reimburse approval: {:#?}", err));
+                                ic_cdk::trap(format!("Unable to reimburse approval: {:#?}", err));
                             }
                         }
                     }
@@ -1881,7 +1884,7 @@ pub async fn withdraw(
             Err(err) => {
                 // this is a critical error that should not
                 // happen because minting should never fail.
-                ic_cdk::trap(&format!("Unable to reimburse caller: {}", err))
+                ic_cdk::trap(format!("Unable to reimburse caller: {}", err))
             }
         }
     }
@@ -1959,14 +1962,14 @@ pub async fn create_canister(
                     "unable to perform create_canister: {:?}",
                     transaction
                 ));
-                ic_cdk::trap(&format!("{err:#}"));
+                ic_cdk::trap(format!("{err:#}"));
             }
         }
     }
 
     if let Err(err) = mutate_state(|state| state.debit(&from, amount_with_fee)) {
         let err = err.context(format!("Unable to perform create_canister {transaction}"));
-        ic_cdk::trap(&format!("{err:#}"));
+        ic_cdk::trap(format!("{err:#}"));
     };
 
     prune(now);
@@ -1981,13 +1984,13 @@ pub async fn create_canister(
                     controllers: Some(
                         settings
                             .controllers
-                            .unwrap_or_else(|| vec![ic_cdk::api::caller()]),
+                            .unwrap_or_else(|| vec![ic_cdk::api::msg_caller()]),
                     ),
                     ..settings
                 })
                 .or_else(|| {
                     Some(CanisterSettings {
-                        controllers: Some(vec![ic_cdk::api::caller()]),
+                        controllers: Some(vec![ic_cdk::api::msg_caller()]),
                         ..Default::default()
                     })
                 }),
@@ -1995,23 +1998,28 @@ pub async fn create_canister(
         })
         .unwrap_or_else(|| CmcCreateCanisterArgs {
             settings: Some(CanisterSettings {
-                controllers: Some(vec![ic_cdk::api::caller()]),
+                controllers: Some(vec![ic_cdk::api::msg_caller()]),
                 ..Default::default()
             }),
             subnet_selection: None,
         });
     let create_canister_result: Result<
-        (Result<Principal, CmcCreateCanisterError>,),
-        (RejectionCode, String),
-    > = call_with_payment128(CMC_PRINCIPAL, "create_canister", (argument,), amount).await;
+        Result<Principal, CmcCreateCanisterError>,
+        ic_cdk::call::Error,
+    > = Call::unbounded_wait(CMC_PRINCIPAL, "create_canister")
+        .with_arg(argument)
+        .with_cycles(amount)
+        .await
+        .map_err(ic_cdk::call::Error::from)
+        .and_then(|response| response.candid().map_err(ic_cdk::call::Error::from));
     let now = ic_cdk::api::time();
 
     // 3. if 2. fails then mint cycles
 
     let flat_create_canister_result = match create_canister_result {
         Ok(not_rejected) => match not_rejected {
-            (Ok(success),) => Ok(success),
-            (Err(err),) => match err {
+            Ok(success) => Ok(success),
+            Err(err) => match err {
                 CmcCreateCanisterError::Refunded {
                     refund_amount,
                     create_error,
@@ -2026,7 +2034,10 @@ pub async fn create_canister(
                 )),
             },
         },
-        Err((rejection_code, rejection_reason)) => Err((rejection_code, amount, rejection_reason)),
+        Err(call_error) => {
+            let (rejection_code, rejection_reason) = call_error_to_reject(call_error);
+            Err((rejection_code, amount, rejection_reason))
+        }
     };
 
     match flat_create_canister_result {
@@ -2071,7 +2082,7 @@ pub async fn create_canister(
                                 }
                                 Err(err) => {
                                     // this is a critical error that should not happen because approving should never fail.
-                                    ic_cdk::trap(&format!(
+                                    ic_cdk::trap(format!(
                                         "Unable to reimburse approval: {:#?}",
                                         err
                                     ));
@@ -2090,7 +2101,7 @@ pub async fn create_canister(
                 Err(err) => {
                     // this is a critical error that should not
                     // happen because minting should never fail.
-                    ic_cdk::trap(&format!("Unable to reimburse caller: {err}"))
+                    ic_cdk::trap(format!("Unable to reimburse caller: {err}"))
                 }
             }
         }
@@ -2105,7 +2116,7 @@ pub async fn create_canister(
                 });
             } else {
                 // this should not happen because processing the transaction already checks if it can be hashed
-                ic_cdk::trap(&format!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
+                ic_cdk::trap(format!("Bug: Transaction in block {block_index} was processed correctly but suddenly cannot be hashed anymore."));
             }
             Ok(CreateCanisterSuccess {
                 block_id: Nat::from(block_index),
@@ -2138,7 +2149,7 @@ fn reimburse(
 
     if let Err(err) = mutate_state(|state| state.credit(&acc, amount)) {
         let err = err.context(format!("Unable to reimburse withdraw: {transaction:?}"));
-        ic_cdk::trap(&format!("{err:#}"))
+        ic_cdk::trap(format!("{err:#}"))
     };
 
     prune(now);
@@ -2463,6 +2474,25 @@ pub fn get_allowances(
         }
     });
     result
+}
+
+fn call_error_to_reject(err: ic_cdk::call::Error) -> (RejectionCode, String) {
+    match err {
+        ic_cdk::call::Error::InsufficientLiquidCycleBalance(_) => {
+            (RejectionCode::SysTransient, err.to_string())
+        }
+        ic_cdk::call::Error::CallPerformFailed(_) => (RejectionCode::SysTransient, err.to_string()),
+        ic_cdk::call::Error::CallRejected(reject) => (
+            reject
+                .reject_code()
+                .map(|c| c.into())
+                .unwrap_or(RejectionCode::Unknown),
+            reject.reject_message().to_string(),
+        ),
+        ic_cdk::call::Error::CandidDecodeFailed(_) => {
+            (RejectionCode::CanisterError, err.to_string())
+        }
+    }
 }
 
 #[cfg(test)]
