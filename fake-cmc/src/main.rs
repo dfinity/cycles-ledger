@@ -11,8 +11,6 @@ use ic_cdk::{
 use ic_cdk_macros::update;
 use std::cell::RefCell;
 
-const CANISTER_CREATION_FEE: u128 = 500_000_000_000;
-
 #[derive(candid::CandidType, candid::Deserialize)]
 struct CreateCanisterArgsComplete {
     settings: Option<ic_cdk::management_canister::CanisterSettings>,
@@ -28,7 +26,7 @@ fn main() {}
 #[update]
 async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCreateCanisterError> {
     let cycles = msg_cycles_available();
-    if cycles < CANISTER_CREATION_FEE {
+    if cycles < 100_000_000_000 {
         return Err(CmcCreateCanisterError::Refunded {
             refund_amount: cycles,
             create_error: "Insufficient cycles attached.".to_string(),
