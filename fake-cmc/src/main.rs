@@ -1,4 +1,4 @@
-use candid::{candid_method, Principal};
+use candid::Principal;
 use core::panic;
 use cycles_ledger::endpoints::{CmcCreateCanisterArgs, CmcCreateCanisterError};
 use fake_cmc::{IcpXdrConversionRateResponse, State};
@@ -25,7 +25,6 @@ thread_local! {
 
 fn main() {}
 
-#[candid_method]
 #[update]
 async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCreateCanisterError> {
     let cycles = msg_cycles_available();
@@ -84,19 +83,16 @@ async fn create_canister(arg: CmcCreateCanisterArgs) -> Result<Principal, CmcCre
     }
 }
 
-#[candid_method]
 #[update]
 fn fail_next_create_canister_with(error: CmcCreateCanisterError) {
     STATE.with(|s| s.borrow_mut().fail_next_create_canister_with = Some(error))
 }
 
-#[candid_method]
 #[query]
 fn get_icp_xdr_conversion_rate() -> IcpXdrConversionRateResponse {
     Default::default()
 }
 
-#[candid_method]
 #[query]
 fn last_create_canister_args() -> CmcCreateCanisterArgs {
     STATE.with(|s| {

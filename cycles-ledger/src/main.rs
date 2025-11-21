@@ -1,4 +1,4 @@
-use candid::{candid_method, Nat, Principal};
+use candid::{Nat, Principal};
 use cycles_ledger::endpoints::{
     CmcCreateCanisterArgs, DataCertificate, GetArchivesArgs, GetArchivesResult, GetBlocksArgs,
     GetBlocksResult, LedgerArgs, SupportedBlockType, WithdrawError, WithdrawFromError,
@@ -30,7 +30,6 @@ use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromErro
 use num_traits::ToPrimitive;
 
 #[init]
-#[candid_method(init)]
 fn init(ledger_args: LedgerArgs) {
     match ledger_args {
         LedgerArgs::Init(config) => {
@@ -71,37 +70,31 @@ fn post_upgrade(ledger_args: Option<LedgerArgs>) {
     }
 }
 
-#[candid_method]
 #[query]
 fn icrc1_name() -> String {
     config::TOKEN_NAME.to_string()
 }
 
-#[candid_method]
 #[query]
 fn icrc1_symbol() -> String {
     config::TOKEN_SYMBOL.to_string()
 }
 
-#[candid_method]
 #[query]
 fn icrc1_decimals() -> u8 {
     config::DECIMALS
 }
 
-#[candid_method]
 #[query]
 fn icrc1_fee() -> Nat {
     Nat::from(config::FEE)
 }
 
-#[candid_method]
 #[query]
 fn icrc1_minting_account() -> Option<Account> {
     None
 }
 
-#[candid_method]
 #[query]
 fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
     vec![
@@ -131,7 +124,6 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
     ]
 }
 
-#[candid_method]
 #[query]
 fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
     vec![
@@ -158,13 +150,11 @@ fn icrc3_supported_block_types() -> Vec<SupportedBlockType> {
     ]
 }
 
-#[candid_method]
 #[query]
 fn icrc1_total_supply() -> Nat {
     Nat::from(read_state(|state| state.total_supply()))
 }
 
-#[candid_method]
 #[query]
 fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     use MetadataValue as MV;
@@ -188,13 +178,11 @@ fn icrc1_metadata() -> Vec<(String, MetadataValue)> {
     metadata
 }
 
-#[candid_method]
 #[query]
 fn icrc1_balance_of(account: Account) -> Nat {
     Nat::from(storage::balance_of(&account))
 }
 
-#[candid_method]
 #[update]
 fn deposit(arg: endpoints::DepositArg) -> endpoints::DepositResult {
     let cycles_available = msg_cycles_available();
@@ -250,7 +238,6 @@ fn execute_transfer(
     Ok(block_index)
 }
 
-#[candid_method]
 #[update]
 fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     let from = Account {
@@ -270,7 +257,6 @@ fn icrc1_transfer(args: TransferArgs) -> Result<Nat, TransferError> {
     .map_err(transfer_from_error_to_transfer_error)
 }
 
-#[candid_method]
 #[update]
 fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError> {
     let spender = Account {
@@ -288,7 +274,6 @@ fn icrc2_transfer_from(args: TransferFromArgs) -> Result<Nat, TransferFromError>
     )
 }
 
-#[candid_method]
 #[query]
 fn icrc3_get_blocks(args: GetBlocksArgs) -> GetBlocksResult {
     storage::get_blocks(args)
@@ -311,7 +296,6 @@ async fn execute_withdraw(
     storage::withdraw(from, to, spender, amount, now, created_at_time).await
 }
 
-#[candid_method]
 #[update]
 async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
     let from = Account {
@@ -323,7 +307,6 @@ async fn withdraw(args: endpoints::WithdrawArgs) -> Result<Nat, WithdrawError> {
         .map_err(withdraw_from_error_to_withdraw_error)
 }
 
-#[candid_method]
 #[update]
 async fn withdraw_from(args: endpoints::WithdrawFromArgs) -> Result<Nat, WithdrawFromError> {
     let spender = Account {
@@ -356,7 +339,6 @@ async fn execute_create_canister(
     storage::create_canister(from, spender, amount, now, created_at_time, creation_args).await
 }
 
-#[candid_method]
 #[update]
 async fn create_canister(
     args: endpoints::CreateCanisterArgs,
@@ -377,7 +359,6 @@ async fn create_canister(
     .map_err(create_canister_from_error_to_create_canister_error)
 }
 
-#[candid_method]
 #[update]
 async fn create_canister_from(
     args: endpoints::CreateCanisterFromArgs,
@@ -396,7 +377,6 @@ async fn create_canister_from(
     .await
 }
 
-#[candid_method]
 #[query]
 fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     let allowance = storage::allowance(&args.account, &args.spender, ic_cdk::api::time());
@@ -411,7 +391,6 @@ fn icrc2_allowance(args: AllowanceArgs) -> Allowance {
     }
 }
 
-#[candid_method]
 #[update]
 fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     let from = Account {
@@ -461,7 +440,6 @@ fn icrc2_approve(args: ApproveArgs) -> Result<Nat, ApproveError> {
     Ok(block_index)
 }
 
-#[candid_method]
 #[query]
 fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllowancesError> {
     let from_account = match arg.from_account {
@@ -484,7 +462,6 @@ fn icrc103_get_allowances(arg: GetAllowancesArgs) -> Result<Allowances, GetAllow
     ))
 }
 
-#[candid_method]
 #[query]
 fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
     match read_config(|config| config.index_id) {
@@ -493,7 +470,6 @@ fn icrc106_get_index_principal() -> Result<Principal, Icrc106Error> {
     }
 }
 
-#[candid_method]
 #[query]
 fn http_request(req: HttpRequest) -> HttpResponse {
     if req.path() == "/metrics" {
@@ -620,13 +596,11 @@ pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> st
     Ok(())
 }
 
-#[candid_method]
 #[query]
 fn icrc3_get_tip_certificate() -> Option<DataCertificate> {
     read_state(|state| state.get_tip_certificate())
 }
 
-#[candid_method]
 #[query]
 fn icrc3_get_archives(_args: GetArchivesArgs) -> Vec<GetArchivesResult> {
     vec![]
@@ -635,7 +609,6 @@ fn icrc3_get_archives(_args: GetArchivesArgs) -> Vec<GetArchivesResult> {
 fn main() {}
 
 #[cfg(feature = "testing")]
-#[candid_method]
 #[query]
 fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
     let mut res = std::collections::BTreeMap::new();
@@ -648,7 +621,6 @@ fn get_transaction_hashes() -> std::collections::BTreeMap<[u8; 32], u64> {
 }
 
 #[cfg(feature = "testing")]
-#[candid_method]
 #[query]
 fn get_transaction_timestamps() -> std::collections::BTreeMap<(u64, u64), ()> {
     let mut res = std::collections::BTreeMap::new();
