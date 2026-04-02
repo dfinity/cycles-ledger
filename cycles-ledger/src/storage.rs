@@ -1506,9 +1506,7 @@ fn effective_fee(op: &Operation) -> Option<u128> {
     match op {
         Op::Mint { .. } => Some(0),
         Op::Burn { .. } => Some(config::FEE),
-        Op::Transfer { fee, .. } | Op::Approve { fee, .. } => {
-            fee.is_none().then_some(config::FEE)
-        }
+        Op::Transfer { fee, .. } | Op::Approve { fee, .. } => fee.is_none().then_some(config::FEE),
     }
 }
 
