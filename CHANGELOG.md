@@ -5,6 +5,7 @@
 ## [Unreleased] - ReleaseDate
 
 * Add support for canister settings `wasm_memory_limit`, `wasm_memory_threshold`, `log_visibility`, and `environment_variables`.
+* Fixed a bug where `InsufficientFunds` errors took precedence over `BadFee` errors in `icrc1_transfer`, `icrc2_approve`, and `icrc2_transfer_from`.
 
 ## [1.0.6] - 2025-09-19
 * Add support for `initial_balances` in `InitArgs`. When specifying initial balances it is up to the installer to ensure that the cycles ledger has sufficient cycles available to spend these cycles.

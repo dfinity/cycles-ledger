@@ -3689,6 +3689,107 @@ fn test_icrc1_transfer_invalid_arg(env: &TestEnv) {
     // memo is tested by [test_icrc1_transfer_invalid_memo]
 }
 
+/// ICRC-1 spec: BadFee takes precedence over InsufficientFunds.
+/// ICRC-2 says nothing about order, but we keep it consistent
+#[test]
+fn test_bad_fee_takes_precedence_over_insufficient_funds() {
+    let env = TestEnv::setup();
+    let fee = env.icrc1_fee();
+
+    // --- icrc1_transfer ---
+    {
+        let account_from = account(1, None);
+        let account_to = account(2, None);
+        assert_eq!(Nat::from(0u8), env.icrc1_balance_of(account_from));
+
+        for bad_fee in [0, fee - 1, fee + 1, u128::MAX] {
+            let args = TransferArgs {
+                from_subaccount: account_from.subaccount,
+                to: account_to,
+                amount: Nat::from(fee),
+                fee: Some(Nat::from(bad_fee)),
+                created_at_time: None,
+                memo: None,
+            };
+            assert_eq!(
+                Err(TransferError::BadFee {
+                    expected_fee: Nat::from(fee)
+                }),
+                env.icrc1_transfer(account_from.owner, args),
+                "icrc1_transfer: BadFee should take precedence over InsufficientFunds (bad_fee={bad_fee})",
+            );
+        }
+    }
+
+    // --- icrc2_approve ---
+    {
+        let account_from = account(3, None);
+        let account_spender = account(4, None);
+        assert_eq!(Nat::from(0u8), env.icrc1_balance_of(account_from));
+
+        for bad_fee in [0, fee - 1, fee + 1, u128::MAX] {
+            let args = ApproveArgs {
+                from_subaccount: account_from.subaccount,
+                spender: account_spender,
+                amount: Nat::from(fee),
+                fee: Some(Nat::from(bad_fee)),
+                created_at_time: None,
+                memo: None,
+                expected_allowance: None,
+                expires_at: None,
+            };
+            assert_eq!(
+                Err(ApproveError::BadFee {
+                    expected_fee: Nat::from(fee)
+                }),
+                env.icrc2_approve(account_from.owner, args),
+                "icrc2_approve: BadFee should take precedence over InsufficientFunds (bad_fee={bad_fee})",
+            );
+        }
+    }
+
+    // --- icrc2_transfer_from ---
+    {
+        let account_from = account(5, None);
+        let account_to = account(6, None);
+        let account_spender = account(7, None);
+
+        // Deposit enough so the approval succeeds, leaving 0 balance after.
+        let _deposit_index = env.deposit(account_from, 2 * fee, None);
+        let approve_args = ApproveArgs {
+            from_subaccount: account_from.subaccount,
+            spender: account_spender,
+            amount: Nat::from(u128::MAX),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        };
+        let _approve_index = env.icrc2_approve_or_trap(account_from.owner, approve_args);
+        assert_eq!(Nat::from(0u8), env.icrc1_balance_of(account_from));
+
+        for bad_fee in [0, fee - 1, fee + 1, u128::MAX] {
+            let args = TransferFromArgs {
+                from: account_from,
+                to: account_to,
+                spender_subaccount: account_spender.subaccount,
+                amount: Nat::from(fee),
+                fee: Some(Nat::from(bad_fee)),
+                created_at_time: None,
+                memo: None,
+            };
+            assert_eq!(
+                Err(TransferFromError::BadFee {
+                    expected_fee: Nat::from(fee)
+                }),
+                env.icrc2_transfer_from(account_spender.owner, args),
+                "icrc2_transfer_from: BadFee should take precedence over InsufficientFunds (bad_fee={bad_fee})",
+            );
+        }
+    }
+}
+
 fn test_icrc1_transfer_insufficient_funds_with_params(
     env: &TestEnv,
     set_created_at_time: ShouldSetCreatedAtTime,
