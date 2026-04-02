@@ -1130,9 +1130,6 @@ pub fn approve(
 
 #[derive(Debug)]
 enum ProcessTransactionError {
-    BadFee {
-        expected_fee: u128,
-    },
     Duplicate {
         duplicate_of: u64,
         canister_id: Option<Principal>,
@@ -1162,9 +1159,6 @@ impl std::error::Error for ProcessTransactionError {
 impl std::fmt::Display for ProcessTransactionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadFee { expected_fee } => {
-                write!(f, "Invalid fee, expected fee is {}", expected_fee)
-            }
             Self::Duplicate { duplicate_of, .. } => write!(
                 f,
                 "Input transaction is a duplicate of transaction at index {}",
@@ -1339,9 +1333,6 @@ impl From<ProcessTransactionError> for TransferFromError {
         use ProcessTransactionError::*;
 
         match error {
-            BadFee { expected_fee } => Self::BadFee {
-                expected_fee: Nat::from(expected_fee),
-            },
             Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
@@ -1357,7 +1348,6 @@ impl From<ProcessTransactionError> for WithdrawFromError {
         use ProcessTransactionError::*;
 
         match error {
-            BadFee { .. } => ic_cdk::trap("BadFee should not happen for withdraw"),
             Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
@@ -1380,9 +1370,6 @@ impl From<ProcessTransactionError> for ApproveError {
         use ProcessTransactionError::*;
 
         match error {
-            BadFee { expected_fee } => Self::BadFee {
-                expected_fee: Nat::from(expected_fee),
-            },
             Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
@@ -1397,9 +1384,6 @@ impl From<ProcessTransactionError> for WithdrawError {
         use ProcessTransactionError::*;
 
         match error {
-            BadFee { expected_fee } => Self::BadFee {
-                expected_fee: Nat::from(expected_fee),
-            },
             Duplicate { duplicate_of, .. } => Self::Duplicate {
                 duplicate_of: Nat::from(duplicate_of),
             },
@@ -1414,13 +1398,6 @@ impl From<ProcessTransactionError> for CreateCanisterError {
         use ProcessTransactionError::*;
 
         match error {
-            BadFee { expected_fee } => Self::GenericError {
-                error_code: CreateCanisterError::BAD_FEE_ERROR.into(),
-                message: format!(
-                    "BadFee. Expected fee: {}. Should never happen.",
-                    expected_fee
-                ),
-            },
             Duplicate {
                 duplicate_of,
                 canister_id,
@@ -1439,13 +1416,6 @@ impl From<ProcessTransactionError> for CreateCanisterFromError {
         use ProcessTransactionError::*;
 
         match error {
-            BadFee { expected_fee } => Self::GenericError {
-                error_code: CreateCanisterError::BAD_FEE_ERROR.into(),
-                message: format!(
-                    "BadFee. Expected fee: {}. Should never happen.",
-                    expected_fee
-                ),
-            },
             Duplicate {
                 duplicate_of,
                 canister_id,
@@ -1528,19 +1498,16 @@ impl From<UseAllowanceError> for CreateCanisterFromError {
     }
 }
 
-// Validates the suggested fee and returns the effective fee.
-// If the validation fails then return Err with the expected fee.
-fn validate_suggested_fee(op: &Operation) -> Result<Option<u128>, u128> {
+/// Returns the effective fee for the operation.
+/// Callers must validate the suggested fee before calling this function.
+fn effective_fee(op: &Operation) -> Option<u128> {
     use Operation as Op;
 
     match op {
-        Op::Mint { .. } => Ok(Some(0)),
-        Op::Burn { .. } => Ok(Some(config::FEE)),
+        Op::Mint { .. } => Some(0),
+        Op::Burn { .. } => Some(config::FEE),
         Op::Transfer { fee, .. } | Op::Approve { fee, .. } => {
-            if fee.is_some() && fee != &Some(config::FEE) {
-                return Err(config::FEE);
-            }
-            Ok(fee.is_none().then_some(config::FEE))
+            fee.is_none().then_some(config::FEE)
         }
     }
 }
@@ -1571,8 +1538,6 @@ fn check_duplicate(transaction: &Transaction) -> Result<(), ProcessTransactionEr
 }
 
 fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, ProcessTransactionError> {
-    use ProcessTransactionError as PTErr;
-
     // The ICRC-1 and ICP Ledgers trap when the memo validation fails
     // so we do the same.
     if let Err(err) = validate_memo(&transaction.memo) {
@@ -1581,8 +1546,7 @@ fn process_transaction(transaction: Transaction, now: u64) -> Result<u64, Proces
 
     validate_created_at_time(&transaction.created_at_time, now)?;
 
-    let effective_fee = validate_suggested_fee(&transaction.operation)
-        .map_err(|expected_fee| PTErr::BadFee { expected_fee })?;
+    let effective_fee = effective_fee(&transaction.operation);
 
     let block = Block {
         transaction,
