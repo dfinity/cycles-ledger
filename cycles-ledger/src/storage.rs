@@ -962,6 +962,13 @@ pub fn transfer(
         }
     }
 
+    // BadFee takes precedence over InsufficientFunds per ICRC-1 spec
+    if suggested_fee.is_some() && suggested_fee != Some(config::FEE) {
+        return Err(BadFee {
+            expected_fee: Nat::from(config::FEE),
+        });
+    }
+
     // if `amount` + `fee` overflows then the user doesn't have enough funds
     let Some(amount_with_fee) = amount.checked_add(config::FEE) else {
         return Err(InsufficientFunds {
@@ -1071,6 +1078,13 @@ pub fn approve(
     if expected_allowance.is_some() && expected_allowance != Some(allowance) {
         return Err(ApproveError::AllowanceChanged {
             current_allowance: Nat::from(allowance),
+        });
+    }
+
+    // BadFee takes precedence over InsufficientFunds per ICRC-1 spec
+    if suggested_fee.is_some() && suggested_fee != Some(config::FEE) {
+        return Err(ApproveError::BadFee {
+            expected_fee: Nat::from(config::FEE),
         });
     }
 

@@ -3754,8 +3754,8 @@ fn test_bad_fee_takes_precedence_over_insufficient_funds() {
         let account_to = account(6, None);
         let account_spender = account(7, None);
 
-        // Deposit just enough for the approval fee, leaving 0 balance after approve.
-        let _deposit_index = env.deposit(account_from, fee, None);
+        // Deposit enough so the approval succeeds, leaving 0 balance after.
+        let _deposit_index = env.deposit(account_from, 2 * fee, None);
         let approve_args = ApproveArgs {
             from_subaccount: account_from.subaccount,
             spender: account_spender,
