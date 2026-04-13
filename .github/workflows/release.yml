@@ -71,7 +71,7 @@ jobs:
           echo "INFO: The release tag is: $TAG"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
         with:
           ref: ${{ env.TAG }}
       - name: Install Rust
@@ -79,7 +79,7 @@ jobs:
       - id: create-release
         run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ env.TAG }}" --notes="TBD"
       - name: Install dfx
-        uses: dfinity/setup-dfx@main
+        uses: dfinity/setup-dfx@e50c04f104ee4285ec010f10609483cf41e4d365 # main
       - name: Build WASM
         run: |
           dfx build --check

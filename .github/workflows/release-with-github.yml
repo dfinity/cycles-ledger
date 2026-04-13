@@ -33,12 +33,12 @@ jobs:
     outputs:
       nev_version: ${{ steps.determine_version.outputs.NEW_VERSION }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
         with:
           fetch-depth: 0
       - name: Use Rust version from rust-toolchain.toml
         run: rustup show
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@6ed12bbaae779f3fd3ba1477bc9a61a2535a3bb2 # main
       - name: Install dependencies
         run: cargo binstall cargo-release ripgrep -y
       - name: Determine new version number by dry-running `cargo-release`
@@ -88,7 +88,7 @@ jobs:
     needs: [create-release, call-release-binaries-workflow]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Open the release PR
         env:
           GH_TOKEN: ${{ github.token }}
