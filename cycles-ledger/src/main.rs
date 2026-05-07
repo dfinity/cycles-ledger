@@ -97,6 +97,15 @@ fn icrc1_minting_account() -> Option<Account> {
 
 #[query]
 fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
+    supported_standards()
+}
+
+#[query]
+fn icrc10_supported_standards() -> Vec<endpoints::SupportedStandard> {
+    supported_standards()
+}
+
+fn supported_standards() -> Vec<endpoints::SupportedStandard> {
     vec![
         endpoints::SupportedStandard {
             name: "ICRC-1".to_string(),
@@ -112,6 +121,10 @@ fn icrc1_supported_standards() -> Vec<endpoints::SupportedStandard> {
             name: "ICRC-3".to_string(),
             url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-3/README.md"
                 .to_string(),
+        },
+        endpoints::SupportedStandard {
+            name: "ICRC-10".to_string(),
+            url: "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-10/ICRC-10.md".to_string(),
         },
         endpoints::SupportedStandard {
             name: "ICRC-103".to_string(),
