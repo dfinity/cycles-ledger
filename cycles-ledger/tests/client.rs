@@ -250,6 +250,32 @@ pub fn icrc1_metadata(env: &PocketIc, ledger_id: Principal) -> Vec<(String, Meta
     query_or_panic(env, ledger_id, Principal::anonymous(), "icrc1_metadata", ())
 }
 
+pub fn icrc1_supported_standards(
+    env: &PocketIc,
+    ledger_id: Principal,
+) -> Vec<endpoints::SupportedStandard> {
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc1_supported_standards",
+        (),
+    )
+}
+
+pub fn icrc10_supported_standards(
+    env: &PocketIc,
+    ledger_id: Principal,
+) -> Vec<endpoints::SupportedStandard> {
+    query_or_panic(
+        env,
+        ledger_id,
+        Principal::anonymous(),
+        "icrc10_supported_standards",
+        (),
+    )
+}
+
 pub fn icrc3_get_blocks<N: Into<Nat>>(
     env: &PocketIc,
     ledger_id: Principal,

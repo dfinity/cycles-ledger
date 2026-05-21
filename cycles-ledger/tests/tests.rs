@@ -13,8 +13,8 @@ use cycles_ledger::{
     endpoints::{
         BlockWithId, ChangeIndexId, CmcCreateCanisterError, CreateCanisterFromArgs,
         CreateCanisterFromError, DataCertificate, DepositResult, GetBlocksResult, LedgerArgs,
-        RejectionCode, UpgradeArgs, WithdrawArgs, WithdrawError, WithdrawFromArgs,
-        WithdrawFromError,
+        RejectionCode, SupportedStandard, UpgradeArgs, WithdrawArgs, WithdrawError,
+        WithdrawFromArgs, WithdrawFromError,
     },
     memo::encode_withdraw_memo,
     storage::{
@@ -516,6 +516,14 @@ impl TestEnv {
 
     fn icrc1_metadata(&self) -> Vec<(String, MetadataValue)> {
         client::icrc1_metadata(&self.pocket_ic, self.ledger_id)
+    }
+
+    fn icrc1_supported_standards(&self) -> Vec<SupportedStandard> {
+        client::icrc1_supported_standards(&self.pocket_ic, self.ledger_id)
+    }
+
+    fn icrc10_supported_standards(&self) -> Vec<SupportedStandard> {
+        client::icrc10_supported_standards(&self.pocket_ic, self.ledger_id)
     }
 
     fn icrc1_total_supply(&self) -> u128 {
@@ -7842,6 +7850,82 @@ fn test_init_with_initial_balances() {
     } else {
         panic!("Expected Mint operation for block 2");
     }
+}
+
+fn expected_supported_standards() -> Vec<SupportedStandard> {
+    vec![
+        SupportedStandard {
+            name: "ICRC-1".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-1/README.md"
+                .to_string(),
+        },
+        SupportedStandard {
+            name: "ICRC-2".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md"
+                .to_string(),
+        },
+        SupportedStandard {
+            name: "ICRC-3".to_string(),
+            url: "https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-3/README.md"
+                .to_string(),
+        },
+        SupportedStandard {
+            name: "ICRC-10".to_string(),
+            url: "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-10/ICRC-10.md".to_string(),
+        },
+        SupportedStandard {
+            name: "ICRC-103".to_string(),
+            url: "https://github.com/dfinity/ICRC/tree/main/ICRCs/ICRC-103".to_string(),
+        },
+        SupportedStandard {
+            name: "ICRC-106".to_string(),
+            url: "https://github.com/dfinity/ICRC/pull/106".to_string(),
+        },
+    ]
+}
+
+fn assert_supported_standards(endpoint: &str, standards: Vec<SupportedStandard>) {
+    let expected = expected_supported_standards();
+
+    assert_eq!(
+        standards.len(),
+        expected.len(),
+        "{endpoint} returned {} standards, expected {} (got {standards:?})",
+        standards.len(),
+        expected.len()
+    );
+    let by_name: HashMap<&str, &SupportedStandard> =
+        standards.iter().map(|s| (s.name.as_str(), s)).collect();
+    assert_eq!(
+        by_name.len(),
+        standards.len(),
+        "{endpoint} returned duplicate entries: {standards:?}"
+    );
+    for expected_standard in &expected {
+        let actual = by_name
+            .get(expected_standard.name.as_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{endpoint} is missing {} (got {standards:?})",
+                    expected_standard.name
+                )
+            });
+        assert_eq!(
+            actual.url, expected_standard.url,
+            "{endpoint} URL mismatch for {}",
+            expected_standard.name
+        );
+    }
+}
+
+#[test]
+fn test_supported_standards() {
+    let env = TestEnv::setup();
+    assert_supported_standards("icrc1_supported_standards", env.icrc1_supported_standards());
+    assert_supported_standards(
+        "icrc10_supported_standards",
+        env.icrc10_supported_standards(),
+    );
 }
 
 mod index {
