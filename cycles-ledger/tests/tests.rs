@@ -7875,11 +7875,11 @@ fn expected_supported_standards() -> Vec<SupportedStandard> {
         },
         SupportedStandard {
             name: "ICRC-103".to_string(),
-            url: "https://github.com/dfinity/ICRC/tree/main/ICRCs/ICRC-103".to_string(),
+            url: "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-103/ICRC-103.md".to_string(),
         },
         SupportedStandard {
             name: "ICRC-106".to_string(),
-            url: "https://github.com/dfinity/ICRC/pull/106".to_string(),
+            url: "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-106/ICRC-106.md".to_string(),
         },
     ]
 }
