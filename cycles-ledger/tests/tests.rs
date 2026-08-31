@@ -8162,10 +8162,19 @@ mod index {
         Path::new(&test_fixtures_dir()).join(index_wasm.target_filename)
     }
 
+    lazy_static! {
+        /// The tests that use the index WASMs run in parallel and download the
+        /// same files, so the downloads are serialized. Without this, they write
+        /// the same path at the same time and both end up with a corrupt file.
+        static ref INDEX_WASM_DOWNLOAD: Mutex<()> = Mutex::new(());
+    }
+
     /// Check if the index WASM files are present in `test_fixtures/` and have the expected SHA256
     /// hash. If the files are missing or have an unexpected hash, download them from their
     /// respective URLs.
     fn maybe_download_index_wasms() {
+        let _guard = INDEX_WASM_DOWNLOAD.lock().unwrap();
+
         let out_dir = test_fixtures_dir();
         std::fs::create_dir_all(&out_dir).unwrap();
 
@@ -8187,14 +8196,22 @@ mod index {
 
         let response = ureq::get(url).call().expect("Failed to download WASM file");
 
-        let mut file = std::fs::File::create(target_path).expect("Failed to create target file");
+        // Download to a temporary file and only move it into place once it has
+        // the expected hash, so that a failed download never leaves a file
+        // behind that looks like a usable WASM.
+        let download_path = target_path.with_extension("download");
+        let mut file = std::fs::File::create(&download_path).expect("Failed to create target file");
 
         std::io::copy(&mut response.into_reader(), &mut file)
             .expect("Failed to write downloaded content");
+        drop(file);
 
-        if let Err(err) = verify_sha256(target_path, expected_sha256) {
+        if let Err(err) = verify_sha256(&download_path, expected_sha256) {
+            let _ = std::fs::remove_file(&download_path);
             panic!("{}", err);
         }
+
+        std::fs::rename(&download_path, target_path).expect("Failed to move downloaded WASM");
     }
 
     fn verify_sha256(file_path: &Path, expected: &str) -> Result<(), String> {
