@@ -1778,14 +1778,20 @@ pub async fn withdraw(
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
+    // The allowance left behind by `use_allowance`. It is captured here, before
+    // the await, so that the failure path can tell whether the owner changed
+    // the allowance while the call was in flight.
+    let mut allowance_after_use = None;
     if let Some(spender) = spender {
         if spender != from {
-            if let Err(err) =
-                mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
+            match mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
-                let err =
-                    anyhow!(err).context(format!("Unable to perform withdraw: {:?}", transaction));
-                ic_cdk::trap(format!("{err:#}"));
+                Ok(remaining_allowance) => allowance_after_use = Some(remaining_allowance),
+                Err(err) => {
+                    let err = anyhow!(err)
+                        .context(format!("Unable to perform withdraw: {:?}", transaction));
+                    ic_cdk::trap(format!("{err:#}"));
+                }
             };
         }
     }
@@ -1824,7 +1830,12 @@ pub async fn withdraw(
                     let approval_still_valid =
                         old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                     // charge FEE for every block: withdraw attempt, refund, refund approval
-                    if spender != from && amount > 2 * config::FEE && approval_still_valid {
+                    if spender != from
+                        && amount > 2 * config::FEE
+                        && approval_still_valid
+                        && allowance_after_use
+                            .is_some_and(|a| may_reimburse_approval(&from, &spender, a, now))
+                    {
                         match reimburse_approval(
                             from,
                             spender,
@@ -1929,16 +1940,22 @@ pub async fn create_canister(
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
+    // The allowance left behind by `use_allowance`. It is captured here, before
+    // the await, so that the failure path can tell whether the owner changed
+    // the allowance while the call was in flight.
+    let mut allowance_after_use = None;
     if let Some(spender) = spender {
         if spender != from {
-            if let Err(err) =
-                mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
+            match mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
-                let err = anyhow!(err).context(format!(
-                    "unable to perform create_canister: {:?}",
-                    transaction
-                ));
-                ic_cdk::trap(format!("{err:#}"));
+                Ok(remaining_allowance) => allowance_after_use = Some(remaining_allowance),
+                Err(err) => {
+                    let err = anyhow!(err).context(format!(
+                        "unable to perform create_canister: {:?}",
+                        transaction
+                    ));
+                    ic_cdk::trap(format!("{err:#}"));
+                }
             }
         }
     }
@@ -2039,6 +2056,8 @@ pub async fn create_canister(
                         if spender != from
                             && amount_to_reimburse > config::FEE
                             && approval_still_valid
+                            && allowance_after_use
+                                .is_some_and(|a| may_reimburse_approval(&from, &spender, a, now))
                         {
                             match reimburse_approval(
                                 from,
@@ -2131,6 +2150,27 @@ fn reimburse(
     prune(now);
 
     Ok(block_index)
+}
+
+// A failed asynchronous operation reimburses the allowance it consumed before
+// the await. While the call was in flight the owner may have changed that
+// allowance, in which case reimbursing would partially undo the owner's
+// decision -- most importantly it would resurrect an allowance the owner
+// explicitly revoked. Only reimburse an allowance that is exactly the one
+// `use_allowance` left behind.
+//
+// `allowance_after_use` is that state, captured before the await. An allowance
+// consumed down to zero is never reimbursed: `use_allowance` removes the
+// approval in that case, so it is indistinguishable from one the owner revoked
+// in the meantime. Not reimbursing costs the spender no cycles -- the owner's
+// balance is refunded either way -- it only requires a fresh approval.
+fn may_reimburse_approval(
+    from: &Account,
+    spender: &Account,
+    allowance_after_use: (u128, u64),
+    now: u64,
+) -> bool {
+    allowance_after_use.0 > 0 && allowance(from, spender, now) == allowance_after_use
 }
 
 // Reimburse an approval with a given amount
@@ -2246,13 +2286,16 @@ fn check_allowance(
     Ok((new_allowance, current_expiration))
 }
 
+// Deduct `amount` from the allowance of `spender` for `account` and return the
+// remaining allowance as `(amount, expiration)`, in the same representation as
+// `allowance` would return it afterwards.
 fn use_allowance(
     s: &mut State,
     account: &Account,
     spender: &Account,
     amount: u128,
     now: u64,
-) -> Result<(), UseAllowanceError> {
+) -> Result<(u128, u64), UseAllowanceError> {
     let (new_amount, expiration) = check_allowance(s, account, spender, amount, now)?;
 
     let key = (to_account_key(account), to_account_key(spender));
@@ -2262,11 +2305,14 @@ fn use_allowance(
             s.expiration_queue.remove(&(expiration, key));
         }
         s.approvals.remove(&key);
-    } else {
-        s.approvals.insert(key, (new_amount, expiration));
+        // A removed approval reads back as `(0, 0)`, no matter the expiration
+        // it used to have.
+        return Ok((0, 0));
     }
 
-    Ok(())
+    s.approvals.insert(key, (new_amount, expiration));
+
+    Ok((new_amount, expiration))
 }
 
 fn prune_approvals(now: u64, s: &mut State, limit: usize) {
