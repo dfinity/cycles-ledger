@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
@@ -80,6 +80,15 @@ pub struct Cache {
     // It contains the hash and the index of the
     // last block on the chain.
     pub hash_tree: RbTree<&'static str, Vec<u8>>,
+    // The allowance reimbursements owed by delegated operations that are
+    // currently suspended in an inter-canister call, as
+    // `(approval key, operation id)`. See `PendingReimbursement`.
+    //
+    // This is heap state on purpose: an upgrade drops the callbacks of
+    // suspended calls, and these entries go with them.
+    pub pending_reimbursements: BTreeSet<(ApprovalKey, u64)>,
+    // The id to give the next entry of `pending_reimbursements`.
+    pub next_reimbursement_id: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -718,6 +727,8 @@ thread_local! {
                 phash,
                 hash_tree,
                 total_supply: State::compute_total_supply(&balances),
+                pending_reimbursements: BTreeSet::new(),
+                next_reimbursement_id: 0,
             },
             blocks,
             balances,
@@ -1119,6 +1130,11 @@ pub fn approve(
     // the state is reset to a valid one.
 
     mutate_state(|state| record_approval(state, &from, &spender, amount, expires_at));
+
+    // The owner just decided what the allowance should be. A reimbursement owed
+    // by a delegated operation that is still suspended would undo that
+    // decision, so it is no longer owed.
+    cancel_pending_reimbursements(&from, &spender);
 
     if let Err(err) = mutate_state(|state| state.debit(&from, crate::config::FEE)) {
         let err = err.context(format!("Unable to approve {transaction}"));
@@ -1778,15 +1794,18 @@ pub async fn withdraw(
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
-    // The allowance left behind by `use_allowance`. It is captured here, before
-    // the await, so that the failure path can tell whether the owner changed
-    // the allowance while the call was in flight.
-    let mut allowance_after_use = None;
+    // The allowance reimbursement owed if this operation fails. It is registered
+    // here, before the await, so that an `icrc2_approve` by the owner while the
+    // call is suspended cancels it.
+    let mut pending_reimbursement = None;
     if let Some(spender) = spender {
         if spender != from {
             match mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
-                Ok(remaining_allowance) => allowance_after_use = Some(remaining_allowance),
+                Ok(allowance_after_use) => {
+                    pending_reimbursement =
+                        PendingReimbursement::register(&from, &spender, allowance_after_use);
+                }
                 Err(err) => {
                     let err = anyhow!(err)
                         .context(format!("Unable to perform withdraw: {:?}", transaction));
@@ -1833,8 +1852,9 @@ pub async fn withdraw(
                     if spender != from
                         && amount > 2 * config::FEE
                         && approval_still_valid
-                        && allowance_after_use
-                            .is_some_and(|a| may_reimburse_approval(&from, &spender, a, now))
+                        && pending_reimbursement
+                            .as_ref()
+                            .is_some_and(|owed| owed.is_owed(&from, &spender, now))
                     {
                         match reimburse_approval(
                             from,
@@ -1940,15 +1960,18 @@ pub async fn create_canister(
 
     let block_index = process_transaction(transaction.clone(), now)?;
 
-    // The allowance left behind by `use_allowance`. It is captured here, before
-    // the await, so that the failure path can tell whether the owner changed
-    // the allowance while the call was in flight.
-    let mut allowance_after_use = None;
+    // The allowance reimbursement owed if this operation fails. It is registered
+    // here, before the await, so that an `icrc2_approve` by the owner while the
+    // call is suspended cancels it.
+    let mut pending_reimbursement = None;
     if let Some(spender) = spender {
         if spender != from {
             match mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
-                Ok(remaining_allowance) => allowance_after_use = Some(remaining_allowance),
+                Ok(allowance_after_use) => {
+                    pending_reimbursement =
+                        PendingReimbursement::register(&from, &spender, allowance_after_use);
+                }
                 Err(err) => {
                     let err = anyhow!(err).context(format!(
                         "unable to perform create_canister: {:?}",
@@ -2056,8 +2079,9 @@ pub async fn create_canister(
                         if spender != from
                             && amount_to_reimburse > config::FEE
                             && approval_still_valid
-                            && allowance_after_use
-                                .is_some_and(|a| may_reimburse_approval(&from, &spender, a, now))
+                            && pending_reimbursement
+                                .as_ref()
+                                .is_some_and(|owed| owed.is_owed(&from, &spender, now))
                         {
                             match reimburse_approval(
                                 from,
@@ -2152,25 +2176,96 @@ fn reimburse(
     Ok(block_index)
 }
 
-// A failed asynchronous operation reimburses the allowance it consumed before
-// the await. While the call was in flight the owner may have changed that
-// allowance, in which case reimbursing would partially undo the owner's
-// decision -- most importantly it would resurrect an allowance the owner
-// explicitly revoked. Only reimburse an allowance that is exactly the one
-// `use_allowance` left behind.
+// The allowance reimbursement owed to a spender by a delegated operation that
+// is suspended in an inter-canister call.
 //
-// `allowance_after_use` is that state, captured before the await. An allowance
-// consumed down to zero is never reimbursed: `use_allowance` removes the
-// approval in that case, so it is indistinguishable from one the owner revoked
-// in the meantime. Not reimbursing costs the spender no cycles -- the owner's
-// balance is refunded either way -- it only requires a fresh approval.
-fn may_reimburse_approval(
-    from: &Account,
-    spender: &Account,
+// A failed operation reimburses the allowance it consumed before the await. That
+// state is committed, so the owner can change the allowance while the call is
+// suspended, and reimbursing would then partially undo the owner's decision --
+// most importantly it would resurrect an allowance the owner revoked.
+//
+// The reimbursement is therefore registered before the await and cancelled by
+// `approve`. Cancelling on the owner's approval catches what comparing the
+// allowance cannot: an allowance revoked and then approved again with the same
+// value reads exactly like one nobody touched.
+#[must_use]
+struct PendingReimbursement {
+    key: ApprovalKey,
+    id: u64,
+    // The allowance `use_allowance` left behind, as `allowance` reads it back.
     allowance_after_use: (u128, u64),
-    now: u64,
-) -> bool {
-    allowance_after_use.0 > 0 && allowance(from, spender, now) == allowance_after_use
+}
+
+impl PendingReimbursement {
+    // Register the reimbursement owed after `use_allowance` left
+    // `allowance_after_use` behind.
+    //
+    // Returns `None`, meaning nothing is owed, if the allowance was consumed
+    // down to zero: `use_allowance` removes the approval in that case, which is
+    // indistinguishable from the owner revoking it. Not reimbursing costs the
+    // spender no cycles -- the owner's balance is refunded either way -- it only
+    // requires a fresh approval.
+    fn register(
+        from: &Account,
+        spender: &Account,
+        allowance_after_use: (u128, u64),
+    ) -> Option<Self> {
+        if allowance_after_use.0 == 0 {
+            return None;
+        }
+        let key = (to_account_key(from), to_account_key(spender));
+        let id = mutate_state(|state| {
+            let id = state.cache.next_reimbursement_id;
+            state.cache.next_reimbursement_id = id.wrapping_add(1);
+            state.cache.pending_reimbursements.insert((key, id));
+            id
+        });
+        Some(Self {
+            key,
+            id,
+            allowance_after_use,
+        })
+    }
+
+    // Whether the reimbursement is still owed: the owner has not approved the
+    // spender since it was registered, and the allowance is still the one
+    // `use_allowance` left behind. The latter also covers changes that do not go
+    // through `approve`, such as the approval expiring or another operation of
+    // the same spender consuming it.
+    fn is_owed(&self, from: &Account, spender: &Account, now: u64) -> bool {
+        read_state(|state| {
+            state
+                .cache
+                .pending_reimbursements
+                .contains(&(self.key, self.id))
+        }) && allowance(from, spender, now) == self.allowance_after_use
+    }
+}
+
+impl Drop for PendingReimbursement {
+    // Deregister on every path out of the operation, so that a reimbursement is
+    // never left behind by one that succeeded or gave up on refunding.
+    fn drop(&mut self) {
+        let entry = (self.key, self.id);
+        mutate_state(|state| state.cache.pending_reimbursements.remove(&entry));
+    }
+}
+
+// Cancel the reimbursements owed to `spender` by delegated operations of `from`
+// that are still suspended in an inter-canister call.
+fn cancel_pending_reimbursements(from: &Account, spender: &Account) {
+    let key = (to_account_key(from), to_account_key(spender));
+    mutate_state(|state| {
+        let cancelled: Vec<_> = state
+            .cache
+            .pending_reimbursements
+            .range((key, u64::MIN)..=(key, u64::MAX))
+            .copied()
+            .collect();
+        for entry in cancelled {
+            state.cache.pending_reimbursements.remove(&entry);
+        }
+    });
 }
 
 // Reimburse an approval with a given amount
@@ -2534,6 +2629,7 @@ mod tests {
         prop_assert_eq, prop_compose, prop_oneof, proptest,
         strategy::{Just, Strategy},
     };
+    use std::collections::BTreeSet;
 
     use crate::{
         ciborium_to_generic_value,
@@ -2837,6 +2933,8 @@ mod tests {
                 phash: None,
                 total_supply: 0,
                 hash_tree: RbTree::default(),
+                pending_reimbursements: BTreeSet::new(),
+                next_reimbursement_id: 0,
             },
         }
     }

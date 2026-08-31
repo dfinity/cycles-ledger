@@ -8578,6 +8578,27 @@ fn test_failed_withdraw_from_does_not_resurrect_revoked_allowance() {
 }
 
 #[test]
+fn test_failed_withdraw_from_does_not_reimburse_after_no_op_approval() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = 20 * FEE;
+    const REMAINING: u128 = INITIAL_ALLOWANCE - WITHDRAW_AMOUNT - FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // The owner approves the allowance that is already there. Comparing the
+        // allowance alone cannot see this, so it stands in for the general case
+        // of the owner changing the allowance and ending up at the value the
+        // withdrawal left behind - a revoke followed by an identical approval.
+        approve_as_owner(env, owner, spender, REMAINING, REMAINING);
+    });
+
+    // The owner approved `REMAINING`, so `REMAINING` is what the spender gets.
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, REMAINING);
+}
+
+#[test]
 fn test_failed_withdraw_from_does_not_undo_lowered_allowance() {
     const WITHDRAW_AMOUNT: u128 = 10 * FEE;
     const INITIAL_ALLOWANCE: u128 = 20 * FEE;
