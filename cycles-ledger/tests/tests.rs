@@ -8651,24 +8651,42 @@ fn test_failed_withdraw_from_does_not_top_up_raised_allowance() {
 }
 
 #[test]
-fn test_failed_withdraw_from_does_not_reimburse_exhausted_allowance() {
+fn test_failed_withdraw_from_reimburses_exhausted_allowance() {
     const WITHDRAW_AMOUNT: u128 = 10 * FEE;
     // Exactly enough for one withdrawal, so `use_allowance` removes the
-    // approval. A removed approval is indistinguishable from one the owner
-    // revoked in the meantime, so it is never reimbursed - not even when, as
-    // here, nobody touches it.
+    // approval altogether. Nobody touches it, so it is still reimbursed.
+    const INITIAL_ALLOWANCE: u128 = WITHDRAW_AMOUNT + FEE;
+    const REIMBURSED: u128 = WITHDRAW_AMOUNT - 2 * FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |_| {});
+
+    assert!(outcome.approval_refund_block.is_some());
+    assert_eq!(outcome.allowance, REIMBURSED);
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_reimburse_exhausted_allowance_after_revoke() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
     const INITIAL_ALLOWANCE: u128 = WITHDRAW_AMOUNT + FEE;
 
     let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
     let balance_before = env.icrc1_balance_of(owner);
 
-    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |_| {});
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // `use_allowance` already removed the approval, so revoking is a no-op
+        // on the allowance itself and the value comparison cannot see it. The
+        // owner's approval cancelling the reimbursement is the only thing
+        // keeping the revocation final here.
+        approve_as_owner(env, owner, spender, 0, 0);
+    });
 
     assert_eq!(outcome.approval_refund_block, None);
     assert_eq!(outcome.allowance, 0);
     // The owner is refunded regardless: burn of `amount + FEE`, mint of
-    // `amount - FEE`.
-    assert_eq!(outcome.balance, balance_before - 2 * FEE);
+    // `amount - FEE`, and the fee of the owner's own approve block.
+    assert_eq!(outcome.balance, balance_before - 2 * FEE - FEE);
 }
 
 #[test]
@@ -8692,29 +8710,24 @@ fn test_failed_withdraw_from_reimburses_untouched_allowance() {
 
 // `create_canister_from` calls the CMC, which runs on the same subnet as the
 // ledger and therefore replies before any `icrc2_approve` submitted after the
-// call was suspended gets to run. The owner's concurrent approval is covered by
-// the `withdraw_from` tests above; the exhausted allowance below covers the same
-// guard on this endpoint, and needs no interleaving because `use_allowance`
-// removes the approval by itself.
+// call was suspended gets to run. The owner's concurrent approval is therefore
+// only covered by the `withdraw_from` tests above.
 
 #[test]
-fn test_failed_create_canister_from_does_not_reimburse_exhausted_allowance() {
+fn test_failed_create_canister_from_reimburses_exhausted_allowance() {
     const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
     // Exactly enough for one canister creation, so `use_allowance` removes the
-    // approval, which is indistinguishable from the owner revoking it.
+    // approval altogether. Nobody touches it, so it is still reimbursed.
     const INITIAL_ALLOWANCE: u128 = CREATE_CANISTER_CYCLES + FEE;
+    const REIMBURSED: u128 = CREATE_CANISTER_CYCLES - 2 * FEE;
 
     let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
-    let balance_before = env.icrc1_balance_of(owner);
 
     let outcome =
         failing_create_canister_from(&env, owner, spender, CREATE_CANISTER_CYCLES, |_| {});
 
-    assert_eq!(outcome.approval_refund_block, None);
-    assert_eq!(outcome.allowance, 0);
-    // The owner is refunded regardless: burn of `amount + FEE`, mint of
-    // `amount - FEE`.
-    assert_eq!(outcome.balance, balance_before - 2 * FEE);
+    assert!(outcome.approval_refund_block.is_some());
+    assert_eq!(outcome.allowance, REIMBURSED);
 }
 
 #[test]

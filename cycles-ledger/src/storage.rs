@@ -1803,8 +1803,11 @@ pub async fn withdraw(
             match mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
                 Ok(allowance_after_use) => {
-                    pending_reimbursement =
-                        PendingReimbursement::register(&from, &spender, allowance_after_use);
+                    pending_reimbursement = Some(PendingReimbursement::register(
+                        &from,
+                        &spender,
+                        allowance_after_use,
+                    ));
                 }
                 Err(err) => {
                     let err = anyhow!(err)
@@ -1969,8 +1972,11 @@ pub async fn create_canister(
             match mutate_state(|state| use_allowance(state, &from, &spender, amount_with_fee, now))
             {
                 Ok(allowance_after_use) => {
-                    pending_reimbursement =
-                        PendingReimbursement::register(&from, &spender, allowance_after_use);
+                    pending_reimbursement = Some(PendingReimbursement::register(
+                        &from,
+                        &spender,
+                        allowance_after_use,
+                    ));
                 }
                 Err(err) => {
                     let err = anyhow!(err).context(format!(
@@ -2187,7 +2193,8 @@ fn reimburse(
 // The reimbursement is therefore registered before the await and cancelled by
 // `approve`. Cancelling on the owner's approval catches what comparing the
 // allowance cannot: an allowance revoked and then approved again with the same
-// value reads exactly like one nobody touched.
+// value reads exactly like one nobody touched, and so does an allowance the
+// operation consumed down to zero, which `use_allowance` removes outright.
 #[must_use]
 struct PendingReimbursement {
     key: ApprovalKey,
@@ -2200,19 +2207,11 @@ impl PendingReimbursement {
     // Register the reimbursement owed after `use_allowance` left
     // `allowance_after_use` behind.
     //
-    // Returns `None`, meaning nothing is owed, if the allowance was consumed
-    // down to zero: `use_allowance` removes the approval in that case, which is
-    // indistinguishable from the owner revoking it. Not reimbursing costs the
-    // spender no cycles -- the owner's balance is refunded either way -- it only
-    // requires a fresh approval.
-    fn register(
-        from: &Account,
-        spender: &Account,
-        allowance_after_use: (u128, u64),
-    ) -> Option<Self> {
-        if allowance_after_use.0 == 0 {
-            return None;
-        }
+    // An allowance consumed down to zero is registered like any other. Nothing
+    // is left for the value comparison to detect a change in -- `use_allowance`
+    // removed the approval, and only `approve` can bring one back -- so
+    // cancellation is what keeps the owner's revocation final in that case.
+    fn register(from: &Account, spender: &Account, allowance_after_use: (u128, u64)) -> Self {
         let key = (to_account_key(from), to_account_key(spender));
         let id = mutate_state(|state| {
             let id = state.cache.next_reimbursement_id;
@@ -2220,11 +2219,11 @@ impl PendingReimbursement {
             state.cache.pending_reimbursements.insert((key, id));
             id
         });
-        Some(Self {
+        Self {
             key,
             id,
             allowance_after_use,
-        })
+        }
     }
 
     // Whether the reimbursement is still owed: the owner has not approved the
@@ -2243,8 +2242,15 @@ impl PendingReimbursement {
 }
 
 impl Drop for PendingReimbursement {
-    // Deregister on every path out of the operation, so that a reimbursement is
-    // never left behind by one that succeeded or gave up on refunding.
+    // Deregister when the operation ends, so that a reimbursement is never left
+    // behind by one that succeeded or gave up on refunding.
+    //
+    // A trap after the await is the exception: it does not unwind, and it rolls
+    // back only the changes of the message it aborts, so the entry registered by
+    // the earlier message survives. The set is therefore not guaranteed exact.
+    // That is harmless -- ids are never reused, so no later operation can match
+    // a stale entry, and the next `approve` for the pair sweeps it -- and the
+    // traps in question are the ones that should never happen.
     fn drop(&mut self) {
         let entry = (self.key, self.id);
         mutate_state(|state| state.cache.pending_reimbursements.remove(&entry));

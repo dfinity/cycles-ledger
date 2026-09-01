@@ -6,7 +6,7 @@
 
 * Add support for canister settings `wasm_memory_limit`, `wasm_memory_threshold`, `log_visibility`, and `environment_variables`.
 * Fixed a bug where `InsufficientFunds` errors took precedence over `BadFee` errors in `icrc1_transfer`, `icrc2_approve`, and `icrc2_transfer_from`.
-* Fixed a bug where the approval refund of a failed `withdraw_from` or `create_canister_from` was added to the allowance present when the call failed. If the owner changed the allowance while the call was in flight, the refund partially undid that change, and could resurrect an allowance the owner had revoked. The refund is now cancelled by any `icrc2_approve` of the owner for that spender, and only happens if the allowance is otherwise still the one the call left behind. An allowance that was consumed down to zero is no longer refunded, because it cannot be distinguished from one revoked in the meantime.
+* Fixed a bug where the approval refund of a failed `withdraw_from` or `create_canister_from` was added to the allowance present when the call failed. If the owner changed the allowance while the call was in flight, the refund partially undid that change, and could resurrect an allowance the owner had revoked. The refund is now cancelled by any `icrc2_approve` of the owner for that spender, and only happens if the allowance is otherwise still the one the call left behind. As a consequence, of several delegated calls of the same spender that are in flight at once and fail, at most one is refunded.
 
 ## [1.0.6] - 2025-09-19
 * Add support for `initial_balances` in `InitArgs`. When specifying initial balances it is up to the installer to ensure that the cycles ledger has sufficient cycles available to spend these cycles.
