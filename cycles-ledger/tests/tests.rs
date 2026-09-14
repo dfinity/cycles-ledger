@@ -8162,10 +8162,19 @@ mod index {
         Path::new(&test_fixtures_dir()).join(index_wasm.target_filename)
     }
 
+    lazy_static! {
+        /// The tests that use the index WASMs run in parallel and download the
+        /// same files, so the downloads are serialized. Without this, they write
+        /// the same path at the same time and both end up with a corrupt file.
+        static ref INDEX_WASM_DOWNLOAD: Mutex<()> = Mutex::new(());
+    }
+
     /// Check if the index WASM files are present in `test_fixtures/` and have the expected SHA256
     /// hash. If the files are missing or have an unexpected hash, download them from their
     /// respective URLs.
     fn maybe_download_index_wasms() {
+        let _guard = INDEX_WASM_DOWNLOAD.lock().unwrap();
+
         let out_dir = test_fixtures_dir();
         std::fs::create_dir_all(&out_dir).unwrap();
 
@@ -8187,14 +8196,22 @@ mod index {
 
         let response = ureq::get(url).call().expect("Failed to download WASM file");
 
-        let mut file = std::fs::File::create(target_path).expect("Failed to create target file");
+        // Download to a temporary file and only move it into place once it has
+        // the expected hash, so that a failed download never leaves a file
+        // behind that looks like a usable WASM.
+        let download_path = target_path.with_extension("download");
+        let mut file = std::fs::File::create(&download_path).expect("Failed to create target file");
 
         std::io::copy(&mut response.into_reader(), &mut file)
             .expect("Failed to write downloaded content");
+        drop(file);
 
-        if let Err(err) = verify_sha256(target_path, expected_sha256) {
+        if let Err(err) = verify_sha256(&download_path, expected_sha256) {
+            let _ = std::fs::remove_file(&download_path);
             panic!("{}", err);
         }
+
+        std::fs::rename(&download_path, target_path).expect("Failed to move downloaded WASM");
     }
 
     fn verify_sha256(file_path: &Path, expected: &str) -> Result<(), String> {
@@ -8327,4 +8344,447 @@ mod index {
             IndexVersion::Current,
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// A failed delegated `withdraw_from` / `create_canister_from` reimburses the
+// allowance it consumed before the await. The tests below drive the owner's
+// `icrc2_approve` into the window in which the delegated call is suspended, and
+// check that the reimbursement never undoes the owner's decision.
+// ---------------------------------------------------------------------------
+
+/// The outcome of a delegated call that failed after its allowance was
+/// consumed, together with the allowance the ledger ended up with.
+struct FailedDelegatedCall {
+    approval_refund_block: Option<Nat>,
+    allowance: u128,
+    balance: u128,
+}
+
+/// Submit a `withdraw_from` to a deleted canister, which is guaranteed to fail
+/// in `deposit_cycles`, and run `while_suspended` while the call is suspended
+/// between the burn and the failed `deposit_cycles`.
+fn failing_withdraw_from(
+    env: &TestEnv,
+    from: Account,
+    spender: Account,
+    amount: u128,
+    while_suspended: impl FnOnce(&TestEnv),
+) -> FailedDelegatedCall {
+    let deleted_canister = env.pocket_ic.create_canister();
+    env.pocket_ic.stop_canister(deleted_canister, None).unwrap();
+    env.pocket_ic
+        .delete_canister(deleted_canister, None)
+        .unwrap();
+
+    let withdraw_message = env
+        .pocket_ic
+        .submit_call(
+            env.ledger_id,
+            spender.owner,
+            "withdraw_from",
+            Encode!(&WithdrawFromArgs {
+                from,
+                spender_subaccount: spender.subaccount,
+                to: deleted_canister,
+                created_at_time: None,
+                amount: amount.into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+    // One round executes `withdraw_from` up to the await. Its state is now
+    // committed and the call is suspended, waiting for `deposit_cycles`.
+    env.pocket_ic.tick();
+    assert!(
+        env.pocket_ic
+            .ingress_status(withdraw_message.clone())
+            .is_none(),
+        "withdraw_from should still be suspended in deposit_cycles"
+    );
+
+    while_suspended(env);
+
+    let reply = env.pocket_ic.await_call(withdraw_message).unwrap();
+    let approval_refund_block = match Decode!(&reply, Result<Nat, WithdrawFromError>).unwrap() {
+        Err(WithdrawFromError::FailedToWithdrawFrom {
+            approval_refund_block,
+            ..
+        }) => approval_refund_block,
+        other => panic!("withdraw_from to a deleted canister should fail, got {other:?}"),
+    };
+
+    FailedDelegatedCall {
+        approval_refund_block,
+        allowance: env
+            .icrc2_allowance(from, spender)
+            .allowance
+            .0
+            .to_u128()
+            .unwrap(),
+        balance: env.icrc1_balance_of(from),
+    }
+}
+
+/// Submit a `create_canister_from` that the fake CMC rejects, and run
+/// `while_suspended` while the call is suspended in the CMC.
+fn failing_create_canister_from(
+    env: &TestEnv,
+    from: Account,
+    spender: Account,
+    amount: u128,
+    while_suspended: impl FnOnce(&TestEnv),
+) -> FailedDelegatedCall {
+    env.fail_next_create_canister_with(CmcCreateCanisterError::Refunded {
+        refund_amount: amount,
+        create_error: "Error while creating".to_string(),
+    });
+
+    let create_message = env
+        .pocket_ic
+        .submit_call(
+            env.ledger_id,
+            spender.owner,
+            "create_canister_from",
+            Encode!(&CreateCanisterFromArgs {
+                from,
+                spender_subaccount: spender.subaccount,
+                created_at_time: None,
+                amount: amount.into(),
+                creation_args: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+    env.pocket_ic.tick();
+    assert!(
+        env.pocket_ic
+            .ingress_status(create_message.clone())
+            .is_none(),
+        "create_canister_from should still be suspended in the CMC call"
+    );
+
+    while_suspended(env);
+
+    let reply = env.pocket_ic.await_call(create_message).unwrap();
+    let approval_refund_block =
+        match Decode!(&reply, Result<CreateCanisterSuccess, CreateCanisterFromError>).unwrap() {
+            Err(CreateCanisterFromError::FailedToCreateFrom {
+                approval_refund_block,
+                ..
+            }) => approval_refund_block,
+            other => panic!("create_canister_from should fail, got {other:?}"),
+        };
+
+    FailedDelegatedCall {
+        approval_refund_block,
+        allowance: env
+            .icrc2_allowance(from, spender)
+            .allowance
+            .0
+            .to_u128()
+            .unwrap(),
+        balance: env.icrc1_balance_of(from),
+    }
+}
+
+/// Set up an owner funded with `100 * FEE` who approved `allowance` to a
+/// spender. Returns `(env, owner, spender)`.
+fn env_with_allowance(allowance: u128) -> (TestEnv, Account, Account) {
+    let env = TestEnv::setup();
+    let owner = account(1, None);
+    let spender = account(101, None);
+
+    env.deposit(owner, 100 * FEE + allowance, None);
+    env.icrc2_approve_or_trap(
+        owner.owner,
+        ApproveArgs {
+            from_subaccount: owner.subaccount,
+            spender,
+            amount: allowance.into(),
+            expected_allowance: None,
+            expires_at: None,
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    assert_eq!(env.icrc2_allowance(owner, spender).allowance, allowance);
+
+    (env, owner, spender)
+}
+
+/// Approve `amount` as the owner, asserting the allowance is `expected_allowance`
+/// beforehand. The `expected_allowance` guard pins the ordering: it only holds
+/// if the suspended call already consumed its allowance.
+fn approve_as_owner(
+    env: &TestEnv,
+    owner: Account,
+    spender: Account,
+    expected_allowance: u128,
+    amount: u128,
+) {
+    env.icrc2_approve_or_trap(
+        owner.owner,
+        ApproveArgs {
+            from_subaccount: owner.subaccount,
+            spender,
+            amount: amount.into(),
+            expected_allowance: Some(expected_allowance.into()),
+            expires_at: None,
+            fee: None,
+            memo: Some(Memo::from(b"owner changes the allowance".to_vec())),
+            created_at_time: None,
+        },
+    );
+    assert_eq!(
+        env.icrc2_allowance(owner, spender).allowance,
+        amount,
+        "the owner's approval should have taken effect while the call is suspended"
+    );
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_resurrect_revoked_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = 20 * FEE;
+    // `withdraw_from` consumes `amount + FEE`.
+    const REMAINING: u128 = INITIAL_ALLOWANCE - WITHDRAW_AMOUNT - FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+    let spender_destination = account(102, None);
+    let balance_before = env.icrc1_balance_of(owner);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // The owner revokes while the withdrawal is suspended.
+        approve_as_owner(env, owner, spender, REMAINING, 0);
+    });
+
+    // The revocation must survive the failed withdrawal.
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, 0);
+
+    // The owner is still refunded: burn of `amount + FEE`, mint of
+    // `amount - FEE`, and the fee of the owner's own approve block.
+    assert_eq!(outcome.balance, balance_before - 2 * FEE - FEE);
+
+    // With the allowance gone, the spender cannot move the owner's cycles.
+    let transfer_result = env
+        .icrc2_transfer_from(
+            spender.owner,
+            TransferFromArgs {
+                spender_subaccount: spender.subaccount,
+                from: owner,
+                to: spender_destination,
+                amount: FEE.into(),
+                fee: None,
+                memo: None,
+                created_at_time: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        transfer_result,
+        TransferFromError::InsufficientAllowance {
+            allowance: 0_u8.into()
+        }
+    );
+    assert_eq!(env.icrc1_balance_of(spender_destination), 0);
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_reimburse_after_no_op_approval() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = 20 * FEE;
+    const REMAINING: u128 = INITIAL_ALLOWANCE - WITHDRAW_AMOUNT - FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // The owner approves the allowance that is already there. Comparing the
+        // allowance alone cannot see this, so it stands in for the general case
+        // of the owner changing the allowance and ending up at the value the
+        // withdrawal left behind - a revoke followed by an identical approval.
+        approve_as_owner(env, owner, spender, REMAINING, REMAINING);
+    });
+
+    // The owner approved `REMAINING`, so `REMAINING` is what the spender gets.
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, REMAINING);
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_undo_lowered_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = 20 * FEE;
+    const REMAINING: u128 = INITIAL_ALLOWANCE - WITHDRAW_AMOUNT - FEE;
+    const LOWERED: u128 = FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        approve_as_owner(env, owner, spender, REMAINING, LOWERED);
+    });
+
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, LOWERED);
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_top_up_raised_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = 20 * FEE;
+    const REMAINING: u128 = INITIAL_ALLOWANCE - WITHDRAW_AMOUNT - FEE;
+    const RAISED: u128 = 30 * FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        approve_as_owner(env, owner, spender, REMAINING, RAISED);
+    });
+
+    // The spender must not end up with more than the owner last approved.
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, RAISED);
+}
+
+#[test]
+fn test_failed_withdraw_from_reimburses_exhausted_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    // Exactly enough for one withdrawal, so `use_allowance` removes the
+    // approval altogether. Nobody touches it, so it is still reimbursed.
+    const INITIAL_ALLOWANCE: u128 = WITHDRAW_AMOUNT + FEE;
+    const REIMBURSED: u128 = WITHDRAW_AMOUNT - 2 * FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |_| {});
+
+    assert!(outcome.approval_refund_block.is_some());
+    assert_eq!(outcome.allowance, REIMBURSED);
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_reimburse_exhausted_allowance_after_revoke() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = WITHDRAW_AMOUNT + FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+    let balance_before = env.icrc1_balance_of(owner);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // `use_allowance` already removed the approval, so revoking is a no-op
+        // on the allowance itself and the value comparison cannot see it. The
+        // owner's approval cancelling the reimbursement is the only thing
+        // keeping the revocation final here.
+        approve_as_owner(env, owner, spender, 0, 0);
+    });
+
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, 0);
+    // The owner is refunded regardless: burn of `amount + FEE`, mint of
+    // `amount - FEE`, and the fee of the owner's own approve block.
+    assert_eq!(outcome.balance, balance_before - 2 * FEE - FEE);
+}
+
+#[test]
+fn test_failed_withdraw_from_does_not_reimburse_expired_exhausted_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    // Exactly enough for one withdrawal, so `use_allowance` removes the
+    // approval and the allowance reads `(0, 0)` at the callback - the same as
+    // it reads for an approval that expired. `approval_still_valid` is the only
+    // thing that separates the two, which is what this pins.
+    const INITIAL_ALLOWANCE: u128 = WITHDRAW_AMOUNT + FEE;
+    const EXPIRY: Duration = Duration::from_secs(60);
+
+    let env = TestEnv::setup();
+    let owner = account(1, None);
+    let spender = account(101, None);
+
+    env.deposit(owner, 100 * FEE + INITIAL_ALLOWANCE, None);
+    env.icrc2_approve_or_trap(
+        owner.owner,
+        ApproveArgs {
+            from_subaccount: owner.subaccount,
+            spender,
+            amount: INITIAL_ALLOWANCE.into(),
+            expected_allowance: None,
+            expires_at: Some(env.nanos_since_epoch_u64() + EXPIRY.as_nanos() as u64),
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    let balance_before = env.icrc1_balance_of(owner);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // Let the approval lapse while the withdrawal is suspended.
+        env.advance_time(EXPIRY * 2);
+    });
+
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, 0);
+    // The burn of `amount + FEE` and the mint of `amount - FEE` both stand.
+    // Were the reimbursement attempted, it would approve with an expiry in the
+    // past, and the trap on the resulting `Expired` would roll the mint back.
+    assert_eq!(outcome.balance, balance_before - 2 * FEE);
+}
+
+#[test]
+fn test_failed_withdraw_from_reimburses_untouched_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    const INITIAL_ALLOWANCE: u128 = 20 * FEE;
+    const REMAINING: u128 = INITIAL_ALLOWANCE - WITHDRAW_AMOUNT - FEE;
+    // A fee is charged for each of the three blocks: withdrawal, refund,
+    // approval refund.
+    const REIMBURSED: u128 = WITHDRAW_AMOUNT - 2 * FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |_| {});
+
+    // Nobody changed the allowance, so the spender is not penalized for a
+    // withdrawal that failed through no fault of its own.
+    assert!(outcome.approval_refund_block.is_some());
+    assert_eq!(outcome.allowance, REMAINING + REIMBURSED);
+}
+
+// `create_canister_from` calls the CMC, which runs on the same subnet as the
+// ledger and therefore replies before any `icrc2_approve` submitted after the
+// call was suspended gets to run. The owner's concurrent approval is therefore
+// only covered by the `withdraw_from` tests above.
+
+#[test]
+fn test_failed_create_canister_from_reimburses_exhausted_allowance() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    // Exactly enough for one canister creation, so `use_allowance` removes the
+    // approval altogether. Nobody touches it, so it is still reimbursed.
+    const INITIAL_ALLOWANCE: u128 = CREATE_CANISTER_CYCLES + FEE;
+    const REIMBURSED: u128 = CREATE_CANISTER_CYCLES - 2 * FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome =
+        failing_create_canister_from(&env, owner, spender, CREATE_CANISTER_CYCLES, |_| {});
+
+    assert!(outcome.approval_refund_block.is_some());
+    assert_eq!(outcome.allowance, REIMBURSED);
+}
+
+#[test]
+fn test_failed_create_canister_from_reimburses_untouched_allowance() {
+    const CREATE_CANISTER_CYCLES: u128 = 1_000_000_000_000;
+    const INITIAL_ALLOWANCE: u128 = 2 * CREATE_CANISTER_CYCLES;
+    const REMAINING: u128 = INITIAL_ALLOWANCE - CREATE_CANISTER_CYCLES - FEE;
+    const REIMBURSED: u128 = CREATE_CANISTER_CYCLES - 2 * FEE;
+
+    let (env, owner, spender) = env_with_allowance(INITIAL_ALLOWANCE);
+
+    let outcome =
+        failing_create_canister_from(&env, owner, spender, CREATE_CANISTER_CYCLES, |_| {});
+
+    assert!(outcome.approval_refund_block.is_some());
+    assert_eq!(outcome.allowance, REMAINING + REIMBURSED);
 }
