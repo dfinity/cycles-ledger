@@ -1849,6 +1849,15 @@ pub async fn withdraw(
             Ok(fee_block) => {
                 prune(now);
                 if let Some(spender) = spender {
+                    // Load-bearing, and not merely a stricter duplicate of the
+                    // reimbursement guard: once an operation has consumed an
+                    // allowance down to exactly zero, `allowance` reads
+                    // `(0, 0)` whether the approval expired or was exhausted,
+                    // so nothing else can tell that it lapsed. Without this,
+                    // `reimburse_approval` would approve with an expiry in the
+                    // past, `approve` would reject it as `Expired`, and the
+                    // trap on that error would roll back the refund minted
+                    // above along with it.
                     let approval_still_valid =
                         old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                     // charge FEE for every block: withdraw attempt, refund, refund approval
@@ -2079,6 +2088,16 @@ pub async fn create_canister(
                 Ok(refund_block) => {
                     prune(now);
                     if let Some(spender) = spender {
+                        // Load-bearing, and not merely a stricter duplicate of
+                        // the reimbursement guard: once an operation has
+                        // consumed an allowance down to exactly zero,
+                        // `allowance` reads `(0, 0)` whether the approval
+                        // expired or was exhausted, so nothing else can tell
+                        // that it lapsed. Without this, `reimburse_approval`
+                        // would approve with an expiry in the past, `approve`
+                        // would reject it as `Expired`, and the trap on that
+                        // error would roll back the refund minted above along
+                        // with it.
                         let approval_still_valid =
                             old_expires_at.map(|expiry| now < expiry).unwrap_or(true);
                         // charge FEE for every block: withdraw attempt, refund, refund approval

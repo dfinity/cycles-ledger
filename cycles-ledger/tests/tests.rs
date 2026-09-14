@@ -8690,6 +8690,49 @@ fn test_failed_withdraw_from_does_not_reimburse_exhausted_allowance_after_revoke
 }
 
 #[test]
+fn test_failed_withdraw_from_does_not_reimburse_expired_exhausted_allowance() {
+    const WITHDRAW_AMOUNT: u128 = 10 * FEE;
+    // Exactly enough for one withdrawal, so `use_allowance` removes the
+    // approval and the allowance reads `(0, 0)` at the callback - the same as
+    // it reads for an approval that expired. `approval_still_valid` is the only
+    // thing that separates the two, which is what this pins.
+    const INITIAL_ALLOWANCE: u128 = WITHDRAW_AMOUNT + FEE;
+    const EXPIRY: Duration = Duration::from_secs(60);
+
+    let env = TestEnv::setup();
+    let owner = account(1, None);
+    let spender = account(101, None);
+
+    env.deposit(owner, 100 * FEE + INITIAL_ALLOWANCE, None);
+    env.icrc2_approve_or_trap(
+        owner.owner,
+        ApproveArgs {
+            from_subaccount: owner.subaccount,
+            spender,
+            amount: INITIAL_ALLOWANCE.into(),
+            expected_allowance: None,
+            expires_at: Some(env.nanos_since_epoch_u64() + EXPIRY.as_nanos() as u64),
+            fee: None,
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    let balance_before = env.icrc1_balance_of(owner);
+
+    let outcome = failing_withdraw_from(&env, owner, spender, WITHDRAW_AMOUNT, |env| {
+        // Let the approval lapse while the withdrawal is suspended.
+        env.advance_time(EXPIRY * 2);
+    });
+
+    assert_eq!(outcome.approval_refund_block, None);
+    assert_eq!(outcome.allowance, 0);
+    // The burn of `amount + FEE` and the mint of `amount - FEE` both stand.
+    // Were the reimbursement attempted, it would approve with an expiry in the
+    // past, and the trap on the resulting `Expired` would roll the mint back.
+    assert_eq!(outcome.balance, balance_before - 2 * FEE);
+}
+
+#[test]
 fn test_failed_withdraw_from_reimburses_untouched_allowance() {
     const WITHDRAW_AMOUNT: u128 = 10 * FEE;
     const INITIAL_ALLOWANCE: u128 = 20 * FEE;
