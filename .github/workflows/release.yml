@@ -57,16 +57,20 @@ jobs:
     steps:
       - name: Determine correct tag
         id: determine-release-tag
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          REF_NAME: ${{ github.ref_name }}
+          WORKFLOW_NAME: ${{ github.workflow }}
         run: |
-          echo 'INFO: Release tag received from input: ${{ inputs.release_tag }}'
-          echo 'INFO: GitHub context ref_name: ${{ github.ref_name }}'
-          if [[ "${{ github.workflow }}" == "Release with GitHub Action" ]]
+          echo "INFO: Release tag received from input: $INPUT_RELEASE_TAG"
+          echo "INFO: GitHub context ref_name: $REF_NAME"
+          if [[ "$WORKFLOW_NAME" == "Release with GitHub Action" ]]
           then
             echo "INFO: This run has been triggered from other workflow"
-            TAG=${{ inputs.release_tag }}
+            TAG="$INPUT_RELEASE_TAG"
           else
             echo "INFO: This run has been triggered from pushing the tag"
-            TAG=${{ github.ref_name }}
+            TAG="$REF_NAME"
           fi
           echo "INFO: The release tag is: $TAG"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -77,7 +81,7 @@ jobs:
       - name: Install Rust
         run: rustup show
       - id: create-release
-        run: gh release create ${{ env.TAG }} --draft --prerelease="true" --title="${{ env.TAG }}" --notes="TBD"
+        run: gh release create "$TAG" --draft --prerelease="true" --title="$TAG" --notes="TBD"
       - name: Install dfx
         uses: dfinity/setup-dfx@e50c04f104ee4285ec010f10609483cf41e4d365 # main
       - name: Build WASM
@@ -95,16 +99,16 @@ jobs:
           (shasum -a 256 cycles-ledger.wasm.gz > cycles-ledger.wasm.gz.sha256)
           (cd .dfx/local/canisters/depositor && shasum -a 256 depositor.wasm.gz > depositor.wasm.gz.sha256)
           (cd .dfx/local/canisters/fake-cmc && shasum -a 256 fake-cmc.wasm.gz > fake-cmc.wasm.gz.sha256)
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/depositor/depositor.wasm.gz
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/depositor/depositor.wasm.gz.sha256
-          gh release upload ${{ env.TAG }} depositor/depositor.did
-          gh release upload ${{ env.TAG }} cycles-ledger.wasm.gz
-          gh release upload ${{ env.TAG }} cycles-ledger.wasm.gz.sha256
-          gh release upload ${{ env.TAG }} cycles-ledger/cycles-ledger.did
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/fake-cmc/fake-cmc.wasm.gz
-          gh release upload ${{ env.TAG }} .dfx/local/canisters/fake-cmc/fake-cmc.wasm.gz.sha256
-          gh release upload ${{ env.TAG }} fake-cmc/fake-cmc.did
+          gh release upload "$TAG" .dfx/local/canisters/depositor/depositor.wasm.gz
+          gh release upload "$TAG" .dfx/local/canisters/depositor/depositor.wasm.gz.sha256
+          gh release upload "$TAG" depositor/depositor.did
+          gh release upload "$TAG" cycles-ledger.wasm.gz
+          gh release upload "$TAG" cycles-ledger.wasm.gz.sha256
+          gh release upload "$TAG" cycles-ledger/cycles-ledger.did
+          gh release upload "$TAG" .dfx/local/canisters/fake-cmc/fake-cmc.wasm.gz
+          gh release upload "$TAG" .dfx/local/canisters/fake-cmc/fake-cmc.wasm.gz.sha256
+          gh release upload "$TAG" fake-cmc/fake-cmc.did
           echo "uploaded!"
       - name: mark release as non-draft
         run: |
-          gh release edit ${{ env.TAG }} --draft=false
+          gh release edit "$TAG" --draft=false
