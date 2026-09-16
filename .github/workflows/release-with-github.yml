@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !(inputs.semverBump == 'custom' && inputs.semverVersion == '') }}
     outputs:
-      nev_version: ${{ steps.determine_version.outputs.NEW_VERSION }}
+      new_version: ${{ steps.determine_version.outputs.NEW_VERSION }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
         with:
@@ -44,45 +44,55 @@ jobs:
       - name: Determine new version number by dry-running `cargo-release`
         id: determine_version
         continue-on-error: true
+        env:
+          SEMVER_BUMP: ${{ inputs.semverBump }}
+          SEMVER_VERSION: ${{ inputs.semverVersion }}
         run: |
-          if [[ "${{ inputs.semverBump }}" == "custom" ]]
+          if [[ "$SEMVER_BUMP" == "custom" ]]
           then
-            cargo release version -p cycles-ledger ${{ inputs.semverVersion }} &> cargo-release-output.txt
+            cargo release version -p cycles-ledger "$SEMVER_VERSION" &> cargo-release-output.txt
           else
-            cargo release version -p cycles-ledger ${{ inputs.semverBump }} &> cargo-release-output.txt
+            cargo release version -p cycles-ledger "$SEMVER_BUMP" &> cargo-release-output.txt
           fi
           cat cargo-release-output.txt
           NEW_VERSION=$(cat cargo-release-output.txt | rg "Upgrading .* from .* to (.*)" -r '$1' | tr -d ' ')
-          echo $NEW_VERSION
+          echo "$NEW_VERSION"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           rm cargo-release-output.txt
       - name: Switch to the release branch, and push it
         run: |
-          BRANCH_NAME="release/cycles-ledger-v${{ env.NEW_VERSION }}"
+          BRANCH_NAME="release/cycles-ledger-v$NEW_VERSION"
           git checkout -b "$BRANCH_NAME"
           git push --set-upstream origin "$BRANCH_NAME"
       - name: Set up git config
+        env:
+          SENDER_ID: ${{ github.event.sender.id }}
+          SENDER_LOGIN: ${{ github.event.sender.login }}
         run: |
-          git config author.email "${{ github.event.sender.id }}+${{ github.event.sender.login }}@users.noreply.github.com"
-          git config author.name "${{ github.event.sender.login }}"
+          git config author.email "$SENDER_ID+$SENDER_LOGIN@users.noreply.github.com"
+          git config author.name "$SENDER_LOGIN"
           git config committer.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config committer.name "GitHub Actions Bot"
-          git config user.email "${{ github.event.sender.id }}+${{ github.event.sender.login }}@users.noreply.github.com"
-          git config user.name "${{ github.event.sender.login }}"
+          git config user.email "$SENDER_ID+$SENDER_LOGIN@users.noreply.github.com"
+          git config user.name "$SENDER_LOGIN"
       - name: Execute `cargo-release`
         if: ${{ inputs.semverBump != 'custom' }}
-        run: cargo release -p cycles-ledger --execute --no-confirm ${{ inputs.semverBump }}
+        env:
+          SEMVER_BUMP: ${{ inputs.semverBump }}
+        run: cargo release -p cycles-ledger --execute --no-confirm "$SEMVER_BUMP"
       - name: Execute `cargo-release`
         if: ${{ inputs.semverBump == 'custom' }}
-        run: cargo release -p cycles-ledger --execute --no-confirm ${{ inputs.semverVersion }}
+        env:
+          SEMVER_VERSION: ${{ inputs.semverVersion }}
+        run: cargo release -p cycles-ledger --execute --no-confirm "$SEMVER_VERSION"
 
 
   call-release-binaries-workflow:
     needs: create-release
     uses: ./.github/workflows/release.yml
     with:
-      release_tag: cycles-ledger-v${{ needs.create-release.outputs.nev_version }}
+      release_tag: cycles-ledger-v${{ needs.create-release.outputs.new_version }}
 
   create-release-pr:
     needs: [create-release, call-release-binaries-workflow]
@@ -92,10 +102,14 @@ jobs:
       - name: Open the release PR
         env:
           GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ needs.create-release.outputs.new_version }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          TAG="cycles-ledger-v${{ needs.create-release.outputs.nev_version }}"
+          TAG="cycles-ledger-v$NEW_VERSION"
           HEAD="release/$TAG"
-          TITLE="chore(release): cycles-ledger-v${{ needs.create-release.outputs.nev_version }}"
-          echo "PR created by this workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> BODY.md
+          TITLE="chore(release): cycles-ledger-v$NEW_VERSION"
+          echo "PR created by this workflow: $SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID" >> BODY.md
           echo "Link to release: https://github.com/dfinity/cycles-ledger/releases/tag/$TAG" >> BODY.md
           gh pr create --base main --head "$HEAD" --title "$TITLE" --body-file BODY.md
