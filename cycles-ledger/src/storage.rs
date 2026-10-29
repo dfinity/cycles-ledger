@@ -771,7 +771,13 @@ pub fn mutate_config<R>(f: impl FnOnce(&mut Config) -> R) -> R {
 pub fn prune(now: u64) {
     mutate_state(|state| {
         prune_approvals(now, state, config::APPROVE_PRUNE_LIMIT);
-        prune_transactions(now, state, config::TRANSACTION_PRUNE_LIMIT);
+        prune_transactions(
+            now,
+            state,
+            config::TRANSACTION_PRUNE_LIMIT,
+            config::TRANSACTION_PRUNE_INSTRUCTION_LIMIT,
+            ic_cdk::api::instruction_counter,
+        );
     });
     read_state(check_invariants);
 }
@@ -2465,10 +2471,23 @@ fn is_before_transaction_window(timestamp: u64, now: u64) -> bool {
         < now
 }
 
-fn prune_transactions(now: u64, s: &mut State, limit: usize) {
+// Prunes transactions whose created_at_time is before the transaction window.
+// Stops after [limit] transactions or once [instruction_counter] exceeds
+// [instruction_limit], whichever comes first. The remaining transactions are
+// pruned by later calls.
+fn prune_transactions(
+    now: u64,
+    s: &mut State,
+    limit: usize,
+    instruction_limit: u64,
+    instruction_counter: impl Fn() -> u64,
+) {
     let mut pruned = 0;
     while let Some(((timestamp, block_idx), _)) = s.transaction_timestamps.first_key_value() {
-        if pruned >= limit || !is_before_transaction_window(timestamp, now) {
+        if pruned >= limit
+            || !is_before_transaction_window(timestamp, now)
+            || instruction_counter() > instruction_limit
+        {
             return;
         }
         s.transaction_timestamps.remove(&(timestamp, block_idx));
@@ -2911,25 +2930,33 @@ mod tests {
             }
 
             // prune no transaction if now == old
-            prune_transactions(old, &mut state, usize::MAX);
+            prune_transactions(old, &mut state, usize::MAX, u64::MAX, || 0);
             prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
             prop_assert_eq!(state.transaction_hashes.len(), blocks.len() as u64);
             prop_assert_eq!(state.transaction_timestamps.len(), blocks.len() as u64);
 
             // prune only 2 txs if now == curr but limit == 2
-            prune_transactions(curr, &mut state, 2);
+            prune_transactions(curr, &mut state, 2, u64::MAX, || 0);
             prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
             prop_assert_eq!(state.transaction_hashes.len() + 2, blocks.len() as u64);
             prop_assert_eq!(state.transaction_timestamps.len() + 2, blocks.len() as u64);
 
-            // prune only 4 txs if now == curr
-            prune_transactions(curr, &mut state, usize::MAX);
+            // prune only 2 txs if now == curr but the instruction counter exceeds
+            // the instruction limit at the third check
+            let instructions = std::cell::Cell::new(0);
+            prune_transactions(curr, &mut state, usize::MAX, 1, || instructions.replace(instructions.get() + 1));
+            prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
+            prop_assert_eq!(state.transaction_hashes.len() + 4, blocks.len() as u64);
+            prop_assert_eq!(state.transaction_timestamps.len() + 4, blocks.len() as u64);
+
+            // prune the remaining 2 old txs if now == curr
+            prune_transactions(curr, &mut state, usize::MAX, u64::MAX, || 0);
             prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
             prop_assert_eq!(state.transaction_hashes.len() + 6, blocks.len() as u64);
             prop_assert_eq!(state.transaction_timestamps.len() + 6, blocks.len() as u64);
 
             // do not prune anything else because the last 4 txs have created_at_time == curr
-            prune_transactions(curr, &mut state, usize::MAX);
+            prune_transactions(curr, &mut state, usize::MAX, u64::MAX, || 0);
             prop_assert_eq!(state.blocks.len(), blocks.len() as u64);
             prop_assert_eq!(state.transaction_hashes.len() + 6, blocks.len() as u64);
             prop_assert_eq!(state.transaction_timestamps.len() + 6, blocks.len() as u64);

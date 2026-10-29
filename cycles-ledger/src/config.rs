@@ -15,6 +15,9 @@ pub const PERMITTED_DRIFT: Duration = Duration::from_secs(60);
 pub const TRANSACTION_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 // The maximum number of transactions in the transaction-to-hash and block-timestamp-to-block-index mappings to be pruned in a single prune process
 pub const TRANSACTION_PRUNE_LIMIT: usize = 100_000;
+// Pruning transactions stops once the current message has executed this many instructions,
+// so that pruning only takes a small share of the instruction limit of a message
+pub const TRANSACTION_PRUNE_INSTRUCTION_LIMIT: u64 = 2_000_000_000;
 // The maximum number of entries in the approval list and expiration queue to be pruned in a single prune process
 pub const APPROVE_PRUNE_LIMIT: usize = 100;
 pub const REMOTE_FUTURE: u64 = u64::MAX;
