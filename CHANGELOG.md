@@ -1,8 +1,8 @@
 <!-- next-header -->
 
-## [Unreleased] - ReleaseDate
-
 # CHANGELOG
+
+## [Unreleased] - ReleaseDate
 
 ## [1.1.0] - 2026-11-06
 
