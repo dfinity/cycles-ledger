@@ -8,6 +8,10 @@
 * Fixed a bug where `InsufficientFunds` errors took precedence over `BadFee` errors in `icrc1_transfer`, `icrc2_approve`, and `icrc2_transfer_from`.
 * Fixed a bug where the approval refund of a failed `withdraw_from` or `create_canister_from` was added to the allowance present when the call failed. If the owner changed the allowance while the call was in flight, the refund partially undid that change, and could resurrect an allowance the owner had revoked. The refund is now cancelled by any `icrc2_approve` of the owner for that spender, and only happens if the allowance is otherwise still the one the call left behind. As a consequence, of several delegated calls of the same spender that are in flight at once and fail, at most one is refunded.
 * Pruning expired deduplication entries now stops once the message has executed 2B instructions. The remaining entries are pruned by later calls.
+* Add support for [ICRC-10](https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-10/ICRC-10.md) (`icrc10_supported_standards`).
+* `icrc1_supported_standards` now returns the canonical document URLs for ICRC-103 and ICRC-106.
+* Update `ic-cdk` to 0.19 and the Rust toolchain to 1.91.1.
+* Fixed a bug where a subaccount longer than 32 bytes in a call argument was accepted, and the fields after it were decoded from the wrong offset. Such arguments are now rejected. The fix comes from bumping `candid` to 0.10.40 ([dfinity/candid#783](https://github.com/dfinity/candid/pull/783)).
 
 ## [1.0.6] - 2025-09-19
 * Add support for `initial_balances` in `InitArgs`. When specifying initial balances it is up to the installer to ensure that the cycles ledger has sufficient cycles available to spend these cycles.

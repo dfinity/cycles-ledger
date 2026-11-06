@@ -414,3 +414,42 @@ impl From<ic_cdk::call::RejectCode> for RejectionCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // candid < 0.10.40 decoded a vec longer than 32 bytes into `[u8; 32]` without an error and
+    // read the following fields from the wrong offset (dfinity/candid#783). With the message
+    // below, such a ledger saw `amount = 640` and `created_at_time = 1` instead of the values
+    // that were sent. A subaccount longer than 32 bytes must be rejected.
+    #[test]
+    fn test_reject_subaccount_longer_than_32_bytes() {
+        #[derive(CandidType)]
+        struct WireWithdrawArgs {
+            from_subaccount: Option<Vec<u8>>,
+            to: Principal,
+            created_at_time: Option<u64>,
+            amount: Nat,
+        }
+        let encode = |subaccount: Vec<u8>| {
+            candid::encode_one(WireWithdrawArgs {
+                from_subaccount: Some(subaccount),
+                to: Principal::anonymous(),
+                created_at_time: Some(0x80 << 56),
+                amount: Nat::from(5u8),
+            })
+            .unwrap()
+        };
+
+        let args: WithdrawArgs = candid::decode_one(&encode(vec![1; 32])).unwrap();
+        assert_eq!(args.from_subaccount, Some([1; 32]));
+        assert_eq!(args.created_at_time, Some(0x80 << 56));
+        assert_eq!(args.amount, Nat::from(5u8));
+
+        let mut subaccount = vec![1; 32];
+        subaccount.push(1);
+        let err = candid::decode_one::<WithdrawArgs>(&encode(subaccount)).unwrap_err();
+        assert!(format!("{err:?}").contains("invalid length"), "{err:?}");
+    }
+}
