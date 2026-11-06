@@ -40,26 +40,31 @@ jobs:
         run: rustup show
       - uses: cargo-bins/cargo-binstall@6ed12bbaae779f3fd3ba1477bc9a61a2535a3bb2 # main
       - name: Install dependencies
-        run: cargo binstall cargo-release ripgrep -y
+        # cargo-release is pinned because the version is parsed from its output below.
+        run: cargo binstall cargo-release@1.1.7 ripgrep -y
       - name: Determine new version number by dry-running `cargo-release`
         id: determine_version
-        continue-on-error: true
         env:
           SEMVER_BUMP: ${{ inputs.semverBump }}
           SEMVER_VERSION: ${{ inputs.semverVersion }}
         run: |
+          OUTPUT_FILE="$RUNNER_TEMP/cargo-release-output.txt"
           if [[ "$SEMVER_BUMP" == "custom" ]]
           then
-            cargo release version -p cycles-ledger "$SEMVER_VERSION" &> cargo-release-output.txt
+            cargo release version -p cycles-ledger "$SEMVER_VERSION" 2>&1 | tee "$OUTPUT_FILE"
           else
-            cargo release version -p cycles-ledger "$SEMVER_BUMP" &> cargo-release-output.txt
+            cargo release version -p cycles-ledger "$SEMVER_BUMP" 2>&1 | tee "$OUTPUT_FILE"
           fi
-          cat cargo-release-output.txt
-          NEW_VERSION=$(cat cargo-release-output.txt | rg "Upgrading .* from .* to (.*)" -r '$1' | tr -d ' ')
-          echo "$NEW_VERSION"
+          # Expected line: "Upgrading cycles-ledger from 1.0.6 to 1.1.0 (inherited from workspace)"
+          NEW_VERSION=$(rg --max-count 1 --only-matching 'Upgrading cycles-ledger from \S+ to (\S+)' --replace '$1' "$OUTPUT_FILE" || true)
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          then
+            echo "ERROR: could not determine the new version from the cargo-release output (got: '$NEW_VERSION')"
+            exit 1
+          fi
+          echo "INFO: The new version is: $NEW_VERSION"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          rm cargo-release-output.txt
       - name: Switch to the release branch, and push it
         run: |
           BRANCH_NAME="release/cycles-ledger-v$NEW_VERSION"
