@@ -4,6 +4,8 @@
 
 ## [Unreleased] - ReleaseDate
 
+## [1.1.0] - 2026-11-06
+
 * Add support for canister settings `wasm_memory_limit`, `wasm_memory_threshold`, `log_visibility`, and `environment_variables`.
 * Fixed a bug where `InsufficientFunds` errors took precedence over `BadFee` errors in `icrc1_transfer`, `icrc2_approve`, and `icrc2_transfer_from`.
 * Fixed a bug where the approval refund of a failed `withdraw_from` or `create_canister_from` was added to the allowance present when the call failed. If the owner changed the allowance while the call was in flight, the refund partially undid that change, and could resurrect an allowance the owner had revoked. The refund is now cancelled by any `icrc2_approve` of the owner for that spender, and only happens if the allowance is otherwise still the one the call left behind. As a consequence, of several delegated calls of the same spender that are in flight at once and fail, at most one is refunded.
@@ -56,7 +58,8 @@ No changes to the cycles ledger. Released because a community project relies on 
 ## [0.1.0] - 2023-07-12
 
 <!-- next-url -->
-[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.6...HEAD
+[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.1.0...HEAD
+[1.1.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.6...cycles-ledger-v1.1.0
 [1.0.5]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.5...cycles-ledger-v1.0.6
 [1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.4...cycles-ledger-v1.0.5
 [1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.3...cycles-ledger-v1.0.4
