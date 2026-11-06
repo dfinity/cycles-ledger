@@ -1,8 +1,10 @@
 <!-- next-header -->
 
+## [Unreleased] - ReleaseDate
+
 # CHANGELOG
 
-## [Unreleased] - ReleaseDate
+## [1.1.0] - 2026-11-06
 
 * Add support for canister settings `wasm_memory_limit`, `wasm_memory_threshold`, `log_visibility`, and `environment_variables`.
 * Fixed a bug where `InsufficientFunds` errors took precedence over `BadFee` errors in `icrc1_transfer`, `icrc2_approve`, and `icrc2_transfer_from`.
@@ -56,7 +58,8 @@ No changes to the cycles ledger. Released because a community project relies on 
 ## [0.1.0] - 2023-07-12
 
 <!-- next-url -->
-[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.6...HEAD
+[Unreleased]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.1.0...HEAD
+[1.1.0]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.6...cycles-ledger-v1.1.0
 [1.0.5]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.5...cycles-ledger-v1.0.6
 [1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.4...cycles-ledger-v1.0.5
 [1.0.4]: https://github.com/dfinity/cycles-ledger/compare/cycles-ledger-v1.0.3...cycles-ledger-v1.0.4
