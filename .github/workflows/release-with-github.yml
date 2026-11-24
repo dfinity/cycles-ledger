@@ -48,6 +48,8 @@ jobs:
           SEMVER_BUMP: ${{ inputs.semverBump }}
           SEMVER_VERSION: ${{ inputs.semverVersion }}
         run: |
+          # The default shell is `bash -e` without pipefail, which would hide a failed dry run behind `tee`.
+          set -o pipefail
           OUTPUT_FILE="$RUNNER_TEMP/cargo-release-output.txt"
           if [[ "$SEMVER_BUMP" == "custom" ]]
           then
@@ -57,7 +59,7 @@ jobs:
           fi
           # Expected line: "Upgrading cycles-ledger from 1.0.6 to 1.1.0 (inherited from workspace)"
           NEW_VERSION=$(rg --max-count 1 --only-matching 'Upgrading cycles-ledger from \S+ to (\S+)' --replace '$1' "$OUTPUT_FILE" || true)
-          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
           then
             echo "ERROR: could not determine the new version from the cargo-release output (got: '$NEW_VERSION')"
             exit 1
