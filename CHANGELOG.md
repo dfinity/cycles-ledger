@@ -1,6 +1,6 @@
-<!-- next-header -->
-
 # CHANGELOG
+
+<!-- next-header -->
 
 ## [Unreleased] - ReleaseDate
 
